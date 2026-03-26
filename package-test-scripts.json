@@ -1,0 +1,17 @@
+{
+  "scripts": {
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:workerPool": "jest src/__tests__/main/utils/workerPool.test.ts"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.5",
+    "@testing-library/jest-dom": "^6.1.4",
+    "@testing-library/react": "^13.4.0",
+    "@testing-library/user-event": "^14.4.3",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "ts-jest": "^29.1.1"
+  }
+}

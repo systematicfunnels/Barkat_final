@@ -1,0 +1,686 @@
+/// <reference types="cypress" />
+
+export {};
+
+// Extend Performance interface to include memory API
+declare global {
+  interface Performance {
+    memory?: {
+      usedJSHeapSize: number;
+      totalJSHeapSize: number;
+      jsHeapSizeLimit: number;
+    };
+  }
+  
+  interface Window {
+    gc?: () => void;
+  }
+}
+
+// Test data fixtures
+const testProject = {
+  name: 'Test Society',
+  address: '123 Test Street',
+  city: 'Test City',
+  state: 'Test State',
+  pincode: '123456',
+  status: 'active',
+  account_name: 'Test Account',
+  bank_name: 'Test Bank',
+  account_no: '1234567890',
+  ifsc_code: 'TEST123',
+  branch: 'Test Branch'
+};
+
+const testUnit = {
+  unit_number: 'A-001',
+  sector_code: 'A',
+  owner_name: 'John Doe',
+  area_sqft: 1200,
+  unit_type: 'flat',
+  contact_number: '9876543210',
+  email: 'john@example.com',
+  status: 'active',
+  penalty: 500
+};
+
+const testPayment = {
+  payment_date: '2024-03-18',
+  payment_amount: 5000,
+  payment_mode: 'transfer',
+  remarks: 'Test payment'
+};
+
+// Selectors
+const SELECTORS: Record<string, string> & { [key: string]: string } = {
+  // Navigation
+  dashboardLink: '[href="#/"]',
+  projectsLink: '[href="#/projects"]',
+  unitsLink: '[href="#/units"]',
+  billingLink: '[href="#/billing"]',
+  paymentsLink: '[href="#/payments"]',
+  reportsLink: '[href="#/reports"]',
+  settingsLink: '[href="#/settings"]',
+  
+  // Projects
+  createProjectBtn: '[data-testid="create-project-btn"]',
+  projectNameInput: '#name',
+  projectAddressInput: '#address',
+  projectCityInput: '#city',
+  projectStateInput: '#state',
+  projectPincodeInput: '#pincode',
+  projectStatusSelect: '#status',
+  accountNameInput: '#account_name',
+  bankNameInput: '#bank_name',
+  accountNoInput: '#account_no',
+  ifscCodeInput: '#ifsc_code',
+  branchInput: '#branch',
+  saveProjectBtn: '[data-testid="save-project-btn"]',
+  projectTable: '.ant-table',
+  projectTableRow: '.ant-table-tbody tr',
+  editProjectBtn: '[data-testid="edit-project-btn"]',
+  deleteProjectBtn: '[data-testid="delete-project-btn"]',
+  
+  // Units
+  createUnitBtn: '[data-testid="create-unit-btn"]',
+  unitProjectSelect: '#project_id',
+  unitNumberInput: '#unit_number',
+  unitSectorInput: '#sector_code',
+  unitOwnerInput: '#owner_name',
+  unitAreaInput: '#area_sqft',
+  unitTypeSelect: '#unit_type',
+  unitContactInput: '#contact_number',
+  unitEmailInput: '#email',
+  unitStatusSelect: '#status',
+  unitPenaltyInput: '#penalty',
+  saveUnitBtn: '[data-testid="save-unit-btn"]',
+  unitTable: '.ant-table',
+  unitTableRow: '.ant-table-tbody tr',
+  editUnitBtn: '[data-testid="edit-unit-btn"]',
+  deleteUnitBtn: '[data-testid="delete-unit-btn"]',
+  
+  // Payments
+  createPaymentBtn: '[data-testid="create-payment-btn"]',
+  paymentProjectSelect: '#project_id',
+  paymentUnitSelect: '#unit_id',
+  paymentDateInput: '#payment_date',
+  paymentAmountInput: '#payment_amount',
+  paymentModeSelect: '#payment_mode',
+  paymentRemarksInput: '#remarks',
+  savePaymentBtn: '[data-testid="save-payment-btn"]',
+  paymentTable: '.ant-table',
+  paymentTableRow: '.ant-table-tbody tr',
+  editPaymentBtn: '[data-testid="edit-payment-btn"]',
+  deletePaymentBtn: '[data-testid="delete-payment-btn"]',
+  
+  // Common
+  modal: '.ant-modal',
+  modalTitle: '.ant-modal-title',
+  modalContent: '.ant-modal-content',
+  modalCloseBtn: '.ant-modal-close',
+  confirmBtn: '.ant-btn-primary',
+  cancelBtn: '.ant-btn-default',
+  successMessage: '.ant-message-success',
+  errorMessage: '.ant-message-error',
+  loading: '.ant-spin',
+  searchInput: '.ant-input-search'
+};
+
+// Helper functions
+const waitForAppLoad = () => {
+  cy.get(SELECTORS.dashboardLink, { timeout: 10000 }).should('be.visible');
+};
+
+const navigateTo = (section: string) => {
+  const linkKey = `${section}Link`;
+  cy.get(SELECTORS[linkKey]).click();
+  cy.url().should('include', `#/${section}`);
+};
+
+const fillForm = (data: Record<string, any>) => {
+  Object.entries(data).forEach(([key, value]) => {
+    const inputKey = `${key}Input`;
+    const selectKey = `${key}Select`;
+    const selector = SELECTORS[inputKey] || SELECTORS[selectKey] || `#${key}`;
+    
+    cy.get(selector).then($element => {
+      if ($element.attr('role') === 'combobox') {
+        cy.get(selector).select(value);
+      } else {
+        cy.get(selector).type(String(value));
+      }
+    });
+  });
+};
+
+const createProject = (projectData = testProject) => {
+  navigateTo('projects');
+  cy.get(SELECTORS.createProjectBtn).click();
+  cy.get(SELECTORS.modal).should('be.visible');
+  
+  fillForm(projectData);
+  cy.get(SELECTORS.saveProjectBtn).click();
+  
+  cy.get(SELECTORS.successMessage, { timeout: 5000 }).should('be.visible');
+  cy.get(SELECTORS.modal).should('not.exist');
+};
+
+const createUnit = (unitData = testUnit, projectId?: number) => {
+  navigateTo('units');
+  cy.get(SELECTORS.createUnitBtn).click();
+  cy.get(SELECTORS.modal).should('be.visible');
+  
+  if (projectId) {
+    cy.get(SELECTORS.unitProjectSelect).select(String(projectId));
+  }
+  
+  fillForm(unitData);
+  cy.get(SELECTORS.saveUnitBtn).click();
+  
+  cy.get(SELECTORS.successMessage, { timeout: 5000 }).should('be.visible');
+  cy.get(SELECTORS.modal).should('not.exist');
+};
+
+const createPayment = (paymentData = testPayment, projectId?: number, unitId?: number) => {
+  navigateTo('payments');
+  cy.get(SELECTORS.createPaymentBtn).click();
+  cy.get(SELECTORS.modal).should('be.visible');
+  
+  if (projectId) {
+    cy.get(SELECTORS.paymentProjectSelect).select(String(projectId));
+  }
+  if (unitId) {
+    cy.get(SELECTORS.paymentUnitSelect).select(String(unitId));
+  }
+  
+  fillForm(paymentData);
+  cy.get(SELECTORS.savePaymentBtn).click();
+  
+  cy.get(SELECTORS.successMessage, { timeout: 5000 }).should('be.visible');
+  cy.get(SELECTORS.modal).should('not.exist');
+};
+
+describe('Barkat Application - Full User Journey', () => {
+  beforeEach(() => {
+    cy.visit('/');
+    waitForAppLoad();
+  });
+
+  describe('Authentication & Navigation', () => {
+    it('should load dashboard and navigate to all sections', () => {
+      // Verify dashboard loads
+      cy.get(SELECTORS.dashboardLink).should('be.visible');
+      
+      // Navigate to each section and verify it loads
+      const sections = ['projects', 'units', 'billing', 'payments', 'reports', 'settings'];
+      
+      sections.forEach(section => {
+        navigateTo(section);
+        cy.get('body').should('contain.text', section.charAt(0).toUpperCase() + section.slice(1));
+      });
+    });
+
+    it('should handle navigation breadcrumbs correctly', () => {
+      navigateTo('projects');
+      navigateTo('units');
+      
+      // Verify breadcrumb navigation
+      cy.get('.ant-breadcrumb').should('be.visible');
+    });
+  });
+
+  describe('Project Management', () => {
+    it('should create, read, update, and delete projects', () => {
+      // Create project
+      createProject(testProject);
+      
+      // Verify project appears in table
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTable).should('contain.text', testProject.name);
+      
+      // Edit project
+      cy.get(SELECTORS.projectTableRow).first().find(SELECTORS.editProjectBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      const updatedAddress = '456 Updated Street';
+      cy.get(SELECTORS.projectAddressInput).clear().type(updatedAddress);
+      cy.get(SELECTORS.saveProjectBtn).click();
+      
+      cy.get(SELECTORS.successMessage).should('be.visible');
+      cy.get(SELECTORS.projectTable).should('contain.text', updatedAddress);
+      
+      // Delete project
+      cy.get(SELECTORS.projectTableRow).first().find(SELECTORS.deleteProjectBtn).click();
+      cy.get(SELECTORS.confirmBtn).click();
+      
+      cy.get(SELECTORS.successMessage).should('be.visible');
+      cy.get(SELECTORS.projectTable).should('not.contain.text', testProject.name);
+    });
+
+    it('should validate project creation with invalid data', () => {
+      navigateTo('projects');
+      cy.get(SELECTORS.createProjectBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      // Try to save without required fields
+      cy.get(SELECTORS.saveProjectBtn).click();
+      
+      // Should show validation errors
+      cy.get('.ant-form-item-explain-error').should('be.visible');
+      cy.get(SELECTORS.errorMessage).should('be.visible');
+    });
+
+    it('should handle project creation with boundary values', () => {
+      const boundaryProject = {
+        ...testProject,
+        name: 'A'.repeat(100), // Max length
+        pincode: '1'.repeat(10), // Max pincode length
+        account_no: '9'.repeat(20) // Long account number
+      };
+      
+      createProject(boundaryProject);
+      
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTable).should('contain.text', boundaryProject.name);
+    });
+  });
+
+  describe('Unit Management', () => {
+    it('should create, read, update, and delete units', () => {
+      // First create a project to associate with unit
+      createProject(testProject);
+      
+      // Create unit
+      createUnit(testUnit);
+      
+      // Verify unit appears in table
+      navigateTo('units');
+      cy.get(SELECTORS.unitTable).should('contain.text', testUnit.unit_number);
+      
+      // Edit unit
+      cy.get(SELECTORS.unitTableRow).first().find(SELECTORS.editUnitBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      const updatedOwner = 'Jane Smith';
+      cy.get(SELECTORS.unitOwnerInput).clear().type(updatedOwner);
+      cy.get(SELECTORS.saveUnitBtn).click();
+      
+      cy.get(SELECTORS.successMessage).should('be.visible');
+      cy.get(SELECTORS.unitTable).should('contain.text', updatedOwner);
+      
+      // Delete unit
+      cy.get(SELECTORS.unitTableRow).first().find(SELECTORS.deleteUnitBtn).click();
+      cy.get(SELECTORS.confirmBtn).click();
+      
+      cy.get(SELECTORS.successMessage).should('be.visible');
+      cy.get(SELECTORS.unitTable).should('not.contain.text', testUnit.unit_number);
+    });
+
+    it('should validate unit creation with invalid data', () => {
+      navigateTo('units');
+      cy.get(SELECTORS.createUnitBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      // Try to save without required fields
+      cy.get(SELECTORS.saveUnitBtn).click();
+      
+      cy.get('.ant-form-item-explain-error').should('be.visible');
+    });
+
+    it('should handle unit creation with empty project selection', () => {
+      navigateTo('units');
+      cy.get(SELECTORS.createUnitBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      // Fill unit data but don't select project
+      fillForm(testUnit);
+      cy.get(SELECTORS.saveUnitBtn).click();
+      
+      cy.get('.ant-form-item-explain-error').should('be.visible');
+    });
+  });
+
+  describe('Payment Management', () => {
+    beforeEach(() => {
+      // Setup: Create project and unit for payment tests
+      createProject(testProject);
+      createUnit(testUnit);
+    });
+
+    it('should create, read, update, and delete payments', () => {
+      // Create payment
+      createPayment(testPayment);
+      
+      // Verify payment appears in table
+      navigateTo('payments');
+      cy.get(SELECTORS.paymentTable).should('contain.text', testPayment.payment_amount.toString());
+      
+      // Edit payment
+      cy.get(SELECTORS.paymentTableRow).first().find(SELECTORS.editPaymentBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      const updatedAmount = '6000';
+      cy.get(SELECTORS.paymentAmountInput).clear().type(updatedAmount);
+      cy.get(SELECTORS.savePaymentBtn).click();
+      
+      cy.get(SELECTORS.successMessage).should('be.visible');
+      cy.get(SELECTORS.paymentTable).should('contain.text', updatedAmount);
+      
+      // Delete payment
+      cy.get(SELECTORS.paymentTableRow).first().find(SELECTORS.deletePaymentBtn).click();
+      cy.get(SELECTORS.confirmBtn).click();
+      
+      cy.get(SELECTORS.successMessage).should('be.visible');
+    });
+
+    it('should validate payment creation with invalid data', () => {
+      navigateTo('payments');
+      cy.get(SELECTORS.createPaymentBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      // Try to save without required fields
+      cy.get(SELECTORS.savePaymentBtn).click();
+      
+      cy.get('.ant-form-item-explain-error').should('be.visible');
+    });
+
+    it('should handle payment with boundary amount values', () => {
+      const boundaryPayment = {
+        ...testPayment,
+        payment_amount: 999999999 // Maximum reasonable amount
+      };
+      
+      createPayment(boundaryPayment);
+      
+      navigateTo('payments');
+      cy.get(SELECTORS.paymentTable).should('contain.text', boundaryPayment.payment_amount.toString());
+    });
+  });
+
+  describe('Search and Filtering', () => {
+    beforeEach(() => {
+      // Setup test data
+      createProject(testProject);
+      createUnit(testUnit);
+      createPayment(testPayment);
+    });
+
+    it('should search projects by name', () => {
+      navigateTo('projects');
+      
+      cy.get(SELECTORS.searchInput).type(testProject.name);
+      cy.get(SELECTORS.projectTable).should('contain.text', testProject.name);
+      
+      // Search for non-existent project
+      cy.get(SELECTORS.searchInput).clear().type('NonExistentProject');
+      cy.get(SELECTORS.projectTable).should('not.contain.text', testProject.name);
+    });
+
+    it('should filter units by project', () => {
+      navigateTo('units');
+      
+      // Filter by project (if filter functionality exists)
+      cy.get('[data-testid="project-filter"]').then($filter => {
+        if ($filter.length > 0) {
+          cy.get('[data-testid="project-filter"]').select(testProject.name);
+          cy.get(SELECTORS.unitTable).should('contain.text', testUnit.unit_number);
+        }
+      });
+    });
+
+    it('should search payments by amount', () => {
+      navigateTo('payments');
+      
+      cy.get(SELECTORS.searchInput).type(testPayment.payment_amount.toString());
+      cy.get(SELECTORS.paymentTable).should('contain.text', testPayment.payment_amount.toString());
+    });
+  });
+
+  describe('Network and API Handling', () => {
+    it('should handle network failures gracefully', () => {
+      // Simulate network failure
+      cy.intercept('**/*', { forceNetworkFailure: true });
+      
+      navigateTo('projects');
+      
+      // Try to create project
+      cy.get(SELECTORS.createProjectBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      fillForm(testProject);
+      cy.get(SELECTORS.saveProjectBtn).click();
+      
+      // Should show network error message
+      cy.get(SELECTORS.errorMessage, { timeout: 10000 }).should('be.visible');
+      
+      // Restore network
+      cy.intercept('**/*', { forceNetworkFailure: false });
+    });
+
+    it('should handle API timeouts', () => {
+      // Simulate slow API response
+      cy.intercept('**/*', { delay: 6000 });
+      
+      navigateTo('projects');
+      
+      // Should show loading state
+      cy.get(SELECTORS.loading, { timeout: 5000 }).should('be.visible');
+      
+      // Restore normal timing
+      cy.intercept('**/*', { delay: 0 });
+    });
+
+    it('should validate API responses', () => {
+      // Mock API response with invalid data
+      cy.intercept('**/api/projects', {
+        statusCode: 500,
+        body: { error: 'Internal Server Error' }
+      });
+      
+      navigateTo('projects');
+      
+      // Should handle server error gracefully
+      cy.get(SELECTORS.errorMessage, { timeout: 10000 }).should('be.visible');
+    });
+  });
+
+  describe('Error Scenarios', () => {
+    it('should handle concurrent operations', () => {
+      navigateTo('projects');
+      
+      // Try to create multiple projects simultaneously
+      const promises = Array(3).fill(null).map((_, index) => 
+        cy.wrap(null).then(() => createProject({ ...testProject, name: `Concurrent Project ${index}` }))
+      );
+      
+      Cypress.Promise.all(promises);
+      
+      // Verify at least some projects were created
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTable).should('contain.text', 'Concurrent Project');
+    });
+
+    it('should handle browser refresh during operations', () => {
+      navigateTo('projects');
+      cy.get(SELECTORS.createProjectBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      // Fill partial form
+      cy.get(SELECTORS.projectNameInput).type(testProject.name);
+      
+      // Refresh page
+      cy.reload();
+      waitForAppLoad();
+      
+      // Modal should be closed and data not saved
+      cy.get(SELECTORS.modal).should('not.exist');
+      
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTable).should('not.contain.text', testProject.name);
+    });
+
+    it('should handle memory pressure scenarios', () => {
+      // Create large amount of data to test memory handling
+      const largeProject = {
+        ...testProject,
+        name: 'A'.repeat(1000), // Very large name
+        address: 'B'.repeat(1000), // Very large address
+        description: 'C'.repeat(5000) // Very large description if field exists
+      };
+      
+      navigateTo('projects');
+      cy.get(SELECTORS.createProjectBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      fillForm(largeProject);
+      cy.get(SELECTORS.saveProjectBtn).click();
+      
+      // Should either succeed or fail gracefully with memory error
+      cy.get(SELECTORS.successMessage).should('be.visible', { timeout: 10000 });
+      cy.get(SELECTORS.errorMessage).should('not.be.visible');
+    });
+  });
+
+  describe('Accessibility and Usability', () => {
+    it('should support keyboard navigation', () => {
+      navigateTo('projects');
+      
+      // Test Tab navigation
+      cy.get('body').trigger('keydown', { keyCode: 9 });
+      cy.get(':focus').should('be.visible');
+      
+      // Test Enter key on buttons
+      cy.get('body').trigger('keydown', { keyCode: 9 });
+      cy.get('body').trigger('keydown', { keyCode: 13 });
+      
+      // Should open create modal or navigate
+      cy.get(SELECTORS.modal).then($modal => {
+        const modalVisible = $modal.length > 0;
+        expect(modalVisible || cy.url().should('include', '#/projects')).to.be.true;
+      });
+    });
+
+    it('should have proper ARIA labels', () => {
+      navigateTo('projects');
+      
+      // Check for proper ARIA labels on key elements
+      cy.get(SELECTORS.createProjectBtn).should('have.attr', 'aria-label');
+      
+      cy.get(SELECTORS.createProjectBtn).click();
+      cy.get(SELECTORS.modal).should('be.visible');
+      
+      // Check modal accessibility
+      cy.get(SELECTORS.modal).should('have.attr', 'role', 'dialog');
+      cy.get(SELECTORS.modal).should('have.attr', 'aria-modal', 'true');
+    });
+
+    it('should handle screen reader announcements', () => {
+      navigateTo('projects');
+      createProject(testProject);
+      
+      // Check for aria-live regions for success/error messages
+      cy.get('[aria-live]').then($liveRegion => {
+        if ($liveRegion.length > 0) {
+          cy.get('[aria-live]').should('be.visible');
+        }
+      });
+    });
+  });
+
+  describe('Performance and Optimization', () => {
+    it('should load pages within acceptable time limits', () => {
+      const startTime = Date.now();
+      
+      navigateTo('projects');
+      
+      const loadTime = Date.now() - startTime;
+      expect(loadTime).to.be.lessThan(3000); // 3 seconds max
+    });
+
+    it('should handle large datasets efficiently', () => {
+      // Create multiple projects to test table performance
+      for (let i = 0; i < 10; i++) {
+        createProject({ ...testProject, name: `Performance Test ${i}` });
+      }
+      
+      const startTime = Date.now();
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTable).should('be.visible');
+      
+      const renderTime = Date.now() - startTime;
+      expect(renderTime).to.be.lessThan(2000); // 2 seconds max for table render
+    });
+
+    it('should not have memory leaks', () => {
+      // Monitor memory usage during operations
+      cy.window().then((win) => {
+        const initialMemory = (win.performance as any).memory?.usedJSHeapSize || 0;
+        
+        // Perform multiple operations
+        for (let i = 0; i < 5; i++) {
+          createProject({ ...testProject, name: `Memory Test ${i}` });
+          navigateTo('projects');
+        }
+        
+        // Force garbage collection if available
+        if ((win as any).gc) {
+          (win as any).gc();
+        }
+        
+        const finalMemory = (win.performance as any).memory?.usedJSHeapSize || 0;
+        const memoryIncrease = finalMemory - initialMemory;
+        
+        // Memory increase should be reasonable (less than 50MB)
+        expect(memoryIncrease).to.be.lessThan(50 * 1024 * 1024);
+      });
+    });
+  });
+
+  describe('Data Integrity and Consistency', () => {
+    it('should maintain data consistency across operations', () => {
+      // Create project with specific data
+      const uniqueProject = { ...testProject, name: 'Consistency Test Project' };
+      createProject(uniqueProject);
+      
+      // Verify data in different views
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTable).should('contain.text', uniqueProject.name);
+      
+      // Check if data persists after refresh
+      cy.reload();
+      waitForAppLoad();
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTable).should('contain.text', uniqueProject.name);
+    });
+
+    it('should handle concurrent data modifications', () => {
+      createProject(testProject);
+      
+      // Try to edit and delete the same project concurrently
+      navigateTo('projects');
+      
+      const editPromise = cy.get(SELECTORS.projectTableRow).first().find(SELECTORS.editProjectBtn).click();
+      const deletePromise = cy.get(SELECTORS.projectTableRow).first().find(SELECTORS.deleteProjectBtn).click();
+      
+      Cypress.Promise.all([editPromise, deletePromise]);
+      
+      // Should handle gracefully without crashing
+      cy.get('body').should('be.visible');
+    });
+
+    it('should validate data relationships', () => {
+      // Create project and unit
+      createProject(testProject);
+      createUnit(testUnit);
+      
+      // Try to delete project that has units
+      navigateTo('projects');
+      cy.get(SELECTORS.projectTableRow).first().find(SELECTORS.deleteProjectBtn).click();
+      cy.get(SELECTORS.confirmBtn).click();
+      
+      // Should either prevent deletion or cascade delete
+      cy.get(SELECTORS.successMessage).should('be.visible', { timeout: 5000 });
+      cy.get(SELECTORS.errorMessage).should('not.be.visible');
+    });
+  });
+});

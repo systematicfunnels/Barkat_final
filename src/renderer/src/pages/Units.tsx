@@ -1,0 +1,1767 @@
+import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+import {
+  Table,
+  Button,
+  Space,
+  Modal,
+  Form,
+  Input,
+  InputNumber,
+  message,
+  Select,
+  Upload,
+  Divider,
+  Typography,
+  Card,
+  Alert,
+  DividerProps,
+  Tag,
+  Tooltip
+} from 'antd'
+import {
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  UploadOutlined,
+  FilePdfOutlined,
+  SolutionOutlined
+} from '@ant-design/icons'
+import { IndianRupee } from 'lucide-react'
+import { Unit, Project } from '@preload/types'
+import { readExcelFile } from '../utils/excelReader'
+import { showCompletionWithNextStep } from '../utils/workflowGuidance'
+
+const { Title, Text, Paragraph } = Typography
+const { Option } = Select
+const { Search } = Input
+
+const UNIT_TYPE_OPTIONS = ['Plot', 'Bungalow', 'Garden', 'BMF'] as const
+const UNIT_TYPE_TAG_COLORS: Record<string, string> = {
+  Plot: 'green',
+  Bungalow: 'blue',
+  Garden: 'gold',
+  BMF: 'purple'
+}
+
+interface ImportUnitPreview extends Unit {
+  previewId: string
+  [key: string]: unknown
+}
+
+interface ImportProfileDetection {
+  key: string
+  label: string
+  description: string
+  reason: string
+}
+
+const STANDARD_IMPORT_PROFILE: ImportProfileDetection = {
+  key: 'standard_normalized',
+  label: 'Standard Platform Sheet',
+  description: 'Normalized workbook aligned to the platform import format.',
+  reason: 'No legacy-specific pattern detected.'
+}
+
+const getNormalizedHeaders = (rows: Record<string, unknown>[]): string[] => {
+  const seen = new Set<string>()
+  const headers: string[] = []
+
+  for (const row of rows) {
+    for (const key of Object.keys(row)) {
+      const normalized = String(key).toLowerCase().trim()
+      if (!normalized || normalized === '__id' || seen.has(normalized)) continue
+      seen.add(normalized)
+      headers.push(normalized)
+    }
+  }
+
+  return headers
+}
+
+const extractFirstMatchingValue = (
+  row: Record<string, unknown>,
+  possibleKeys: string[]
+): string => {
+  for (const key of Object.keys(row)) {
+    const normalized = String(key).toLowerCase().trim()
+    if (!possibleKeys.includes(normalized)) continue
+    const value = String(row[key] ?? '').trim()
+    if (value) return value
+  }
+  return ''
+}
+
+const detectImportProfile = (rows: Record<string, unknown>[]): ImportProfileDetection => {
+  if (rows.length === 0) return STANDARD_IMPORT_PROFILE
+
+  const headers = getNormalizedHeaders(rows)
+  const yearHeaders = headers.filter((header) => /^\d{4}-\d{2}$/.test(header))
+  const hasSectorColumn = headers.some((header) =>
+    ['sector', 'sector no', 'sector_no', 'sector number', 'block'].includes(header)
+  )
+  const hasPlotColumn = headers.some((header) =>
+    ['plot', 'plot no', 'plot_no', 'plot number'].includes(header)
+  )
+  const hasPipeReplacement = headers.some((header) => /^pipe[\s_-]*replac(e)?ment$/.test(header))
+  const hasGst = headers.some((header) => /^gst(?:_\d+)?$/.test(header))
+  const hasStandardFinancialYear = headers.some((header) =>
+    ['financial_year', 'financial year'].includes(header)
+  )
+  const hasUnitNumber = headers.some((header) =>
+    ['unit_number', 'unit number', 'unit', 'unit_no', 'unitno'].includes(header)
+  )
+
+  const plotSamples = rows
+    .slice(0, 40)
+    .map((row) => extractFirstMatchingValue(row, ['plot', 'plot no', 'plot_no', 'plot number']))
+    .filter(Boolean)
+  const hasMostlyAbcPlots =
+    plotSamples.length > 0 &&
+    plotSamples.filter((value) => /^[ABC]/i.test(value)).length >= plotSamples.length * 0.7
+
+  if (hasStandardFinancialYear && hasUnitNumber) {
+    return {
+      key: 'standard_normalized',
+      label: 'Standard Platform Sheet',
+      description: 'Ready-to-import normalized workbook.',
+      reason: 'Found platform-style financial year and unit number columns.'
+    }
+  }
+
+  if (
+    hasSectorColumn &&
+    hasPlotColumn &&
+    yearHeaders.length >= 3 &&
+    (hasPipeReplacement || hasGst)
+  ) {
+    return {
+      key: 'banjara_numeric_v1',
+      label: 'Banjara Sector Ledger',
+      description: 'Legacy workbook with sector + plot routing and year-wise columns.',
+      reason: 'Detected sector and plot columns with GST / pipe replacement ledger fields.'
+    }
+  }
+
+  if (hasPlotColumn && yearHeaders.length >= 3 && (hasMostlyAbcPlots || !hasSectorColumn)) {
+    return {
+      key: 'beverly_abc_v1',
+      label: 'Beverly A/B/C Legacy',
+      description: 'Legacy workbook with plot-led sectors and wide year columns.',
+      reason: hasMostlyAbcPlots
+        ? 'Detected plot values primarily starting with A/B/C and multiple year columns.'
+        : 'Detected wide-format plot ledger without an explicit sector column.'
+    }
+  }
+
+  return STANDARD_IMPORT_PROFILE
+}
+
+const Units: React.FC = () => {
+  const [units, setUnits] = useState<Unit[]>([])
+  const [filteredUnits, setFilteredUnits] = useState<Unit[]>([])
+  const [searchText, setSearchText] = useState('')
+  const [selectedProject, setSelectedProject] = useState<number | null>(null)
+  const [selectedUnitType, setSelectedUnitType] = useState<string | null>(null)
+  const [statusFilter, setStatusFilter] = useState<string | null>(null)
+  const [areaRange, setAreaRange] = useState<[number | null, number | null]>([null, null])
+
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(false)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [editingUnit, setEditingUnit] = useState<Unit | null>(null)
+
+  const [importData, setImportData] = useState<Record<string, unknown>[]>([])
+  const [mappedPreview, setMappedPreview] = useState<ImportUnitPreview[]>([])
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false)
+  const [importProjectId, setImportProjectId] = useState<number | null>(null)
+  const [ignoreEmptyUnits, setIgnoreEmptyUnits] = useState(true)
+  const [defaultArea, setDefaultArea] = useState<number>(0)
+
+  const [form] = Form.useForm()
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  // Memoized filter status for performance
+  const hasActiveFilters = useMemo(() => {
+    return (
+      searchText ||
+      selectedProject ||
+      selectedUnitType ||
+      statusFilter ||
+      areaRange[0] !== null ||
+      areaRange[1] !== null
+    )
+  }, [searchText, selectedProject, selectedUnitType, statusFilter, areaRange])
+
+  // Find project name by ID
+  const getProjectNameById = useCallback(
+    (id: number | null) => {
+      if (!id) return ''
+      const project = projects.find((p) => p.id === id)
+      return project ? `${project.project_code || 'PRJ'} - ${project.name}` : ''
+    },
+    [projects]
+  )
+
+  const selectedImportProject = useMemo(
+    () => projects.find((project) => project.id === importProjectId) || null,
+    [projects, importProjectId]
+  )
+
+  const detectedImportProfile = useMemo(() => detectImportProfile(importData), [importData])
+
+  const importAudit = useMemo(() => {
+    const yearColumns = getNormalizedHeaders(importData).filter((header) =>
+      /^\d{4}-\d{2}$/.test(header)
+    )
+    const sectorCodes = Array.from(
+      new Set(
+        mappedPreview
+          .map((row) =>
+            String(row.sector_code || '')
+              .trim()
+              .toUpperCase()
+          )
+          .filter(Boolean)
+      )
+    ).sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' }))
+    const contactCount = mappedPreview.filter(
+      (row) => String(row.contact_number || '').trim() !== ''
+    ).length
+    const emailCount = mappedPreview.filter((row) => String(row.email || '').trim() !== '').length
+    const ownerCount = mappedPreview.filter(
+      (row) => String(row.owner_name || '').trim() !== ''
+    ).length
+    const unitFrequency = new Map<string, number>()
+    for (const row of mappedPreview) {
+      const unitNumber = String(row.unit_number || '')
+        .trim()
+        .toUpperCase()
+      if (!unitNumber) continue
+      unitFrequency.set(unitNumber, (unitFrequency.get(unitNumber) || 0) + 1)
+    }
+    const duplicateUnits = Array.from(unitFrequency.entries())
+      .filter(([, count]) => count > 1)
+      .map(([unit]) => unit)
+
+    return {
+      yearColumns,
+      sectorCodes,
+      contactCount,
+      emailCount,
+      ownerCount,
+      duplicateUnits
+    }
+  }, [importData, mappedPreview])
+
+  // Clear all filters
+  const clearAllFilters = useCallback(() => {
+    setSearchText('')
+    setSelectedProject(null)
+    setSelectedUnitType(null)
+    setStatusFilter(null)
+    setAreaRange([null, null])
+    setSelectedRowKeys([])
+  }, [])
+
+  // Helper function to map a single row to a Unit object
+  const mapRowToUnit = useCallback(
+    (row: Record<string, unknown>, projectId: number | null): ImportUnitPreview | null => {
+      const previewId = (row.__id as string) || Math.random().toString(36).substr(2, 9)
+      const normalizedRow: Record<string, unknown> = {}
+      Object.keys(row).forEach((key) => {
+        const normalizedKey = String(key).toLowerCase().trim()
+        normalizedRow[normalizedKey] = row[key]
+      })
+
+      const getValue = (possibleKeys: string[]): unknown => {
+        for (const key of possibleKeys) {
+          if (
+            normalizedRow[key] !== undefined &&
+            normalizedRow[key] !== null &&
+            String(normalizedRow[key]).trim() !== ''
+          ) {
+            return normalizedRow[key]
+          }
+        }
+        return undefined
+      }
+
+      let effectiveProjectId = projectId
+      if (!effectiveProjectId) {
+        const projectName = String(getValue(['project', 'building', 'project name']) || '')
+          .trim()
+          .toLowerCase()
+        if (projectName) {
+          const matchedProject = projects.find((p) => p.name.toLowerCase() === projectName)
+          if (matchedProject) {
+            effectiveProjectId = matchedProject.id!
+          }
+        }
+      }
+
+      const explicitUnitNumber = String(
+        getValue([
+          'unit number',
+          'unit',
+          'unit_no',
+          'unitno',
+          'particulars',
+          'flat',
+          'flat no',
+          'flat_no',
+          'flat number',
+          'member code',
+          'id',
+          'shop',
+          'office'
+        ]) || ''
+      ).trim()
+
+      const plotNumber = String(
+        getValue(['plot', 'plot no', 'plot_no', 'plot number']) || ''
+      ).trim()
+      const sectorNumber = String(
+        getValue(['sector', 'sector no', 'sector_no', 'sector number', 'block']) || ''
+      ).trim()
+
+      const inferSectorFromUnitNumber = (candidateUnitNumber: string): string => {
+        const normalizedCandidate = String(candidateUnitNumber || '').trim()
+        if (!normalizedCandidate) return ''
+        const hyphenIndex = normalizedCandidate.indexOf('-')
+        if (hyphenIndex > 0) return normalizedCandidate.slice(0, hyphenIndex).trim().toUpperCase()
+        const slashIndex = normalizedCandidate.indexOf('/')
+        if (slashIndex > 0) return normalizedCandidate.slice(0, slashIndex).trim().toUpperCase()
+        return ''
+      }
+
+      // For ledgers with repeated plot numbers across sectors, compose a stable unique unit number.
+      let unitNumber = explicitUnitNumber
+      if (!unitNumber && plotNumber) {
+        unitNumber = sectorNumber ? `${sectorNumber}-${plotNumber}` : plotNumber
+      }
+
+      if (!unitNumber && ignoreEmptyUnits) return null
+
+      let ownerName = String(
+        getValue([
+          'owner',
+          'name',
+          'owner name',
+          'ownername',
+          'to',
+          'respected sir / madam',
+          'member',
+          'member name',
+          'unit owner',
+          'unit owner name',
+          'customer',
+          'client'
+        ]) || ''
+      ).trim()
+
+      if (!unitNumber && ownerName) {
+        const unitPattern = /([A-Z][-/\s]?\d+([-/\s]\d+)?)/i
+        const match = ownerName.match(unitPattern)
+        if (match) {
+          unitNumber = match[0].trim()
+          ownerName = ownerName.replace(match[0], '').replace(/[()]/g, '').trim()
+        }
+      }
+
+      if (!unitNumber) {
+        const unitRegex = /^[A-Z][-/\s]?\d+([-/\s]\d+)?$/i
+        for (const key of Object.keys(normalizedRow)) {
+          const val = String(normalizedRow[key]).trim()
+          if (unitRegex.test(val)) {
+            unitNumber = val
+            break
+          }
+        }
+      }
+
+      if (!unitNumber && ignoreEmptyUnits) return null
+      if (!unitNumber && !ownerName && Object.keys(row).length <= 1) return null
+      if (unitNumber && /^(particulars|unit|flat|plot|id|no|shop|office)$/i.test(unitNumber))
+        return null
+
+      const rawArea = Number(
+        String(
+          getValue([
+            'area',
+            'sqft',
+            'area_sqft',
+            'area sqft',
+            'plot area sqft',
+            'sq.ft',
+            'sq-ft',
+            'builtup',
+            'built up'
+          ]) || '0'
+        ).replace(/[^0-9.]/g, '')
+      )
+
+      const contactNumber = String(
+        getValue(['contact', 'contact number', 'mobile', 'phone', 'phone number']) || ''
+      ).trim()
+      const emailAddress = String(getValue(['email', 'e-mail', 'mail']) || '').trim()
+      const normalizedSectorCode =
+        sectorNumber.trim().toUpperCase() || inferSectorFromUnitNumber(unitNumber)
+
+      return {
+        ...row,
+        previewId,
+        project_id: effectiveProjectId || 0,
+        unit_number: unitNumber,
+        sector_code: normalizedSectorCode || undefined,
+        unit_type: (() => {
+          const raw = String(
+            getValue(['bungalow', 'type', 'unit type', 'category', 'usage']) ||
+              (normalizedRow['bungalow'] !== undefined ? 'Bungalow' : 'Plot')
+          )
+            .trim()
+            .toLowerCase()
+
+          if (['bungalow', 'yes', 'y', '1', 'true'].includes(raw)) return 'Bungalow'
+          return 'Plot' // Default to Plot for 'plot', 'no', 'n', '0', 'false' or any other value
+        })(),
+        area_sqft: rawArea || defaultArea,
+        owner_name: ownerName || '',
+        contact_number: contactNumber,
+        email: emailAddress,
+        status: String(getValue(['status', 'occupancy']) || 'Sold').trim(),
+        penalty: Number(getValue(['penalty', 'opening penalty', 'penalty amount']) || 0)
+      }
+    },
+    [projects, ignoreEmptyUnits, defaultArea]
+  )
+
+  useEffect(() => {
+    if (importData.length > 0) {
+      const preview = importData
+        .map((row, index) => {
+          if (!row.__id) row.__id = `row-${index}`
+          return mapRowToUnit(row, importProjectId)
+        })
+        .filter((u): u is ImportUnitPreview => u !== null)
+      setMappedPreview(preview)
+    } else {
+      setMappedPreview([])
+    }
+  }, [importData, importProjectId, mapRowToUnit])
+
+  const fetchData = async (): Promise<void> => {
+    setLoading(true)
+    try {
+      const [unitsData, projectsData] = await Promise.all([
+        window.api.units.getAll(),
+        window.api.projects.getAll()
+      ])
+      setUnits(unitsData)
+      setFilteredUnits(unitsData)
+      setProjects(projectsData)
+      setSelectedRowKeys([])
+    } catch {
+      message.error('Failed to fetch data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  useEffect(() => {
+    const state = location.state as { projectId?: number } | null
+    const queryProjectId = Number(new URLSearchParams(location.search).get('projectId'))
+    const projectIdFromRoute =
+      state?.projectId ??
+      (Number.isFinite(queryProjectId) && queryProjectId > 0 ? queryProjectId : undefined)
+
+    if (projectIdFromRoute) {
+      setSelectedProject(projectIdFromRoute)
+      // Clear route state so refresh does not re-trigger banner messages in future extensions.
+      window.history.replaceState({}, document.title)
+    }
+  }, [location])
+
+  useEffect(() => {
+    const filtered = units.filter((unit) => {
+      const matchSearch =
+        unit.unit_number.toLowerCase().includes(searchText.toLowerCase()) ||
+        unit.owner_name.toLowerCase().includes(searchText.toLowerCase()) ||
+        (unit.email || '').toLowerCase().includes(searchText.toLowerCase())
+      const matchProject = !selectedProject || unit.project_id === selectedProject
+      const matchType = !selectedUnitType || unit.unit_type === selectedUnitType
+      const matchStatus = !statusFilter || unit.status === statusFilter
+      const matchMinArea = areaRange[0] === null || unit.area_sqft >= areaRange[0]
+      const matchMaxArea = areaRange[1] === null || unit.area_sqft <= areaRange[1]
+
+      return matchSearch && matchProject && matchType && matchStatus && matchMinArea && matchMaxArea
+    })
+    setFilteredUnits(filtered)
+  }, [searchText, selectedProject, selectedUnitType, statusFilter, areaRange, units])
+
+  const handleAdd = (): void => {
+    setEditingUnit(null)
+    form.resetFields()
+    setIsModalOpen(true)
+  }
+
+  const handleEdit = (record: Unit): void => {
+    setEditingUnit(record)
+    form.setFieldsValue(record)
+    setIsModalOpen(true)
+  }
+
+  const handleDelete = async (id: number): Promise<void> => {
+    Modal.confirm({
+      title: 'Are you sure?',
+      onOk: async () => {
+        await window.api.units.delete(id)
+        message.success('Unit deleted')
+        fetchData()
+      }
+    })
+  }
+
+  const handleBulkDelete = async (): Promise<void> => {
+    Modal.confirm({
+      title: `Are you sure you want to delete ${selectedRowKeys.length} units?`,
+      content: 'This action cannot be undone.',
+      okText: 'Yes, Delete',
+      okType: 'danger',
+      cancelText: 'No',
+      onOk: async () => {
+        setLoading(true)
+        try {
+          await window.api.units.bulkDelete(selectedRowKeys as number[])
+          message.success(`Successfully deleted ${selectedRowKeys.length} units`)
+          fetchData()
+        } catch {
+          message.error('Failed to delete units')
+        } finally {
+          setLoading(false)
+        }
+      }
+    })
+  }
+
+  const handleModalOk = async (): Promise<void> => {
+    const values = await form.validateFields()
+    const payload = {
+      ...values,
+      sector_code:
+        String(values.sector_code || '')
+          .trim()
+          .toUpperCase() || undefined
+    }
+    if (editingUnit?.id) {
+      await window.api.units.update(editingUnit.id, payload)
+    } else {
+      await window.api.units.create(payload)
+    }
+    setIsModalOpen(false)
+    fetchData()
+  }
+
+  const handleImport = async (file: File): Promise<boolean> => {
+    if (selectedProject) {
+      setImportProjectId(selectedProject)
+    }
+
+    try {
+      message.loading({ content: 'Reading Excel file...', key: 'excel_read' })
+      const jsonData = await readExcelFile(file)
+
+      if (jsonData.length === 0) {
+        message.warning({ content: 'No data found in the Excel file', key: 'excel_read' })
+        return false
+      }
+
+      message.success({ content: 'Excel file read successfully', key: 'excel_read' })
+      setImportData(jsonData)
+      setIsImportModalOpen(true)
+    } catch (error) {
+      console.error('Error reading Excel file:', error)
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      message.error({
+        content: `Failed to read Excel file: ${errorMessage}`,
+        key: 'excel_read',
+        duration: 5
+      })
+    }
+    return false
+  }
+
+  const handleImportOk = async (): Promise<void> => {
+    if (!importProjectId) {
+      message.error('Please select a project for import')
+      return
+    }
+
+    setLoading(true)
+    try {
+      const parseAmount = (value: unknown): number => {
+        if (typeof value === 'number') {
+          return Number.isFinite(value) ? value : 0
+        }
+
+        const cleaned = String(value ?? '')
+          .replace(/,/g, '')
+          .replace(/[^0-9.-]/g, '')
+          .trim()
+        if (!cleaned || cleaned === '-' || cleaned === '.') return 0
+
+        const parsed = Number(cleaned)
+        return Number.isFinite(parsed) ? parsed : 0
+      }
+
+      const rowsToImport = mappedPreview.map((row) => {
+        const years: {
+          financial_year: string
+          base_amount: number
+          arrears: number
+          add_ons: { name: string; amount: number }[]
+        }[] = []
+
+        const rowKeys = Object.keys(row)
+        const normalizedKeyToOriginal = new Map<string, string>()
+        for (const key of rowKeys) {
+          normalizedKeyToOriginal.set(key.toLowerCase().trim(), key)
+        }
+
+        const getRowValue = (possibleKeys: string[]): unknown => {
+          for (const possibleKey of possibleKeys) {
+            const originalKey = normalizedKeyToOriginal.get(possibleKey.toLowerCase().trim())
+            if (!originalKey) continue
+
+            const value = row[originalKey]
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+              return value
+            }
+          }
+          return undefined
+        }
+
+        const yearKeys = rowKeys.filter((key) => /^\d{4}-\d{2}$/.test(key.trim()))
+
+        for (const [yearIndex, year] of yearKeys.entries()) {
+          const baseAmount = parseAmount(row[year])
+          const addons: { name: string; amount: number }[] = []
+
+          const appendAddon = (name: string, amount: number): void => {
+            if (amount <= 0) return
+            const existingAddon = addons.find((addon) => addon.name === name)
+            if (existingAddon) {
+              existingAddon.amount += amount
+            } else {
+              addons.push({ name, amount })
+            }
+          }
+
+          const arrearsValue = getRowValue(['arrears', 'o/s', 'balance', 'outstanding'])
+          const arrears = arrearsValue !== undefined ? parseAmount(arrearsValue) : 0
+
+          const legacyAddons = [
+            { keys: ['na tax', 'n.a tax'], name: 'NA Tax' },
+            { keys: ['cable'], name: 'Cable' },
+            { keys: ['rd & na'], name: 'Road & NA Charges' },
+            { keys: ['water'], name: 'Water Charges' },
+            { keys: ['interest'], name: 'Interest' }
+          ]
+
+          for (const addon of legacyAddons) {
+            const addonValue = getRowValue(addon.keys)
+            if (addonValue !== undefined) {
+              appendAddon(addon.name, parseAmount(addonValue))
+            }
+          }
+
+          // Capture year-adjacent addon columns like GST / Pipe Replacement from ledger-style sheets.
+          const currentYearColIndex = rowKeys.indexOf(year)
+          const nextYearKey = yearKeys[yearIndex + 1]
+          const nextYearColIndex = nextYearKey ? rowKeys.indexOf(nextYearKey) : rowKeys.length
+
+          if (currentYearColIndex >= 0) {
+            const segmentEnd =
+              nextYearColIndex > currentYearColIndex ? nextYearColIndex : rowKeys.length
+            for (
+              let columnIndex = currentYearColIndex + 1;
+              columnIndex < segmentEnd;
+              columnIndex++
+            ) {
+              const columnKey = rowKeys[columnIndex]
+              const normalizedColumnKey = columnKey.toLowerCase().trim()
+              const columnAmount = parseAmount(row[columnKey])
+              if (columnAmount <= 0) continue
+
+              if (/^gst(?:_\d+)?$/.test(normalizedColumnKey)) {
+                appendAddon('GST', columnAmount)
+                continue
+              }
+
+              if (/^pipe[\s_-]*replac(e)?ment$/.test(normalizedColumnKey)) {
+                appendAddon('Pipe Replacement', columnAmount)
+              }
+            }
+          }
+
+          years.push({
+            financial_year: year,
+            base_amount: baseAmount,
+            arrears: arrears,
+            add_ons: addons
+          })
+        }
+
+        return {
+          unit_number: row.unit_number,
+          sector_code: row.sector_code,
+          owner_name: row.owner_name,
+          unit_type: row.unit_type,
+          area_sqft: row.area_sqft,
+          contact_number: row.contact_number,
+          email: row.email,
+          status: row.status,
+          penalty: row.penalty,
+          years: years
+        }
+      })
+
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Sending ledger to importLedger:', rowsToImport)
+      }
+      await window.api.units.importLedger({
+        projectId: Number(importProjectId),
+        rows: rowsToImport
+      })
+
+      if (selectedImportProject) {
+        const currentProfile = String(selectedImportProject.import_profile_key || '').trim()
+        if (!currentProfile || currentProfile === 'standard_normalized') {
+          if (detectedImportProfile.key !== 'standard_normalized') {
+            await window.api.projects.update(selectedImportProject.id as number, {
+              import_profile_key: detectedImportProfile.key
+            })
+          }
+        } else if (currentProfile !== detectedImportProfile.key) {
+          message.warning(
+            `Imported workbook looks like "${detectedImportProfile.label}", but project is configured as "${currentProfile}". Review project setup if this was not intentional.`
+          )
+        }
+      }
+
+      // Show next step guidance using utility
+      showCompletionWithNextStep(
+        'units',
+        'Units imported',
+        navigate,
+        `Successfully imported ${rowsToImport.length} unit records and their history`
+      )
+
+      setIsImportModalOpen(false)
+      setImportData([])
+      setMappedPreview([])
+      setImportProjectId(null)
+      fetchData()
+    } catch (error: unknown) {
+      console.error('Import failed:', error)
+      const messageText = error instanceof Error ? error.message : 'Check console for details'
+      message.error(`Failed to import ledger: ${messageText}`)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handlePreviewCellChange = (previewId: string, field: string, value: unknown): void => {
+    setMappedPreview((prev) =>
+      prev.map((u) => {
+        if (u.previewId === previewId) {
+          return { ...u, [field]: value }
+        }
+        return u
+      })
+    )
+  }
+
+  const previewExcelColumns = useMemo(() => {
+    if (importData.length === 0 || mappedPreview.length === 0) return []
+
+    const reservedKeys = new Set([
+      '__id',
+      'previewid',
+      'project_id',
+      'unit_number',
+      'sector_code',
+      'owner_name',
+      'unit_type',
+      'area_sqft',
+      'status',
+      'contact_number',
+      'email',
+      'penalty',
+      'years',
+      'sector',
+      'sector no',
+      'sector_no',
+      'sector number',
+      'block'
+    ])
+
+    const orderedHeaders: string[] = []
+    const seenHeaders = new Set<string>()
+
+    for (const sourceRow of importData) {
+      for (const header of Object.keys(sourceRow)) {
+        const normalizedHeader = header.toLowerCase().trim()
+        if (reservedKeys.has(normalizedHeader) || seenHeaders.has(normalizedHeader)) continue
+
+        const hasValue = mappedPreview.some((previewRow) => {
+          const value = previewRow[header]
+          return value !== undefined && value !== null && String(value).trim() !== ''
+        })
+        if (!hasValue) continue
+
+        seenHeaders.add(normalizedHeader)
+        orderedHeaders.push(header)
+      }
+    }
+
+    const parseDisplayNumber = (value: unknown): number | undefined => {
+      const cleaned = String(value ?? '')
+        .replace(/,/g, '')
+        .replace(/[^0-9.-]/g, '')
+        .trim()
+      if (!cleaned || cleaned === '-' || cleaned === '.') return undefined
+      const parsed = Number(cleaned)
+      return Number.isFinite(parsed) ? parsed : undefined
+    }
+
+    return orderedHeaders.map((header) => {
+      const normalizedHeader = header.toLowerCase().trim()
+      const isLikelyNumeric =
+        /^\d{4}-\d{2}$/.test(header.trim()) ||
+        /^gst(?:_\d+)?$/.test(normalizedHeader) ||
+        /^pipe[\s_-]*replac(e)?ment$/.test(normalizedHeader) ||
+        /^total$/.test(normalizedHeader) ||
+        /^sq\.?ft$/.test(normalizedHeader) ||
+        /^sq\.?mts$/.test(normalizedHeader)
+
+      return {
+        title: header,
+        key: `excel_${header}`,
+        width: isLikelyNumeric ? 110 : 150,
+        render: (_: unknown, record: ImportUnitPreview) => {
+          const value = record[header]
+
+          if (isLikelyNumeric) {
+            return (
+              <InputNumber
+                size="small"
+                value={parseDisplayNumber(value)}
+                onChange={(val) => handlePreviewCellChange(record.previewId, header, val ?? 0)}
+                style={{ width: '100%', minWidth: '90px' }}
+              />
+            )
+          }
+
+          return (
+            <Input
+              size="small"
+              value={String(value ?? '')}
+              onChange={(e) => handlePreviewCellChange(record.previewId, header, e.target.value)}
+              style={{ width: '100%', minWidth: '120px' }}
+            />
+          )
+        }
+      }
+    })
+  }, [importData, mappedPreview])
+
+  const columns = [
+    {
+      title: 'Project',
+      dataIndex: 'project_name',
+      key: 'project_name',
+      fixed: 'left' as const,
+      sorter: (a: Unit, b: Unit) => (a.project_name || '').localeCompare(b.project_name || '')
+    },
+    {
+      title: 'Unit No',
+      dataIndex: 'unit_number',
+      key: 'unit_number',
+      sorter: (a: Unit, b: Unit) => a.unit_number.localeCompare(b.unit_number)
+    },
+    {
+      title: 'Sector',
+      dataIndex: 'sector_code',
+      key: 'sector_code',
+      sorter: (a: Unit, b: Unit) =>
+        (a.sector_code || '').localeCompare(b.sector_code || '', undefined, {
+          numeric: true,
+          sensitivity: 'base'
+        }),
+      render: (text: string) => text || '-'
+    },
+    {
+      title: 'Type',
+      dataIndex: 'unit_type',
+      key: 'unit_type',
+      sorter: (a: Unit, b: Unit) => (a.unit_type || '').localeCompare(b.unit_type || ''),
+      render: (type: string) => {
+        const label = type || 'Plot'
+        const color = UNIT_TYPE_TAG_COLORS[label] || 'default'
+        return <Tag color={color}>{label}</Tag>
+      }
+    },
+    {
+      title: 'Owner',
+      dataIndex: 'owner_name',
+      key: 'owner_name',
+      sorter: (a: Unit, b: Unit) => a.owner_name.localeCompare(b.owner_name)
+    },
+    {
+      title: 'Contact',
+      dataIndex: 'contact_number',
+      key: 'contact_number',
+      sorter: (a: Unit, b: Unit) =>
+        (a.contact_number || '').localeCompare(b.contact_number || '', undefined, {
+          numeric: true,
+          sensitivity: 'base'
+        }),
+      render: (text: string) => text || '-'
+    },
+    {
+      title: 'Email',
+      dataIndex: 'email',
+      key: 'email',
+      sorter: (a: Unit, b: Unit) =>
+        (a.email || '').localeCompare(b.email || '', undefined, {
+          numeric: true,
+          sensitivity: 'base'
+        }),
+      render: (text: string) => text || '-'
+    },
+    {
+      title: 'Area (sqft)',
+      dataIndex: 'area_sqft',
+      key: 'area_sqft',
+      align: 'right' as const,
+      sorter: (a: Unit, b: Unit) => a.area_sqft - b.area_sqft
+    },
+    {
+      title: 'Penalty',
+      dataIndex: 'penalty',
+      key: 'penalty',
+      align: 'right' as const,
+      render: (val: number) => (val ? `₹${val}` : '-'),
+      sorter: (a: Unit, b: Unit) => (a.penalty || 0) - (b.penalty || 0)
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      sorter: (a: Unit, b: Unit) => (a.status || '').localeCompare(b.status || ''),
+      render: (status: string) => {
+        const color = status === 'Sold' ? 'success' : 'default'
+        return <Tag color={color}>{status || 'Sold'}</Tag>
+      }
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      align: 'right' as const,
+      render: (_: unknown, record: Unit) => (
+        <Space>
+          <Tooltip title="Generate Maintenance Letter">
+            <Button
+              size="small"
+              icon={<FilePdfOutlined />}
+              onClick={() => navigate('/billing', { state: { unitId: record.id } })}
+            />
+          </Tooltip>
+          <Tooltip title="Record Payment">
+            <Button
+              size="small"
+              icon={<IndianRupee size={16} />}
+              onClick={() => navigate('/payments', { state: { unitId: record.id } })}
+            />
+          </Tooltip>
+          <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+          <Button
+            size="small"
+            icon={<DeleteOutlined />}
+            danger
+            onClick={() => handleDelete(record.id!)}
+          />
+        </Space>
+      )
+    }
+  ]
+
+  return (
+    <div style={{ padding: '24px' }}>
+      {/* Enhanced header with selection feedback */}
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'flex-start',
+          marginBottom: 24,
+          flexWrap: 'wrap',
+          gap: '16px'
+        }}
+      >
+        <div>
+          <Title level={2} style={{ margin: 0, display: 'inline', marginRight: 12 }}>
+            Units
+          </Title>
+          {selectedRowKeys.length > 0 && (
+            <Text type="secondary" style={{ fontSize: '14px' }}>
+              ({selectedRowKeys.length} selected)
+            </Text>
+          )}
+        </div>
+        <Space wrap>
+          {selectedRowKeys.length > 0 && (
+            <>
+              <Button
+                type="primary"
+                icon={<SolutionOutlined />}
+                onClick={() => navigate('/billing', { state: { unitIds: selectedRowKeys } })}
+              >
+                Generate Maintenance Letters ({selectedRowKeys.length})
+              </Button>
+              <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
+                Delete ({selectedRowKeys.length})
+              </Button>
+            </>
+          )}
+          <Upload
+            beforeUpload={handleImport}
+            showUploadList={false}
+            accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
+          >
+            <Button icon={<UploadOutlined />}>Import Excel</Button>
+          </Upload>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+            Add Unit
+          </Button>
+        </Space>
+      </div>
+
+      <Card>
+        <div style={{ marginBottom: 24 }}>
+          <Space wrap size="middle">
+            <Search
+              placeholder="Search unit, owner..."
+              allowClear
+              onSearch={setSearchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              style={{ width: 250 }}
+              enterButton
+              suffix={null}
+            />
+            <Select
+              placeholder="Project"
+              style={{ width: 180 }}
+              allowClear
+              onChange={setSelectedProject}
+              value={selectedProject}
+            >
+              {projects.map((s) => (
+                <Option key={s.id} value={s.id}>
+                  {s.name}
+                </Option>
+              ))}
+            </Select>
+            <Select
+              placeholder="Status"
+              style={{ width: 130 }}
+              allowClear
+              onChange={setStatusFilter}
+              value={statusFilter}
+            >
+              <Option value="Sold">Sold</Option>
+              <Option value="Unsold">Unsold</Option>
+            </Select>
+            <Select
+              placeholder="Unit Type"
+              style={{ width: 140 }}
+              allowClear
+              onChange={setSelectedUnitType}
+              value={selectedUnitType}
+            >
+              {UNIT_TYPE_OPTIONS.map((unitType) => (
+                <Option key={unitType} value={unitType}>
+                  {unitType}
+                </Option>
+              ))}
+            </Select>
+
+            {/* Area range with validation */}
+            <Input.Group compact>
+              <InputNumber
+                placeholder="Min Area"
+                style={{ width: 100 }}
+                value={areaRange[0]}
+                onChange={(min) => {
+                  if (areaRange[1] && min && min > areaRange[1]) {
+                    message.warning('Minimum area cannot be greater than maximum')
+                    return
+                  }
+                  setAreaRange([min, areaRange[1]])
+                }}
+              />
+              <span style={{ padding: '0 8px', lineHeight: '32px' }}>to</span>
+              <InputNumber
+                placeholder="Max Area"
+                style={{ width: 100 }}
+                value={areaRange[1]}
+                onChange={(max) => {
+                  if (areaRange[0] && max && max < areaRange[0]) {
+                    message.warning('Maximum area cannot be less than minimum')
+                    return
+                  }
+                  setAreaRange([areaRange[0], max])
+                }}
+              />
+            </Input.Group>
+          </Space>
+
+          {/* Filter summary chips */}
+          {hasActiveFilters && (
+            <div style={{ marginTop: 16 }}>
+              <Space wrap>
+                <Text type="secondary" style={{ fontSize: '12px' }}>
+                  Applied filters:
+                </Text>
+                {searchText && (
+                  <Tag closable onClose={() => setSearchText('')} style={{ fontSize: '12px' }}>
+                    Search: &quot;{searchText}&quot;
+                  </Tag>
+                )}
+                {selectedProject && (
+                  <Tag
+                    closable
+                    onClose={() => setSelectedProject(null)}
+                    style={{ fontSize: '12px' }}
+                  >
+                    Project: {getProjectNameById(selectedProject)}
+                  </Tag>
+                )}
+                {selectedUnitType && (
+                  <Tag
+                    closable
+                    onClose={() => setSelectedUnitType(null)}
+                    style={{ fontSize: '12px' }}
+                  >
+                    Type: {selectedUnitType}
+                  </Tag>
+                )}
+                {statusFilter && (
+                  <Tag closable onClose={() => setStatusFilter(null)} style={{ fontSize: '12px' }}>
+                    Status: {statusFilter}
+                  </Tag>
+                )}
+                {(areaRange[0] !== null || areaRange[1] !== null) && (
+                  <Tag
+                    closable
+                    onClose={() => setAreaRange([null, null])}
+                    style={{ fontSize: '12px' }}
+                  >
+                    Area: {areaRange[0] !== null ? `${areaRange[0]}` : 'Any'} to{' '}
+                    {areaRange[1] !== null ? `${areaRange[1]}` : 'Any'}
+                  </Tag>
+                )}
+                <Button
+                  type="link"
+                  size="small"
+                  onClick={clearAllFilters}
+                  style={{ fontSize: '12px', padding: 0, height: 'auto' }}
+                >
+                  Clear all
+                </Button>
+              </Space>
+            </div>
+          )}
+        </div>
+
+        <Table
+          rowSelection={{
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys)
+          }}
+          columns={columns}
+          dataSource={filteredUnits}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 'max-content' }}
+        />
+      </Card>
+
+      {/* Responsive Import Modal */}
+      <Modal
+        title="Import Units from Excel"
+        open={isImportModalOpen}
+        onOk={handleImportOk}
+        onCancel={() => {
+          setIsImportModalOpen(false)
+          setImportData([])
+          setMappedPreview([])
+        }}
+        width={800}
+        confirmLoading={loading}
+        style={{ maxWidth: '90vw' }}
+        bodyStyle={{ maxHeight: '70vh', overflow: 'auto' }}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setIsImportModalOpen(false)
+              setImportData([])
+              setMappedPreview([])
+            }}
+          >
+            Cancel
+          </Button>,
+          <Button key="submit" type="primary" loading={loading} onClick={handleImportOk}>
+            Import Units
+          </Button>
+        ]}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="large">
+          <Alert
+            message="Autofill Preview"
+            description="The system is automatically identifying columns from your Excel. Check the table below to see if the data is being correctly extracted."
+            type="info"
+            showIcon
+          />
+
+          {projects.length === 0 && (
+            <Alert
+              message="No Projects Found"
+              description="You must create a project before you can import units. Please go to the Projects page first."
+              type="warning"
+              showIcon
+            />
+          )}
+
+          {/* Responsive form controls */}
+          <div style={{ marginBottom: 16 }}>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                gap: '16px',
+                alignItems: 'end'
+              }}
+            >
+              <div>
+                <Text strong>Step 1: Import to Project</Text>
+                <Select
+                  placeholder="Select Project"
+                  style={{ width: '100%', marginTop: 8 }}
+                  status={!importProjectId ? 'error' : undefined}
+                  value={importProjectId}
+                  onChange={setImportProjectId}
+                  allowClear
+                  dropdownMatchSelectWidth={false}
+                >
+                  {projects.map((p) => (
+                    <Option key={p.id} value={p.id}>
+                      {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
+                    </Option>
+                  ))}
+                </Select>
+              </div>
+              <div>
+                <Text strong>Empty Units</Text>
+                <Select
+                  value={ignoreEmptyUnits ? 'ignore' : 'keep'}
+                  onChange={(val) => setIgnoreEmptyUnits(val === 'ignore')}
+                  style={{ width: '100%', marginTop: 8 }}
+                  dropdownMatchSelectWidth={false}
+                >
+                  <Option value="ignore">Ignore Empty</Option>
+                  <Option value="keep">Keep Empty</Option>
+                </Select>
+              </div>
+              <div>
+                <Text strong>Default Area</Text>
+                <InputNumber
+                  placeholder="Default Area"
+                  value={defaultArea}
+                  onChange={(val) => setDefaultArea(val || 0)}
+                  style={{ width: '100%', marginTop: 8 }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {importData.length > 0 && (
+            <Alert
+              message={`Detected Workbook: ${detectedImportProfile.label}`}
+              description={
+                <div>
+                  <div>{detectedImportProfile.description}</div>
+                  <div style={{ marginTop: 4 }}>{detectedImportProfile.reason}</div>
+                  <div style={{ marginTop: 8 }}>
+                    FY Columns:{' '}
+                    {importAudit.yearColumns.length > 0
+                      ? importAudit.yearColumns.join(', ')
+                      : 'None'}
+                    {' | '}Sectors:{' '}
+                    {importAudit.sectorCodes.length > 0
+                      ? importAudit.sectorCodes.join(', ')
+                      : 'None'}
+                  </div>
+                  <div style={{ marginTop: 4 }}>
+                    Owner rows: {importAudit.ownerCount}/{mappedPreview.length}
+                    {' | '}Contact rows: {importAudit.contactCount}/{mappedPreview.length}
+                    {' | '}Email rows: {importAudit.emailCount}/{mappedPreview.length}
+                  </div>
+                  {selectedImportProject && (
+                    <div style={{ marginTop: 4 }}>
+                      Project import profile:{' '}
+                      {selectedImportProject.import_profile_key || 'Not configured'}
+                    </div>
+                  )}
+                  {importAudit.duplicateUnits.length > 0 && (
+                    <div style={{ marginTop: 4, color: '#d46b08' }}>
+                      Duplicate units in preview:{' '}
+                      {importAudit.duplicateUnits.slice(0, 5).join(', ')}
+                      {importAudit.duplicateUnits.length > 5
+                        ? ` and ${importAudit.duplicateUnits.length - 5} more`
+                        : ''}
+                    </div>
+                  )}
+                </div>
+              }
+              type={
+                selectedImportProject &&
+                selectedImportProject.import_profile_key &&
+                selectedImportProject.import_profile_key !== detectedImportProfile.key
+                  ? 'warning'
+                  : 'info'
+              }
+              showIcon
+            />
+          )}
+
+          {mappedPreview.length > 0 && (
+            <div>
+              <Text strong>Step 2: Preview & Edit Data</Text>
+              <Paragraph type="secondary" style={{ fontSize: '12px', marginTop: 4 }}>
+                Double-click on any cell to edit. Red borders indicate missing required fields.
+              </Paragraph>
+              <Paragraph
+                type="secondary"
+                style={{ fontSize: '12px', marginTop: 0, marginBottom: 8 }}
+              >
+                Rows loaded: {mappedPreview.length} | Additional Excel columns shown:{' '}
+                {previewExcelColumns.length}
+              </Paragraph>
+
+              {/* Responsive table container */}
+              <div
+                style={{
+                  width: '100%',
+                  overflow: 'auto',
+                  border: '1px solid #f0f0f0',
+                  borderRadius: '4px',
+                  marginTop: 8
+                }}
+              >
+                <Table
+                  size="small"
+                  pagination={{
+                    pageSize: 5,
+                    responsive: true,
+                    showSizeChanger: false,
+                    simple: true
+                  }}
+                  dataSource={mappedPreview}
+                  rowKey="previewId"
+                  columns={[
+                    {
+                      title: 'Project',
+                      key: 'project',
+                      width: 120,
+                      render: () => {
+                        const project = projects.find((p) => p.id === Number(importProjectId))
+                        return project ? (
+                          <Text ellipsis style={{ maxWidth: '100px' }}>
+                            {project.name}
+                          </Text>
+                        ) : (
+                          <Text type="danger" ellipsis style={{ maxWidth: '100px' }}>
+                            Not Selected
+                          </Text>
+                        )
+                      },
+                      responsive: ['md']
+                    },
+                    {
+                      title: 'Unit No',
+                      dataIndex: 'unit_number',
+                      key: 'unit_number',
+                      width: 120,
+                      render: (text: string, record: ImportUnitPreview) => (
+                        <Input
+                          size="small"
+                          status={!text ? 'error' : undefined}
+                          value={text}
+                          onChange={(e) =>
+                            handlePreviewCellChange(record.previewId, 'unit_number', e.target.value)
+                          }
+                          placeholder="Required"
+                          style={{ width: '100%', minWidth: '80px' }}
+                        />
+                      ),
+                      responsive: ['xs']
+                    },
+                    {
+                      title: 'Sector',
+                      dataIndex: 'sector_code',
+                      key: 'sector_code',
+                      width: 90,
+                      sorter: (a: ImportUnitPreview, b: ImportUnitPreview) =>
+                        String(a.sector_code || '').localeCompare(
+                          String(b.sector_code || ''),
+                          undefined,
+                          {
+                            numeric: true,
+                            sensitivity: 'base'
+                          }
+                        ),
+                      render: (text: string, record: ImportUnitPreview) => (
+                        <Input
+                          size="small"
+                          value={text}
+                          onChange={(e) =>
+                            handlePreviewCellChange(
+                              record.previewId,
+                              'sector_code',
+                              e.target.value.toUpperCase()
+                            )
+                          }
+                          placeholder="A/B/C"
+                          style={{ width: '100%', minWidth: '70px' }}
+                        />
+                      ),
+                      responsive: ['sm']
+                    },
+                    {
+                      title: 'Owner',
+                      dataIndex: 'owner_name',
+                      key: 'owner_name',
+                      width: 150,
+                      render: (text: string, record: ImportUnitPreview) => (
+                        <Input
+                          size="small"
+                          status={!text ? 'error' : undefined}
+                          value={text}
+                          onChange={(e) =>
+                            handlePreviewCellChange(record.previewId, 'owner_name', e.target.value)
+                          }
+                          placeholder="Required"
+                          style={{ width: '100%', minWidth: '100px' }}
+                        />
+                      ),
+                      responsive: ['xs']
+                    },
+                    {
+                      title: 'Type',
+                      dataIndex: 'unit_type',
+                      key: 'unit_type',
+                      width: 100,
+                      render: (text: string, record: ImportUnitPreview) => (
+                        <Select
+                          size="small"
+                          value={text}
+                          onChange={(val) =>
+                            handlePreviewCellChange(record.previewId, 'unit_type', val)
+                          }
+                          style={{ width: '100%', minWidth: '80px' }}
+                          dropdownMatchSelectWidth={false}
+                        >
+                          {UNIT_TYPE_OPTIONS.map((unitType) => (
+                            <Option key={unitType} value={unitType}>
+                              {unitType}
+                            </Option>
+                          ))}
+                        </Select>
+                      ),
+                      responsive: ['sm']
+                    },
+                    {
+                      title: 'Area',
+                      dataIndex: 'area_sqft',
+                      key: 'area_sqft',
+                      width: 90,
+                      render: (text: number, record: ImportUnitPreview) => (
+                        <InputNumber
+                          size="small"
+                          value={text}
+                          onChange={(val) =>
+                            handlePreviewCellChange(record.previewId, 'area_sqft', val)
+                          }
+                          style={{ width: '100%', minWidth: '70px' }}
+                        />
+                      ),
+                      responsive: ['sm']
+                    },
+                    {
+                      title: 'Status',
+                      dataIndex: 'status',
+                      key: 'status',
+                      width: 100,
+                      render: (text: string, record: ImportUnitPreview) => (
+                        <Select
+                          size="small"
+                          value={text}
+                          onChange={(val) =>
+                            handlePreviewCellChange(record.previewId, 'status', val)
+                          }
+                          style={{ width: '100%', minWidth: '80px' }}
+                          dropdownMatchSelectWidth={false}
+                        >
+                          <Option value="Sold">Sold</Option>
+                          <Option value="Unsold">Unsold</Option>
+                        </Select>
+                      ),
+                      responsive: ['sm']
+                    },
+                    {
+                      title: 'Contact',
+                      dataIndex: 'contact_number',
+                      key: 'contact_number',
+                      width: 120,
+                      sorter: (a: ImportUnitPreview, b: ImportUnitPreview) =>
+                        String(a.contact_number || '').localeCompare(
+                          String(b.contact_number || ''),
+                          undefined,
+                          {
+                            numeric: true,
+                            sensitivity: 'base'
+                          }
+                        ),
+                      render: (text: string, record: ImportUnitPreview) => (
+                        <Input
+                          size="small"
+                          value={text}
+                          onChange={(e) =>
+                            handlePreviewCellChange(
+                              record.previewId,
+                              'contact_number',
+                              e.target.value
+                            )
+                          }
+                          style={{ width: '100%', minWidth: '100px' }}
+                        />
+                      )
+                    },
+                    {
+                      title: 'Email',
+                      dataIndex: 'email',
+                      key: 'email',
+                      width: 180,
+                      sorter: (a: ImportUnitPreview, b: ImportUnitPreview) =>
+                        String(a.email || '').localeCompare(String(b.email || ''), undefined, {
+                          numeric: true,
+                          sensitivity: 'base'
+                        }),
+                      render: (text: string, record: ImportUnitPreview) => (
+                        <Input
+                          size="small"
+                          value={text}
+                          onChange={(e) =>
+                            handlePreviewCellChange(record.previewId, 'email', e.target.value)
+                          }
+                          style={{ width: '100%', minWidth: '140px' }}
+                        />
+                      )
+                    },
+                    {
+                      title: 'Penalty',
+                      dataIndex: 'penalty',
+                      key: 'penalty',
+                      width: 100,
+                      render: (text: number, record: ImportUnitPreview) => (
+                        <InputNumber
+                          size="small"
+                          value={text}
+                          onChange={(val) =>
+                            handlePreviewCellChange(record.previewId, 'penalty', val)
+                          }
+                          style={{ width: '100%', minWidth: '70px' }}
+                        />
+                      ),
+                      responsive: ['md']
+                    },
+                    ...previewExcelColumns
+                  ]}
+                  scroll={{ x: 'max-content' }}
+                  style={{ minWidth: '600px' }}
+                  components={{
+                    header: {
+                      cell: ({ style, ...props }: React.HTMLAttributes<HTMLTableCellElement>) => (
+                        <th {...props} style={{ ...style, whiteSpace: 'nowrap' }} />
+                      )
+                    }
+                  }}
+                />
+              </div>
+            </div>
+          )}
+
+          {importData.length > 0 && mappedPreview.length === 0 && (
+            <Alert
+              message="No units recognized"
+              description="Could not find any unit numbers in the uploaded file. Please make sure your Excel has a column for Unit Number or Flat Number."
+              type="warning"
+              showIcon
+            />
+          )}
+        </Space>
+      </Modal>
+
+      <Modal
+        title={editingUnit ? 'Edit Unit' : 'Add Unit'}
+        open={isModalOpen}
+        onOk={handleModalOk}
+        onCancel={() => setIsModalOpen(false)}
+        width={680}
+        style={{ maxWidth: '95vw' }}
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          initialValues={{ unit_type: 'Bungalow', status: 'Sold', penalty: 0 }}
+        >
+          {/* ── Project & Identity ── */}
+          <Divider orientation={'left' as DividerProps['orientation']} plain style={{ marginTop: 0 }}>
+            Unit Information
+          </Divider>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <Form.Item
+              name="project_id"
+              label="Project"
+              rules={[{ required: true, message: 'Please select a project' }]}
+              style={{ gridColumn: 'span 2' }}
+            >
+              <Select disabled={!!editingUnit}>
+                {projects.map((s) => (
+                  <Select.Option key={s.id} value={s.id}>
+                    {s.project_code ? `${s.project_code} - ${s.name}` : s.name}
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
+
+            <Form.Item
+              name="unit_number"
+              label="Unit Number"
+              rules={[{ required: true, message: 'Please enter unit number' }]}
+            >
+              <Input placeholder="e.g. A-001" />
+            </Form.Item>
+            <Form.Item name="sector_code" label="Sector / Block Code">
+              <Input placeholder="e.g. A, B, C" />
+            </Form.Item>
+
+            <Form.Item
+              name="unit_type"
+              label="Unit Type"
+              rules={[{ required: true, message: 'Please select unit type' }]}
+            >
+              <Select>
+                <Option value="Plot">Plot</Option>
+                <Option value="Bungalow">Bungalow</Option>
+                <Option value="Garden">Garden</Option>
+                <Option value="BMF">BMF</Option>
+              </Select>
+            </Form.Item>
+            <Form.Item
+              name="area_sqft"
+              label="Area (sqft)"
+              rules={[{ required: true, message: 'Please enter area' }]}
+            >
+              <InputNumber style={{ width: '100%' }} min={1} />
+            </Form.Item>
+
+            <Form.Item
+              name="status"
+              label="Status"
+              rules={[{ required: true, message: 'Please select status' }]}
+            >
+              <Select>
+                <Option value="Sold">Sold</Option>
+                <Option value="Unsold">Unsold</Option>
+                <Option value="Vacant">Vacant</Option>
+              </Select>
+            </Form.Item>
+            <Form.Item name="penalty" label="Opening Penalty (₹)">
+              <InputNumber<number>
+                style={{ width: '100%' }}
+                min={0}
+                formatter={(value) => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                parser={(displayValue) =>
+                  displayValue?.replace(/₹\s?|(,*)/g, '') as unknown as number
+                }
+              />
+            </Form.Item>
+          </div>
+
+          {/* ── Owner Details ── */}
+          <Divider orientation={'left' as DividerProps['orientation']} plain>
+            Owner Details
+          </Divider>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <Form.Item
+              name="owner_name"
+              label="Owner Name"
+              rules={[{ required: true, message: 'Please enter owner name' }]}
+              style={{ gridColumn: 'span 2' }}
+            >
+              <Input placeholder="Full name of owner" />
+            </Form.Item>
+            <Form.Item name="contact_number" label="Contact Number">
+              <Input placeholder="Mobile / phone number" />
+            </Form.Item>
+            <Form.Item name="email" label="Email Address">
+              <Input type="email" placeholder="owner@email.com" />
+            </Form.Item>
+          </div>
+
+          {/* ── Address Details ── */}
+          <Divider orientation={'left' as DividerProps['orientation']} plain>
+            Address Details
+          </Divider>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+            <Form.Item name="billing_address" label="Billing Address">
+              <Input.TextArea
+                rows={2}
+                placeholder="Address for maintenance letter / invoice delivery"
+              />
+            </Form.Item>
+            <Form.Item name="resident_address" label="Resident / Current Address">
+              <Input.TextArea
+                rows={2}
+                placeholder="Current residential address (if different from billing)"
+              />
+            </Form.Item>
+          </div>
+        </Form>
+      </Modal>
+    </div>
+  )
+}
+
+export default Units

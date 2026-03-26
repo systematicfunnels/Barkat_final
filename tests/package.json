@@ -1,0 +1,20 @@
+{
+  "name": "barkat-e2e-tests",
+  "version": "1.0.0",
+  "description": "E2E tests for Barkat application",
+  "scripts": {
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui",
+    "test:e2e:headed": "playwright test --headed",
+    "test:cypress": "cypress open",
+    "test:cypress:headless": "cypress run"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@types/node": "^20.0.0",
+    "playwright": "^1.40.0",
+    "cypress": "^13.0.0",
+    "@cypress/webpack-preprocessor": "^6.0.0",
+    "typescript": "^5.0.0"
+  }
+}
