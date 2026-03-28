@@ -6,6 +6,7 @@ import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
 import { copyFileAsync, deleteFileAsync } from '../utils/fileAsync'
+import { dbService } from '../db/database'
 
 export interface BackupConfig {
   enabled: boolean
@@ -27,6 +28,7 @@ class BackupService {
   private dbPath = app.isPackaged
     ? path.join(app.getPath('userData'), 'barkat.db')
     : path.join(__dirname, '../../barkat.db')
+  private readonly RESTORE_DELAY_MS = 100
   private config: BackupConfig = {
     enabled: true,
     intervalDays: 7,
@@ -36,9 +38,11 @@ class BackupService {
   private scheduleId: NodeJS.Timeout | null = null
 
   constructor() {
-    console.log('[BACKUP] Backup service initialized')
-    console.log('[BACKUP] Database path:', this.dbPath)
-    console.log('[BACKUP] Backup directory:', this.backupDir)
+    // Use electron-log if available, fallback to console
+    const log = (global as { log?: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void } }).log || console
+    log.info?.('[BACKUP] Backup service initialized') ?? console.log('[BACKUP] Backup service initialized')
+    log.info?.(`[BACKUP] Database path: ${this.dbPath}`) ?? console.log(`[BACKUP] Database path: ${this.dbPath}`)
+    log.info?.(`[BACKUP] Backup directory: ${this.backupDir}`) ?? console.log(`[BACKUP] Backup directory: ${this.backupDir}`)
   }
 
   private async ensureBackupDir(): Promise<void> {
@@ -109,8 +113,10 @@ class BackupService {
 
   /**
    * Restore from a backup
+   * Note: This closes the database connection and requires app restart
    */
-  async restoreBackup(backupPath: string): Promise<BackupResult> {
+  async restoreBackup(backupPath: string): Promise<BackupResult & { requiresRestart?: boolean; criticalFailure?: boolean }> {
+    let dbWasClosed = false
     try {
       // Validate backup file exists
       try {
@@ -125,8 +131,16 @@ class BackupService {
         return { success: false, error: `Safety backup failed: ${safetyBackup.error}` }
       }
 
-      // Close DB connection (should be done by caller)
-      // Then restore
+      // Close DB connection before restore (required on Windows to release file lock)
+      const log = (global as { log?: { info: (...args: unknown[]) => void } }).log || console
+      log.info?.('[BACKUP] Closing database connection for restore...') ?? console.log('[BACKUP] Closing database connection for restore...')
+      dbService.close()
+      dbWasClosed = true
+
+      // Wait a moment to ensure connection is fully closed
+      await new Promise((resolve) => setTimeout(resolve, this.RESTORE_DELAY_MS))
+
+      // Restore the backup file
       const result = await copyFileAsync(backupPath, this.dbPath)
       if (!result.success) {
         return { success: false, error: result.error }
@@ -137,10 +151,22 @@ class BackupService {
         success: true,
         backupPath: this.dbPath,
         timestamp: new Date().toISOString(),
-        size: result.size
+        size: result.size,
+        requiresRestart: true
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      // If DB was closed but restore failed, we can't recover here - requires manual intervention
+      if (dbWasClosed) {
+        const logErr = (global as { log?: { error: (...args: unknown[]) => void } }).log || { error: (...args: unknown[]) => console.error(...args) }
+        logErr.error?.('[BACKUP] Database was closed but restore failed. Manual restart required:', message) ?? console.error('[BACKUP] Database was closed but restore failed. Manual restart required:', message)
+        return {
+          success: false,
+          error: `Restore failed: ${message}. CRITICAL: Database connection was closed. Application restart required.`,
+          requiresRestart: true,
+          criticalFailure: true
+        }
+      }
       return {
         success: false,
         error: `Restore failed: ${message}`
@@ -187,7 +213,8 @@ class BackupService {
       )
       return results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     } catch (error) {
-      console.error('Error listing backups:', error)
+      const logErr = (global as { log?: { error: (msg: string, err: unknown) => void } }).log || { error: (msg: string) => console.error(msg) }
+      logErr.error?.('Error listing backups:', error) ?? console.error('Error listing backups:', error)
       return []
     }
   }

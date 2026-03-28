@@ -1056,7 +1056,7 @@ const Billing: React.FC = () => {
             />
             <Select
               placeholder="Project"
-              style={{ width: 200 }}
+              style={{ width: '100%', minWidth: 160 }}
               allowClear
               onChange={setSelectedProject}
               value={selectedProject}
@@ -1069,7 +1069,7 @@ const Billing: React.FC = () => {
             </Select>
             <Select
               placeholder="Financial Year"
-              style={{ width: 150 }}
+              style={{ width: '100%', minWidth: 140 }}
               allowClear
               onChange={setSelectedYear}
               value={selectedYear}
@@ -1082,7 +1082,7 @@ const Billing: React.FC = () => {
             </Select>
             <Select
               placeholder="Status"
-              style={{ width: 150 }}
+              style={{ width: '100%', minWidth: 140 }}
               allowClear
               onChange={setSelectedStatus}
               value={selectedStatus}
@@ -1120,7 +1120,7 @@ const Billing: React.FC = () => {
             </Select>
             <Select
               placeholder="Unit Type"
-              style={{ width: 140 }}
+              style={{ width: '100%', minWidth: 120 }}
               allowClear
               onChange={(val) => setSelectedUnitType(val ?? 'All')}
               value={selectedUnitType}
@@ -1138,7 +1138,7 @@ const Billing: React.FC = () => {
               <Text type="secondary">Amount Range:</Text>
               <InputNumber
                 placeholder="Min"
-                style={{ width: 100 }}
+                style={{ width: '100%', minWidth: 90 }}
                 value={amountRange[0]}
                 onChange={(min) => {
                   if (amountRange[1] && min && min > amountRange[1]) {
@@ -1152,7 +1152,7 @@ const Billing: React.FC = () => {
               <Text>-</Text>
               <InputNumber
                 placeholder="Max"
-                style={{ width: 100 }}
+                style={{ width: '100%', minWidth: 90 }}
                 value={amountRange[1]}
                 onChange={(max) => {
                   if (amountRange[0] && max && max < amountRange[0]) {
@@ -1167,7 +1167,7 @@ const Billing: React.FC = () => {
             <Space>
               <Text type="secondary">Due Date Range:</Text>
               <DatePicker.RangePicker
-                style={{ width: 250 }}
+                style={{ width: '100%', minWidth: 220 }}
                 value={[dueDateRange[0], dueDateRange[1]]}
                 onChange={(dates) => setDueDateRange(dates ? [dates[0], dates[1]] : [null, null])}
                 format="DD/MM/YYYY"

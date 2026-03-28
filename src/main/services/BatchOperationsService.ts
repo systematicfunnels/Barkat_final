@@ -4,7 +4,7 @@
  */
 
 import { dbService } from '../db/database'
-import { paymentService, Payment } from './PaymentService'
+import { Payment } from './PaymentService'
 
 export interface BulkPaymentResult {
   successful: number
@@ -26,18 +26,84 @@ class BatchOperationsService {
     let successful = 0
     let failed = 0
 
+    // Use a single transaction for all payments - no nested transactions
+    const insertStmt = dbService.getDb().prepare(
+      `INSERT INTO payments (
+        project_id, unit_id, letter_id, financial_year, payment_date, payment_amount,
+        payment_mode, cheque_number, remarks, payment_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+
+    const receiptStmt = dbService.getDb().prepare(
+      `INSERT INTO receipts (payment_id, receipt_number, receipt_date) VALUES (?, ?, ?)`
+    )
+
+    const deletePaymentStmt = dbService.getDb().prepare('DELETE FROM payments WHERE id = ?')
+
+    const getLetterStmt = dbService.getDb().prepare(
+      `SELECT id, final_amount, unit_id, financial_year FROM maintenance_letters WHERE id = ?`
+    )
+
     return dbService.transaction(() => {
       for (let i = 0; i < payments.length; i++) {
-        try {
-          const paymentId = paymentService.create(payments[i])
-          results.push({ index: i, paymentId })
-          successful++
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          results.push({ index: i, error: message })
-          failed++
-          // Continue processing other payments even if one fails
+        const payment = payments[i]
+
+        // Resolve letter_id and financial_year
+        let resolvedLetterId = payment.letter_id
+        let resolvedFinancialYear = payment.financial_year
+
+        if (!resolvedFinancialYear && resolvedLetterId) {
+          const letter = getLetterStmt.get(resolvedLetterId) as { financial_year: string } | undefined
+          resolvedFinancialYear = letter?.financial_year
         }
+
+        if (!resolvedFinancialYear) {
+          const currentYear =
+            new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear()
+          resolvedFinancialYear = `${currentYear}-${(currentYear + 1).toString().slice(2)}`
+        }
+
+        if (!resolvedLetterId && resolvedFinancialYear) {
+          const letter = dbService.get<{ id: number }>(
+            `SELECT id FROM maintenance_letters WHERE unit_id = ? AND TRIM(financial_year) = TRIM(?)`,
+            [payment.unit_id, resolvedFinancialYear]
+          )
+          resolvedLetterId = letter?.id
+        }
+
+        // Insert payment
+        const result = insertStmt.run(
+          payment.project_id,
+          payment.unit_id,
+          resolvedLetterId,
+          resolvedFinancialYear,
+          payment.payment_date,
+          payment.payment_amount,
+          payment.payment_mode,
+          payment.cheque_number || null,
+          payment.remarks || null,
+          payment.payment_status || 'Received'
+        )
+
+        const paymentId = result.lastInsertRowid as number
+
+        // Create receipt if not pending - failures roll back the payment
+        if (payment.payment_status !== 'Pending') {
+          const receiptNumber = payment.receipt_number || `REC-${paymentId}`
+          try {
+            receiptStmt.run(paymentId, receiptNumber, payment.payment_date)
+          } catch (receiptError) {
+            const message = receiptError instanceof Error ? receiptError.message : String(receiptError)
+            // Roll back the payment to prevent orphaned records
+            deletePaymentStmt.run(paymentId)
+            results.push({ index: i, error: `Payment and receipt failed: ${message}` })
+            failed++
+            continue
+          }
+        }
+
+        results.push({ index: i, paymentId })
+        successful++
       }
 
       return { successful, failed, results } as BulkPaymentResult
@@ -52,15 +118,29 @@ class BatchOperationsService {
     let successful = 0
     let failed = 0
 
+    // Use prepared statements to avoid nested transactions
+    const getPaymentStmt = dbService.getDb().prepare('SELECT * FROM payments WHERE id = ?')
+    const deletePaymentStmt = dbService.getDb().prepare('DELETE FROM payments WHERE id = ?')
+
     return dbService.transaction(() => {
       for (let i = 0; i < paymentIds.length; i++) {
-        try {
-          paymentService.delete(paymentIds[i])
-          results.push({ index: i, paymentId: paymentIds[i] })
+        const paymentId = paymentIds[i]
+        const payment = getPaymentStmt.get(paymentId) as { id: number; letter_id?: number; unit_id: number; financial_year?: string } | undefined
+
+        if (!payment) {
+          results.push({ index: i, error: 'Payment not found' })
+          failed++
+          continue
+        }
+
+        // Delete the payment
+        const result = deletePaymentStmt.run(paymentId)
+
+        if (result.changes > 0) {
+          results.push({ index: i, paymentId })
           successful++
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          results.push({ index: i, error: message })
+        } else {
+          results.push({ index: i, error: 'No rows deleted' })
           failed++
         }
       }

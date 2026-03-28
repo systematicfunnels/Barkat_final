@@ -327,6 +327,16 @@ declare global {
           totalBilled: number
           totalOutstanding: number
         }>
+        getChargesConfig: (projectId: number) => Promise<Record<string, unknown> | null>
+        saveChargesConfig: (config: Record<string, unknown>) => Promise<boolean>
+        getAddonTemplates: (projectId: number) => Promise<ProjectAddonTemplate[]>
+        getEnabledAddonTemplates: (projectId: number) => Promise<ProjectAddonTemplate[]>
+        createAddonTemplate: (template: Omit<ProjectAddonTemplate, 'id' | 'created_at' | 'updated_at'>) => Promise<ProjectAddonTemplate>
+        updateAddonTemplate: (id: number, template: Partial<Omit<ProjectAddonTemplate, 'id' | 'created_at' | 'updated_at'>>) => Promise<ProjectAddonTemplate>
+        deleteAddonTemplate: (id: number) => Promise<boolean>
+        reorderAddonTemplates: (templates: Array<{ id: number; sort_order: number }>) => Promise<boolean>
+        initializeDefaultAddonTemplates: (projectId: number) => Promise<boolean>
+        migrateAddonTemplates: (projectId: number) => Promise<{ migrated: number; templates: ProjectAddonTemplate[] }>
       }
       units: {
         getAll: () => Promise<Unit[]>
@@ -343,6 +353,7 @@ declare global {
       }
       letters: {
         getAll: () => Promise<MaintenanceLetter[]>
+        getByProject: (projectId: number) => Promise<MaintenanceLetter[]>
         getById: (id: number) => Promise<MaintenanceLetter | undefined>
         update: (id: number, updates: Partial<MaintenanceLetter>) => Promise<boolean>
         createBatch: (params: {
@@ -387,6 +398,7 @@ declare global {
       }
       payments: {
         getAll: () => Promise<Payment[]>
+        getByProject: (projectId: number) => Promise<Payment[]>
         create: (payment: Payment) => Promise<number>
         update: (id: number, payment: Partial<Payment>) => Promise<boolean>
         delete: (id: number) => Promise<boolean>
@@ -474,6 +486,57 @@ declare global {
           path: string
           error?: string
         }>
+      }
+      dryRun: {
+        previewImport: (projectId: number, rows: unknown[]) => Promise<{
+          valid: boolean
+          conflicts: Array<{
+            type: string
+            severity: 'error' | 'warning'
+            message: string
+            data?: unknown
+          }>
+          summary: {
+            entities: Record<string, number>
+            warnings: string[]
+          }
+        }>
+        previewBilling: (projectId: number, financialYear: string, unitIds?: number[]) => Promise<{
+          valid: boolean
+          conflicts: Array<{
+            type: string
+            severity: 'error' | 'warning'
+            message: string
+            data?: unknown
+          }>
+          summary: {
+            entities: Record<string, number>
+            warnings: string[]
+          }
+        }>
+        previewPayment: (unitId: number, projectId: number) => Promise<{
+          valid: boolean
+          conflicts: Array<{
+            type: string
+            severity: 'error' | 'warning'
+            message: string
+            data?: unknown
+          }>
+          summary: {
+            entities: Record<string, number>
+            warnings: string[]
+          }
+        }>
+      }
+      worker: {
+        enqueueTask: (taskType: string, data: Record<string, unknown>) => Promise<unknown>
+        getStatus: (taskId: string) => Promise<unknown>
+        cancel: (taskId: string) => Promise<unknown>
+        onProgress: (callback: (event: unknown) => void) => void
+      }
+      logging: {
+        getErrorLogs: (limit?: number) => Promise<unknown[]>
+        clearErrorLogs: () => Promise<unknown>
       }
       detailedLetters: DetailedLettersAPI
     }

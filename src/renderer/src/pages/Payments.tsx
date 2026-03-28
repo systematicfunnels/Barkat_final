@@ -870,7 +870,7 @@ const Payments: React.FC = () => {
               allowClear
               onChange={(e) => setSearchText(e.target.value)}
               onSearch={setSearchText}
-              style={{ width: 250 }}
+              style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
               enterButton
               suffix={null}
               value={searchText}
@@ -878,7 +878,7 @@ const Payments: React.FC = () => {
             />
             <Select
               placeholder="Project"
-              style={{ width: 200 }}
+              style={{ width: '100%', minWidth: 160 }}
               allowClear
               onChange={setSelectedProject}
               value={selectedProject}
@@ -892,7 +892,7 @@ const Payments: React.FC = () => {
             </Select>
             <Select
               placeholder="Financial Year"
-              style={{ width: 150 }}
+              style={{ width: '100%', minWidth: 140 }}
               allowClear
               onChange={setSelectedFY}
               value={selectedFY}
@@ -906,7 +906,7 @@ const Payments: React.FC = () => {
             </Select>
             <Select
               placeholder="Mode"
-              style={{ width: 180 }}
+              style={{ width: '100%', minWidth: 160 }}
               allowClear
               onChange={setSelectedMode}
               value={selectedMode}

@@ -825,7 +825,7 @@ const Reports: React.FC = () => {
             <Search
               placeholder="Search unit, owner, or project..."
               prefix={<SearchOutlined />}
-              style={{ width: 250 }}
+              style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
               allowClear
               onChange={(e) => setSearchText(e.target.value)}
               onSearch={setSearchText}
@@ -836,7 +836,7 @@ const Reports: React.FC = () => {
             />
             <Select
               placeholder="Project"
-              style={{ width: 200 }}
+              style={{ width: '100%', minWidth: 160 }}
               allowClear
               onChange={setSelectedProject}
               value={selectedProject}
@@ -849,7 +849,7 @@ const Reports: React.FC = () => {
             </Select>
             <Select
               placeholder="Unit Type"
-              style={{ width: 120 }}
+              style={{ width: '100%', minWidth: 110 }}
               allowClear
               onChange={setSelectedUnitType}
               value={selectedUnitType}
@@ -862,7 +862,7 @@ const Reports: React.FC = () => {
             </Select>
             <Select
               placeholder="Status"
-              style={{ width: 120 }}
+              style={{ width: '100%', minWidth: 110 }}
               allowClear
               onChange={setSelectedStatus}
               value={selectedStatus}
@@ -873,7 +873,7 @@ const Reports: React.FC = () => {
             <Select
               mode="multiple"
               placeholder="Financial Years"
-              style={{ width: 200 }}
+              style={{ width: '100%', minWidth: 160 }}
               allowClear
               onChange={setSelectedYears}
               value={selectedYears}
@@ -885,10 +885,10 @@ const Reports: React.FC = () => {
                 </Option>
               ))}
             </Select>
-            <Space>
+            <Space wrap>
               <InputNumber
                 placeholder="Min Outstanding"
-                style={{ width: 130 }}
+                style={{ width: '100%', minWidth: 120 }}
                 value={outstandingRange[0]}
                 onChange={(val) => setOutstandingRange([val, outstandingRange[1]])}
                 min={0}
@@ -896,7 +896,7 @@ const Reports: React.FC = () => {
               <span>-</span>
               <InputNumber
                 placeholder="Max Outstanding"
-                style={{ width: 130 }}
+                style={{ width: '100%', minWidth: 120 }}
                 value={outstandingRange[1]}
                 onChange={(val) => setOutstandingRange([outstandingRange[0], val])}
                 min={0}

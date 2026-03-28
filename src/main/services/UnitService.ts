@@ -102,47 +102,6 @@ class UnitService {
     return inferredSector || null
   }
 
-  private syncMaintenanceLetterStatus(letterId: number): void {
-    dbService.run(
-      `UPDATE maintenance_letters
-       SET
-         status = CASE
-           WHEN ROUND(COALESCE(
-             (
-               SELECT SUM(p.payment_amount)
-               FROM payments p
-               WHERE p.letter_id = maintenance_letters.id
-                  OR (
-                    p.letter_id IS NULL
-                    AND p.unit_id = maintenance_letters.unit_id
-                    AND COALESCE(p.financial_year, '') = COALESCE(maintenance_letters.financial_year, '')
-                  )
-             ),
-             0
-           ), 2) >= ROUND(maintenance_letters.final_amount, 2) THEN 'Paid'
-           ELSE 'Pending'
-         END,
-         is_paid = CASE
-           WHEN ROUND(COALESCE(
-             (
-               SELECT SUM(p.payment_amount)
-               FROM payments p
-               WHERE p.letter_id = maintenance_letters.id
-                  OR (
-                    p.letter_id IS NULL
-                    AND p.unit_id = maintenance_letters.unit_id
-                    AND COALESCE(p.financial_year, '') = COALESCE(maintenance_letters.financial_year, '')
-                  )
-             ),
-             0
-           ), 2) >= ROUND(maintenance_letters.final_amount, 2) THEN 1
-           ELSE 0
-         END
-       WHERE id = ?`,
-      [letterId]
-    )
-  }
-
   public getAll(): Unit[] {
     return dbService.query<Unit>(`
       SELECT u.*, p.name as project_name 
@@ -507,29 +466,42 @@ class UnitService {
                 )
               }
 
-              this.syncMaintenanceLetterStatus(letterId)
+              // Letter status is managed through explicit admin actions only
             }
           }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : String(error)
           const unitIdentifier = row.unit_number || `Index ${index + 1}`
           console.error(`[IMPORT ERROR] Row ${index + 1} (${unitIdentifier}) failed:`, message)
-          throw new Error(`Row ${index + 1} (${unitIdentifier}): ${message}`)
+          // Re-throw original error to preserve stack trace
+          throw error
         }
       }
       return true
     })
   }
 
+  private deleteInternal(id: number): boolean {
+    // Internal delete without transaction wrapper for use in bulk operations
+    const unit = dbService.get('SELECT id FROM units WHERE id = ?', [id])
+    if (!unit) {
+      console.warn(`[UNIT_SERVICE] Unit ${id} not found, skipping deletion`)
+      return false
+    }
+
+    const result = dbService.run('DELETE FROM units WHERE id = ?', [id])
+    return result.changes > 0
+  }
+
   public bulkDelete(ids: number[]): boolean {
+    // Use single transaction for atomic operation - roll back all on any failure
     return dbService.transaction(() => {
-      let allDeleted = true
       for (const id of ids) {
-        if (!this.delete(id)) {
-          allDeleted = false
+        if (!this.deleteInternal(id)) {
+          throw new Error(`Failed to delete unit ${id}`)
         }
       }
-      return allDeleted
+      return true
     })
   }
 

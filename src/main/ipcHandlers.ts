@@ -787,6 +787,26 @@ export function registerIpcHandlers(): void {
       if (!result.success) {
         throw new Error(result.error)
       }
+      // Show restart dialog if restore requires restart (success or critical failure)
+      if (result.requiresRestart) {
+        const isCriticalFailure = result.criticalFailure === true
+        const { response } = await dialog.showMessageBox({
+          type: isCriticalFailure ? 'error' : 'info',
+          title: isCriticalFailure ? 'Restore Failed - Restart Required' : 'Restore Complete',
+          message: isCriticalFailure 
+            ? 'Database restore failed and connection was lost.' 
+            : 'Database restored successfully.',
+          detail: isCriticalFailure
+            ? 'The database connection was closed but restore failed. Application must restart to recover.'
+            : 'Please restart the application to complete the restore process.',
+          buttons: ['Restart Now', 'Later'],
+          defaultId: 0
+        })
+        if (response === 0) {
+          app.relaunch()
+          app.quit()
+        }
+      }
       return result
     } catch (error: unknown) {
       errorLogger.log(error as Error, { operation: 'restore-backup', backupPath })

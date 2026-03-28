@@ -1054,6 +1054,24 @@ class DatabaseService {
       throw new Error(`Transaction failed: ${message}`)
     }
   }
+
+  public close(): void {
+    try {
+      this.db.close()
+    } catch (e: unknown) {
+      console.error('[DATABASE] Error closing database:', e)
+    }
+  }
+
+  public isOpen(): boolean {
+    try {
+      // Test if database is still open by running a simple query
+      this.db.prepare('SELECT 1').get()
+      return true
+    } catch {
+      return false
+    }
+  }
 }
 
 export const dbService = new DatabaseService()

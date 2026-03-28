@@ -28,6 +28,7 @@ class DryRunService {
     const conflicts: ConflictItem[] = []
     const unitNumbers = new Set<string>()
     let validRows = 0
+    let totalLetters = 0
 
     const existing = dbService.query<{ unit_number: string }>(
       'SELECT unit_number FROM units WHERE project_id = ?',
@@ -63,6 +64,15 @@ class DryRunService {
 
       unitNumbers.add(unitNumber)
       validRows++
+
+      // Count letters in same loop to avoid second pass
+      const years = row.years as Array<Record<string, unknown>> | undefined
+      if (years && Array.isArray(years)) {
+        totalLetters += years.length
+      } else {
+        // Fallback: assume 1 letter per unit if no years data
+        totalLetters += 1
+      }
     }
 
     return {
@@ -71,7 +81,7 @@ class DryRunService {
       summary: {
         entities: {
           units: validRows,
-          letters: rows.length * 3 // Assume avg 3 years per unit
+          letters: totalLetters // Actual count based on year data per unit
         },
         warnings: conflicts.map((c) => c.message)
       }
@@ -110,14 +120,20 @@ class DryRunService {
     // Get units
     let units = 0
     if (conflicts.filter((c) => c.severity === 'error').length === 0) {
-      const sql = unitIds?.length
-        ? 'SELECT COUNT(*) as cnt FROM units WHERE project_id = ? AND id IN (?' +
-          ',?'.repeat(unitIds.length - 1) +
-          ')'
-        : 'SELECT COUNT(*) as cnt FROM units WHERE project_id = ?'
-      const params = unitIds?.length ? [projectId, ...unitIds] : [projectId]
-      const result = dbService.get(sql, params) as unknown as { cnt: number } | null
-      units = result?.cnt || 0
+      let sql: string
+      let params: number[]
+      
+      if (unitIds?.length) {
+        const placeholders = unitIds.map(() => '?').join(',')
+        sql = `SELECT COUNT(*) as cnt FROM units WHERE project_id = ? AND id IN (${placeholders})`
+        params = [projectId, ...unitIds]
+      } else {
+        sql = 'SELECT COUNT(*) as cnt FROM units WHERE project_id = ?'
+        params = [projectId]
+      }
+      
+      const result = dbService.get<{ cnt: number }>(sql, params)
+      units = result?.cnt ?? 0
     }
 
     return {
@@ -151,18 +167,19 @@ class DryRunService {
       })
     }
 
-    // Check for duplicate recent payments (last 1 hour)
+    // Check for duplicate payments today (same day)
+    // Fixed: Use date() instead of datetime() for proper date comparison
     if (!conflicts.some((c) => c.severity === 'error')) {
       const recent = dbService.get<{ count: number }>(
-        `SELECT COUNT(*) as count FROM payments 
-         WHERE unit_id = ? AND datetime(payment_date) > datetime('now', '-1 hour')`,
+        `SELECT COUNT(*) as count FROM payments
+         WHERE unit_id = ? AND date(payment_date) = date('now')`,
         [unitId]
       )
       if ((recent?.count || 0) > 0) {
         conflicts.push({
           type: 'duplicate_unit',
           severity: 'warning',
-          message: 'A payment was recorded for this unit recently. Confirm this is not a duplicate.'
+          message: 'A payment was recorded for this unit today. Confirm this is not a duplicate.'
         })
       }
     }

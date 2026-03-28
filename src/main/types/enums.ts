@@ -4,8 +4,8 @@
  */
 
 export enum ProjectStatus {
-  ACTIVE = 'Sold',
-  INACTIVE = 'Unsold'
+  ACTIVE = 'Active',
+  INACTIVE = 'Inactive'
 }
 
 export enum UnitStatus {

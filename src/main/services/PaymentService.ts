@@ -40,55 +40,6 @@ export interface Receipt {
 }
 
 class PaymentService extends BasePDFGenerator {
-  private updateLetterStatus(letterId: number): void {
-    const letter = dbService.get<{
-      id: number
-      final_amount: number
-      unit_id: number
-      financial_year: string
-    }>('SELECT id, final_amount, unit_id, financial_year FROM maintenance_letters WHERE id = ?', [
-      letterId
-    ])
-    if (!letter) return
-
-    // Calculate total payments for this specific letter
-    const letterPayments =
-      dbService.get<{ total: number }>(
-        'SELECT COALESCE(SUM(payment_amount), 0) as total FROM payments WHERE letter_id = ?',
-        [letterId]
-      )?.total || 0
-
-    // Calculate payments without letter_id but matching unit and financial year
-    const unlinkedPayments =
-      dbService.get<{ total: number }>(
-        `SELECT COALESCE(SUM(payment_amount), 0) as total
-       FROM payments 
-       WHERE letter_id IS NULL 
-         AND unit_id = ? 
-         AND TRIM(COALESCE(financial_year, '')) = TRIM(?)`,
-        [letter.unit_id, letter.financial_year]
-      )?.total || 0
-
-    const totalPaid = letterPayments + unlinkedPayments
-    const isPaid = totalPaid + 0.01 >= letter.final_amount
-
-    dbService.run('UPDATE maintenance_letters SET status = ?, is_paid = ? WHERE id = ?', [
-      isPaid ? 'Paid' : 'Pending',
-      isPaid ? 1 : 0,
-      letterId
-    ])
-  }
-
-  private updateLetterStatusByUnitYear(unitId: number, financialYear?: string): void {
-    if (!financialYear) return
-    const letter = dbService.get<{ id: number }>(
-      'SELECT id FROM maintenance_letters WHERE unit_id = ? AND TRIM(financial_year) = TRIM(?)',
-      [unitId, financialYear]
-    )
-    if (!letter) return
-    this.updateLetterStatus(letter.id)
-  }
-
   public async generateReceiptPdf(paymentId: number): Promise<string> {
     try {
       const payment = dbService.get<Payment>(
@@ -144,14 +95,19 @@ class PaymentService extends BasePDFGenerator {
       }
 
       // Parse addons JSON if it exists
-      let addons = []
+      let addons: Array<{ addon_name: string; addon_amount: number }> = []
       if (letterAndAddons && letterAndAddons.addons) {
         try {
           const parsed = JSON.parse(letterAndAddons.addons)
-          // Filter out null entries (when no addons exist)
-          addons = parsed.filter(item => item.addon_name !== null)
+          // Validate parsed is an array before filtering
+          if (Array.isArray(parsed)) {
+            // Filter out null entries (when no addons exist)
+            addons = parsed.filter(item => item && item.addon_name !== null)
+          }
         } catch (e) {
-          console.warn('Failed to parse addons JSON:', e)
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('Failed to parse addons JSON:', e)
+          }
         }
       }
 
@@ -283,24 +239,24 @@ class PaymentService extends BasePDFGenerator {
 
         // Base maintenance amount
         if (letterAndAddons.base_amount > 0) {
-          drawReceiptRow('Maintenance Charges', `₹${letterAndAddons.base_amount.toLocaleString('en-IN')}`)
+          drawReceiptRow('Maintenance Charges', `Rs. ${letterAndAddons.base_amount.toLocaleString('en-IN')}`)
         }
 
         // Add-ons (filter out zero amounts)
         addons.forEach((addon: any) => {
           if (addon.addon_amount > 0) {
-            drawReceiptRow(addon.addon_name, `₹${addon.addon_amount.toLocaleString('en-IN')}`)
+            drawReceiptRow(addon.addon_name, `Rs. ${addon.addon_amount.toLocaleString('en-IN')}`)
           }
         })
 
         // Arrears if any
         if (letterAndAddons.arrears && letterAndAddons.arrears > 0) {
-          drawReceiptRow('Arrears (Previous Outstanding)', `₹${letterAndAddons.arrears.toLocaleString('en-IN')}`)
+          drawReceiptRow('Arrears (Previous Outstanding)', `Rs. ${letterAndAddons.arrears.toLocaleString('en-IN')}`)
         }
 
         // Discount if any
         if (letterAndAddons.discount_amount && letterAndAddons.discount_amount > 0) {
-          drawReceiptRow('Early Payment Discount', `-₹${letterAndAddons.discount_amount.toLocaleString('en-IN')}`)
+          drawReceiptRow('Early Payment Discount', `-Rs. ${letterAndAddons.discount_amount.toLocaleString('en-IN')}`)
         }
 
         // Separator line before total
@@ -317,7 +273,7 @@ class PaymentService extends BasePDFGenerator {
       // ── Amount Received Box (green highlight) ──
       const amountLabel = 'Amount Received'
       const safeAmount = payment.payment_amount ?? 0
-      const amountValue = `₹${safeAmount.toLocaleString('en-IN')}`
+      const amountValue = `Rs. ${safeAmount.toLocaleString('en-IN')}`
       
       const amountLabelWidth = this.fonts.bold.widthOfTextAtSize(amountLabel, 12)
       const amountValueWidth = this.fonts.bold.widthOfTextAtSize(amountValue, 14)
@@ -429,26 +385,15 @@ class PaymentService extends BasePDFGenerator {
         id
       ];
 
-      console.log('SQL Parameters:', params);
-      console.log('Parameter count:', params.length);
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('SQL Parameters:', params);
+        console.log('Parameter count:', params.length);
+      }
       
       dbService.run(
         'UPDATE payments SET project_id = ?, unit_id = ?, letter_id = ?, payment_date = ?, payment_amount = ?, payment_mode = ?, cheque_number = ?, remarks = ?, financial_year = ? WHERE id = ?',
         params
       )
-
-      // Update letter status if letter_id or financial_year changed
-      const shouldUpdateLetterStatus = 
-        payment.letter_id !== undefined && payment.letter_id !== existingPayment.letter_id ||
-        payment.financial_year !== undefined && payment.financial_year !== existingPayment.financial_year
-
-      if (shouldUpdateLetterStatus) {
-        if (payment.letter_id) {
-          this.updateLetterStatus(payment.letter_id)
-        } else if (payment.unit_id && payment.financial_year) {
-          this.updateLetterStatusByUnitYear(payment.unit_id, payment.financial_year)
-        }
-      }
 
       return true
     })
@@ -537,10 +482,10 @@ class PaymentService extends BasePDFGenerator {
         )?.id
       }
 
-      // Validate financial year format
-      if (!resolvedFinancialYear || !resolvedFinancialYear.match(/^\d{4}-\d{2}$/)) {
+      // Validate financial year format - accepts both 2024-25 and 2024-2025
+      if (!resolvedFinancialYear || !resolvedFinancialYear.match(/^\d{4}-(\d{2}|\d{4})$/)) {
         throw new Error(
-          'Invalid or missing financial year. Please provide a valid financial year (e.g., 2024-25).'
+          'Invalid or missing financial year. Please provide a valid financial year (e.g., 2024-25 or 2024-2025).'
         )
       }
 
@@ -569,60 +514,53 @@ class PaymentService extends BasePDFGenerator {
       if (payment.payment_status !== 'Pending') {
         const receiptNumber = payment.receipt_number || `REC-${paymentId}`
         try {
-          console.log('🧾 Creating receipt record:', receiptNumber)
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('🧾 Creating receipt record:', receiptNumber)
+          }
           dbService.run(
             `INSERT INTO receipts (payment_id, receipt_number, receipt_date)
              VALUES (?, ?, ?)`,
             [paymentId, receiptNumber, payment.payment_date]
           )
-          console.log('✅ Receipt record created successfully:', receiptNumber)
+          if (process.env.NODE_ENV !== 'production') {
+            console.log('✅ Receipt record created successfully:', receiptNumber)
+          }
         } catch (error) {
-          console.error('❌ Failed to create receipt record:', error)
+          if (process.env.NODE_ENV !== 'production') {
+            console.error('❌ Failed to create receipt record:', error)
+          }
           // Don't fail the payment, just log the error
         }
       }
 
-      if (resolvedLetterId) {
-        this.updateLetterStatus(resolvedLetterId)
-      } else {
-        this.updateLetterStatusByUnitYear(payment.unit_id, resolvedFinancialYear)
-      }
+      // Letter status auto-calculation has been disabled to prevent incorrect Paid status
+      // Status must be managed through manual letter updates only
 
       return paymentId
     })
   }
 
+  private deleteInternal(id: number): boolean {
+    // Internal delete without transaction wrapper for use in bulk operations
+    const result = dbService.run('DELETE FROM payments WHERE id = ?', [id])
+    return result.changes > 0
+  }
+
   public delete(id: number): boolean {
     return dbService.transaction(() => {
-      try {
-        const payment = dbService.get<Payment>('SELECT * FROM payments WHERE id = ?', [id])
-        const result = dbService.run('DELETE FROM payments WHERE id = ?', [id])
-
-        if (result.changes > 0 && payment) {
-          if (payment.letter_id) {
-            this.updateLetterStatus(payment.letter_id)
-          } else {
-            this.updateLetterStatusByUnitYear(payment.unit_id, payment.financial_year)
-          }
-        }
-
-        return result.changes > 0
-      } catch (error) {
-        console.error(`Error deleting payment ${id}:`, error)
-        throw error
-      }
+      return this.deleteInternal(id)
     })
   }
 
   public bulkDelete(ids: number[]): boolean {
+    // Use single transaction for atomic operation - roll back all on any failure
     return dbService.transaction(() => {
-      let allDeleted = true
       for (const id of ids) {
-        if (!this.delete(id)) {
-          allDeleted = false
+        if (!this.deleteInternal(id)) {
+          throw new Error(`Failed to delete payment ${id}`)
         }
       }
-      return allDeleted
+      return true
     })
   }
 }

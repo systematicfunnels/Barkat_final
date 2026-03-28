@@ -729,17 +729,15 @@ const Projects: React.FC = () => {
     <div>
       <Card style={{ marginBottom: 16 }}>
         <div
+          className="responsive-page-header"
           style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
             marginBottom: 16
           }}
         >
           <Typography.Title level={2} style={{ margin: 0 }}>
             Projects
           </Typography.Title>
-          <Space>
+          <Space wrap className="responsive-action-bar">
             {selectedRowKeys.length > 0 && (
               <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
                 Delete Selected ({selectedRowKeys.length})
@@ -761,18 +759,18 @@ const Projects: React.FC = () => {
           </Space>
         </div>
 
-        <Space wrap style={{ marginBottom: 8 }}>
+        <Space wrap className="responsive-filters" style={{ marginBottom: 8 }}>
           <Input
             placeholder="Search Project Code, Name, Address, or City..."
             prefix={<SearchOutlined />}
-            style={{ width: 250 }}
+            style={{ width: '100%', minWidth: 200, maxWidth: 350 }}
             allowClear
             onChange={(e) => setSearchText(e.target.value)}
             value={searchText}
           />
           <Select
             placeholder="Status"
-            style={{ width: 150 }}
+            style={{ width: '100%', minWidth: 120 }}
             allowClear
             onChange={(val) => setStatusFilter(val)}
             value={statusFilter}
@@ -782,7 +780,7 @@ const Projects: React.FC = () => {
           </Select>
           <Select
             placeholder="City"
-            style={{ width: 150 }}
+            style={{ width: '100%', minWidth: 120 }}
             allowClear
             onChange={(val) => setCityFilter(val)}
             value={cityFilter}
@@ -841,17 +839,17 @@ const Projects: React.FC = () => {
           <Alert
             type="warning"
             showIcon
-            icon={<ExclamationCircleOutlined />}
-            style={{ marginBottom: 16 }}
+            icon={<ExclamationCircleOutlined style={{ fontSize: 24 }} />}
+            style={{ marginBottom: 24, padding: '20px 24px' }}
             message={
-              <span style={{ fontWeight: 500 }}>
+              <span style={{ fontWeight: 600, fontSize: 18, lineHeight: 1.5 }}>
                 {incompleteProjects.length === 1
                   ? `"${incompleteProjects[0].name}" is not ready for billing`
                   : `${incompleteProjects.length} projects are not ready for billing`}
               </span>
             }
             description={
-              <div style={{ marginTop: 8 }}>
+              <div style={{ marginTop: 12 }}>
                 {incompleteProjects.map((p) => {
                   const s = projectSetupSummaries[p.id!]
                   if (!s) return null
@@ -863,43 +861,46 @@ const Projects: React.FC = () => {
                       key={p.id}
                       style={{
                         display: 'flex',
-                        alignItems: 'center',
-                        gap: 12,
-                        padding: '6px 0',
-                        borderBottom: '0.5px solid rgba(0,0,0,0.06)',
+                        alignItems: 'flex-start',
+                        gap: 16,
+                        padding: '14px 0',
+                        borderBottom: '1px solid rgba(0,0,0,0.1)',
                         flexWrap: 'wrap'
                       }}
                     >
-                      <span style={{ fontWeight: 500, minWidth: 140 }}>
+                      <span style={{ fontWeight: 600, minWidth: 180, fontSize: 16 }}>
                         {p.project_code || `PRJ-${p.id}`} — {p.name}
                       </span>
-                      <span style={{ color: '#8c6d00', fontSize: 12 }}>
+                      <span style={{ color: '#8c6d00', fontSize: 15, lineHeight: 1.5, flex: 1 }}>
                         {s.blockers.join(' · ')}
                       </span>
-                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                         {(needsBank || needsRate) && (
                           <Button
-                            size="small"
+                            size="middle"
                             icon={<BankOutlined />}
                             onClick={() => handleEdit(p)}
+                            style={{ fontSize: 15, padding: '8px 16px', height: 'auto' }}
                           >
                             {needsBank ? 'Add Bank Details' : 'Edit Project'}
                           </Button>
                         )}
                         {needsRate && (
                           <Button
-                            size="small"
+                            size="middle"
                             icon={<ToolOutlined />}
                             onClick={() => handleRates(p)}
                             type="primary"
+                            style={{ fontSize: 15, padding: '8px 16px', height: 'auto' }}
                           >
                             Add Rates
                           </Button>
                         )}
                         {needsUnits && (
                           <Button
-                            size="small"
+                            size="middle"
                             onClick={() => navigate('/units')}
+                            style={{ fontSize: 15, padding: '8px 16px', height: 'auto' }}
                           >
                             Add Units
                           </Button>
@@ -914,17 +915,20 @@ const Projects: React.FC = () => {
         )
       })()}
 
-      <Table
-        rowSelection={{
-          selectedRowKeys,
-          onChange: setSelectedRowKeys
-        }}
-        dataSource={filteredProjects}
-        columns={columns}
-        rowKey="id"
-        loading={loading}
-        pagination={{ pageSize: 10 }}
-      />
+      <div className="table-scroll-wrapper">
+        <Table
+          rowSelection={{
+            selectedRowKeys,
+            onChange: setSelectedRowKeys
+          }}
+          dataSource={filteredProjects}
+          columns={columns}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 'max-content' }}
+        />
+      </div>
 
       {/* Project Add/Edit Modal */}
       <Modal

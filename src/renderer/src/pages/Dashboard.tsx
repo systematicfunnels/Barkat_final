@@ -214,13 +214,9 @@ const Dashboard: React.FC = () => {
   return (
     <div style={{ margin: '0 auto' }}>
       <div
+        className="responsive-page-header"
         style={{
-          marginBottom: 32,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-end',
-          flexWrap: 'wrap',
-          gap: '16px'
+          marginBottom: 32
         }}
       >
         <div>
@@ -235,6 +231,7 @@ const Dashboard: React.FC = () => {
         <Space
           size="middle"
           wrap
+          className="responsive-filters"
           style={{
             opacity: loading ? 0.7 : 1,
             pointerEvents: loading ? 'none' : 'auto'
@@ -249,7 +246,7 @@ const Dashboard: React.FC = () => {
             </div>
             <Select
               placeholder="All Projects"
-              style={{ width: 180 }}
+              style={{ width: '100%', minWidth: 140 }}
               allowClear
               onChange={(value) => setSelectedProject(value)}
               value={selectedProject}
@@ -276,7 +273,7 @@ const Dashboard: React.FC = () => {
             </div>
             <Select
               placeholder="Select Year"
-              style={{ width: 200 }}
+              style={{ width: '100%', minWidth: 160 }}
               popupMatchSelectWidth={false}
               onChange={(value) => setSelectedFY(value)}
               value={selectedFY}
@@ -326,7 +323,7 @@ const Dashboard: React.FC = () => {
             </div>
             <Select
               placeholder="All Types"
-              style={{ width: 130 }}
+              style={{ width: '100%', minWidth: 120 }}
               allowClear
               onChange={setSelectedUnitType}
               value={selectedUnitType}
@@ -348,7 +345,7 @@ const Dashboard: React.FC = () => {
             </div>
             <Select
               placeholder="All Status"
-              style={{ width: 120 }}
+              style={{ width: '100%', minWidth: 110 }}
               allowClear
               onChange={setSelectedStatus}
               value={selectedStatus}

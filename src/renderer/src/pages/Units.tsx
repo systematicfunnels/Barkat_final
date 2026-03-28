@@ -1007,28 +1007,20 @@ const Units: React.FC = () => {
     <div style={{ padding: '24px' }}>
       {/* Enhanced header with selection feedback */}
       <div
+        className="responsive-page-header"
         style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'flex-start',
-          marginBottom: 24,
-          flexWrap: 'wrap',
-          gap: '16px'
+          marginBottom: 24
         }}
       >
-        <div>
-          <Title level={2} style={{ margin: 0, display: 'inline', marginRight: 12 }}>
-            Units
-          </Title>
-          {selectedRowKeys.length > 0 && (
-            <Text type="secondary" style={{ fontSize: '14px' }}>
-              ({selectedRowKeys.length} selected)
-            </Text>
-          )}
-        </div>
-        <Space wrap>
+        <Title level={2} style={{ margin: 0 }}>
+          Units
+        </Title>
+        <Space wrap className="responsive-action-bar">
           {selectedRowKeys.length > 0 && (
             <>
+              <Text type="secondary" style={{ fontSize: '14px' }}>
+                ({selectedRowKeys.length} selected)
+              </Text>
               <Button
                 type="primary"
                 icon={<SolutionOutlined />}
@@ -1056,19 +1048,19 @@ const Units: React.FC = () => {
 
       <Card>
         <div style={{ marginBottom: 24 }}>
-          <Space wrap size="middle">
+          <Space wrap className="responsive-filters" size="middle">
             <Search
               placeholder="Search unit, owner..."
               allowClear
               onSearch={setSearchText}
               onChange={(e) => setSearchText(e.target.value)}
-              style={{ width: 250 }}
+              style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
               enterButton
               suffix={null}
             />
             <Select
               placeholder="Project"
-              style={{ width: 180 }}
+              style={{ width: '100%', minWidth: 160 }}
               allowClear
               onChange={setSelectedProject}
               value={selectedProject}
@@ -1081,7 +1073,7 @@ const Units: React.FC = () => {
             </Select>
             <Select
               placeholder="Status"
-              style={{ width: 130 }}
+              style={{ width: '100%', minWidth: 120 }}
               allowClear
               onChange={setStatusFilter}
               value={statusFilter}
@@ -1091,7 +1083,7 @@ const Units: React.FC = () => {
             </Select>
             <Select
               placeholder="Unit Type"
-              style={{ width: 140 }}
+              style={{ width: '100%', minWidth: 120 }}
               allowClear
               onChange={setSelectedUnitType}
               value={selectedUnitType}
@@ -1104,10 +1096,10 @@ const Units: React.FC = () => {
             </Select>
 
             {/* Area range with validation */}
-            <Input.Group compact>
+            <Input.Group compact style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               <InputNumber
                 placeholder="Min Area"
-                style={{ width: 100 }}
+                style={{ width: 100, flex: '1 1 90px' }}
                 value={areaRange[0]}
                 onChange={(min) => {
                   if (areaRange[1] && min && min > areaRange[1]) {
@@ -1120,7 +1112,7 @@ const Units: React.FC = () => {
               <span style={{ padding: '0 8px', lineHeight: '32px' }}>to</span>
               <InputNumber
                 placeholder="Max Area"
-                style={{ width: 100 }}
+                style={{ width: 100, flex: '1 1 90px' }}
                 value={areaRange[1]}
                 onChange={(max) => {
                   if (areaRange[0] && max && max < areaRange[0]) {
