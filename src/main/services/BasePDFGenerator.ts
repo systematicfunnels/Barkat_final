@@ -172,7 +172,7 @@ export abstract class BasePDFGenerator {
     // Compute column widths dynamically based on header count
     // 2-col (receipt): 40% label / 60% value
     // 3-col: 50% / 25% / 25%
-    // 4-col (letter): 50% / 16.67% / 16.67% / 16.67%
+    // 4-col (letter): 45% / 18.33% / 18.33% / 18.34% - adjusted to prevent overflow
     let columnWidths: number[]
     if (headers.length === 2) {
       columnWidths = [contentWidth * 0.4, contentWidth * 0.6]
@@ -180,10 +180,10 @@ export abstract class BasePDFGenerator {
       columnWidths = [contentWidth * 0.5, contentWidth * 0.25, contentWidth * 0.25]
     } else {
       columnWidths = [
-        contentWidth * 0.5,
-        contentWidth * 0.1667,
-        contentWidth * 0.1667,
-        contentWidth * 0.1667
+        contentWidth * 0.45,
+        contentWidth * 0.1833,
+        contentWidth * 0.1833,
+        contentWidth * 0.1834
       ]
     }
     

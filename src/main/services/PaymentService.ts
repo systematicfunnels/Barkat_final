@@ -2,6 +2,7 @@ import { dbService } from '../db/database'
 import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
+import { rgb } from 'pdf-lib'
 import { BasePDFGenerator } from './BasePDFGenerator'
 import { MaintenanceLetter } from './MaintenanceLetterService'
 
@@ -105,7 +106,7 @@ class PaymentService extends BasePDFGenerator {
 
       if (!payment) throw new Error(`Payment not found: ${paymentId}`)
 
-      // Get associated maintenance letter and its addons
+      // Get associated maintenance letter and its addons for itemized breakdown
       let letterAndAddons: (MaintenanceLetter & { addons: string }) | undefined = undefined
       if (payment.letter_id) {
         letterAndAddons = dbService.get(
@@ -156,136 +157,221 @@ class PaymentService extends BasePDFGenerator {
 
       await this.initializePDF()
 
-      // ── Letterhead: real project name + address ──
-      const projectName = (payment.project_name || 'Payment Receipt').toUpperCase()
-      this.page.drawText(projectName, {
-        x: this.MARGIN,
-        y: this.layout.currentY,
-        size: 16,
-        font: this.fonts.bold,
-        color: this.COLORS.PRIMARY
-      })
-      this.layout.currentY -= 18
-
-      const rawPayment = payment as unknown as Record<string, string>
-      const addrParts = [rawPayment.address, rawPayment.city, rawPayment.state].filter(Boolean)
-      if (addrParts.length > 0) {
-        this.page.drawText(addrParts.join(', '), {
-          x: this.MARGIN,
-          y: this.layout.currentY,
-          size: 9,
-          font: this.fonts.regular,
-          color: this.COLORS.GRAY
-        })
-        this.layout.currentY -= 14
-      }
-
-      const contactParts = [
-        rawPayment.contact_email ? `Email: ${rawPayment.contact_email}` : null,
-        rawPayment.contact_phone ? `Phone: ${rawPayment.contact_phone}` : null
-      ].filter(Boolean)
-      if (contactParts.length > 0) {
-        this.page.drawText(contactParts.join('  |  '), {
-          x: this.MARGIN,
-          y: this.layout.currentY,
-          size: 9,
-          font: this.fonts.regular,
-          color: this.COLORS.GRAY
-        })
-        this.layout.currentY -= 14
-      }
-
-      this.drawDivider()
-
-      // ── Receipt title ──
-      this.drawSectionHeader('PAYMENT RECEIPT')
-      this.layout.currentY -= 10
-
-      // ── Receipt meta ──
-      this.drawInfoGrid(
-        ['Receipt No:', 'Payment Date:', 'Financial Year:'],
-        [
-          payment.receipt_number || `REC-${paymentId}`,
-          this.formatDate(payment.payment_date),
-          payment.financial_year || '—'
-        ]
-      )
-
-      // ── Payment details table ──
-      this.layout.currentY -= 10
-      this.drawSectionHeader('PAYMENT DETAILS')
-      this.layout.currentY -= 10
-
-      const modeLabel =
-        payment.payment_mode === 'Transfer' ? 'Bank Transfer / UPI' : payment.payment_mode || '—'
-      const refLabel = payment.cheque_number
-        ? `${modeLabel} — Ref: ${payment.cheque_number}`
-        : modeLabel
-
-      // Build payment breakdown table
-      const tableRows: string[][] = []
+      // ── Header: Project Name (centered, green) ──
+      const projectName = payment.project_name || 'Barkat'
+      const projectNameWidth = this.fonts.bold.widthOfTextAtSize(projectName, 18)
+      const centerX = (this.layout.width - projectNameWidth) / 2
       
-      // If we have letter details, show the breakdown
+      this.page.drawText(projectName, {
+        x: centerX,
+        y: this.layout.currentY,
+        size: 18,
+        font: this.fonts.bold,
+        color: this.COLORS.SUCCESS // Green color
+      })
+      this.layout.currentY -= 22
+
+      // ── Location (centered, gray) ──
+      const rawPayment = payment as unknown as Record<string, string>
+      const locationParts = [rawPayment.city, rawPayment.state].filter(Boolean)
+      if (locationParts.length > 0) {
+        const locationText = locationParts.join(', ')
+        const locationWidth = this.fonts.regular.widthOfTextAtSize(locationText, 10)
+        const locationCenterX = (this.layout.width - locationWidth) / 2
+        
+        this.page.drawText(locationText, {
+          x: locationCenterX,
+          y: this.layout.currentY,
+          size: 10,
+          font: this.fonts.regular,
+          color: this.COLORS.GRAY
+        })
+      }
+      this.layout.currentY -= 25
+
+      // ── Horizontal Line ──
+      this.page.drawLine({
+        start: { x: this.MARGIN, y: this.layout.currentY },
+        end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY },
+        thickness: 1.5,
+        color: this.COLORS.SUCCESS
+      })
+      this.layout.currentY -= 25
+
+      // ── PAYMENT RECEIPT Title (centered, bold) ──
+      const titleText = 'PAYMENT RECEIPT'
+      const titleWidth = this.fonts.bold.widthOfTextAtSize(titleText, 14)
+      const titleCenterX = (this.layout.width - titleWidth) / 2
+      
+      this.page.drawText(titleText, {
+        x: titleCenterX,
+        y: this.layout.currentY,
+        size: 14,
+        font: this.fonts.bold,
+        color: this.COLORS.TEXT
+      })
+      this.layout.currentY -= 35
+
+      // ── Receipt Details (key-value pairs) ──
+      const drawReceiptRow = (label: string, value: string): void => {
+        // Draw label (left aligned)
+        this.page.drawText(label, {
+          x: this.MARGIN,
+          y: this.layout.currentY,
+          size: 11,
+          font: this.fonts.regular,
+          color: this.COLORS.TEXT
+        })
+        
+        // Draw value (right aligned)
+        const valueWidth = this.fonts.regular.widthOfTextAtSize(value, 11)
+        this.page.drawText(value, {
+          x: this.layout.width - this.MARGIN - valueWidth,
+          y: this.layout.currentY,
+          size: 11,
+          font: this.fonts.regular,
+          color: this.COLORS.TEXT
+        })
+        
+        // Draw subtle separator line
+        this.layout.currentY -= 8
+        this.page.drawLine({
+          start: { x: this.MARGIN, y: this.layout.currentY },
+          end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY },
+          thickness: 0.5,
+          color: this.COLORS.LIGHT_GRAY
+        })
+        this.layout.currentY -= 18
+      }
+
+      // Format payment date
+      const formatDate = (dateStr: string): string => {
+        if (!dateStr) return '—'
+        const date = new Date(dateStr)
+        return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      }
+
+      // Draw all receipt rows
+      drawReceiptRow('Receipt No.', payment.receipt_number || `REC-${paymentId}`)
+      drawReceiptRow('Payment Date', formatDate(payment.payment_date || ''))
+      drawReceiptRow('Financial Year', payment.financial_year || '—')
+      drawReceiptRow('Unit Owner', payment.owner_name || '—')
+      drawReceiptRow('Unit Number', payment.unit_number || '—')
+      drawReceiptRow('Project', payment.project_name || '—')
+      
+      const modeLabel = payment.payment_mode === 'Transfer' ? 'Bank Transfer / UPI' : payment.payment_mode || '—'
+      drawReceiptRow('Payment Mode', modeLabel)
+
+      this.layout.currentY -= 10
+
+      // ── Payment Breakdown (itemized) ──
       if (letterAndAddons) {
+        // Draw breakdown header
+        this.layout.currentY -= 5
+        const breakdownText = 'Payment Breakdown'
+        const breakdownWidth = this.fonts.bold.widthOfTextAtSize(breakdownText, 12)
+        const breakdownX = (this.layout.width - breakdownWidth) / 2
+        
+        this.page.drawText(breakdownText, {
+          x: breakdownX,
+          y: this.layout.currentY,
+          size: 12,
+          font: this.fonts.bold,
+          color: this.COLORS.TEXT
+        })
+        this.layout.currentY -= 20
+
         // Base maintenance amount
         if (letterAndAddons.base_amount > 0) {
-          tableRows.push([
-            'Maintenance Charges',
-            this.formatCurrency(letterAndAddons.base_amount)
-          ])
+          drawReceiptRow('Maintenance Charges', `₹${letterAndAddons.base_amount.toLocaleString('en-IN')}`)
         }
 
-        // Add-ons
+        // Add-ons (filter out zero amounts)
         addons.forEach((addon: any) => {
-          tableRows.push([
-            addon.addon_name,
-            this.formatCurrency(addon.addon_amount)
-          ])
+          if (addon.addon_amount > 0) {
+            drawReceiptRow(addon.addon_name, `₹${addon.addon_amount.toLocaleString('en-IN')}`)
+          }
         })
 
         // Arrears if any
         if (letterAndAddons.arrears && letterAndAddons.arrears > 0) {
-          tableRows.push([
-            'Arrears (Previous Outstanding)',
-            this.formatCurrency(letterAndAddons.arrears)
-          ])
+          drawReceiptRow('Arrears (Previous Outstanding)', `₹${letterAndAddons.arrears.toLocaleString('en-IN')}`)
         }
 
         // Discount if any
         if (letterAndAddons.discount_amount && letterAndAddons.discount_amount > 0) {
-          tableRows.push([
-            'Early Payment Discount',
-            `-${this.formatCurrency(letterAndAddons.discount_amount)}`
-          ])
+          drawReceiptRow('Early Payment Discount', `-₹${letterAndAddons.discount_amount.toLocaleString('en-IN')}`)
         }
 
-        // Separator line
-        tableRows.push(['', ''])
-
-        // Total amount paid
-        tableRows.push([
-          'Total Amount Paid',
-          this.formatCurrency(payment.payment_amount)
-        ])
-      } else {
-        // Fallback to simple details if no letter found
-        tableRows.push([
-          'Amount Paid',
-          this.formatCurrency(payment.payment_amount)
-        ])
+        // Separator line before total
+        this.layout.currentY -= 5
+        this.page.drawLine({
+          start: { x: this.MARGIN, y: this.layout.currentY },
+          end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY },
+          thickness: 1,
+          color: this.COLORS.BORDER
+        })
+        this.layout.currentY -= 20
       }
 
-      // Payment mode and reference
-      tableRows.push(['Payment Mode', refLabel])
+      // ── Amount Received Box (green highlight) ──
+      const amountLabel = 'Amount Received'
+      const safeAmount = payment.payment_amount ?? 0
+      const amountValue = `₹${safeAmount.toLocaleString('en-IN')}`
       
-      if (payment.remarks) {
-        tableRows.push(['Remarks', payment.remarks])
-      }
-
-      this.drawTable(['Particulars', 'Details'], tableRows)
+      const amountLabelWidth = this.fonts.bold.widthOfTextAtSize(amountLabel, 12)
+      const amountValueWidth = this.fonts.bold.widthOfTextAtSize(amountValue, 14)
+      
+      // Calculate box dimensions
+      const boxPadding = 15
+      const boxHeight = 45
+      const boxWidth = Math.max(amountLabelWidth + amountValueWidth + boxPadding * 3, 250)
+      const boxX = (this.layout.width - boxWidth) / 2
+      
+      // Draw green background box
+      this.page.drawRectangle({
+        x: boxX,
+        y: this.layout.currentY - boxHeight + 10,
+        width: boxWidth,
+        height: boxHeight,
+        color: rgb(0.9, 0.98, 0.9), // Very light green background
+        borderColor: this.COLORS.SUCCESS,
+        borderWidth: 1
+      })
+      
+      // Draw Amount Received label (left side of box)
+      this.page.drawText(amountLabel, {
+        x: boxX + boxPadding,
+        y: this.layout.currentY - 18,
+        size: 12,
+        font: this.fonts.bold,
+        color: this.COLORS.SUCCESS
+      })
+      
+      // Draw amount value (right side of box)
+      this.page.drawText(amountValue, {
+        x: boxX + boxWidth - amountValueWidth - boxPadding,
+        y: this.layout.currentY - 20,
+        size: 14,
+        font: this.fonts.bold,
+        color: this.COLORS.SUCCESS
+      })
+      
+      this.layout.currentY -= boxHeight + 25
 
       // ── Footer ──
-      this.drawFooter('This is an electronically generated receipt. No signature required.')
+      const footerText = 'This is an electronically generated receipt. No signature required.'
+      const footerWidth = this.fonts.italic?.widthOfTextAtSize(footerText, 9) || 
+                         this.fonts.regular.widthOfTextAtSize(footerText, 9)
+      const footerCenterX = (this.layout.width - footerWidth) / 2
+      
+      this.page.drawText(footerText, {
+        x: footerCenterX,
+        y: this.layout.currentY,
+        size: 9,
+        font: this.fonts.italic || this.fonts.regular,
+        color: this.COLORS.GRAY
+      })
 
       const pdfBytes = await this.pdfDoc.save()
       const pdfDir = path.join(app.getPath('userData'), 'receipts')

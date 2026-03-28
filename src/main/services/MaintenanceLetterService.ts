@@ -823,13 +823,16 @@ class MaintenanceLetterService extends BasePDFGenerator {
     ])
 
     // All add-ons (stored as individual rows — naTax, solar, cable, manual, templates)
+    // Filter out zero-amount add-ons (e.g., Cable Charges when not applicable)
     for (const addon of addOns) {
-      rows.push([
-        addon.addon_name,
-        this.formatCurrency(addon.addon_amount),
-        this.formatCurrency(addon.addon_amount),
-        this.formatCurrency(addon.addon_amount)
-      ])
+      if (addon.addon_amount > 0) {
+        rows.push([
+          addon.addon_name,
+          this.formatCurrency(addon.addon_amount),
+          this.formatCurrency(addon.addon_amount),
+          this.formatCurrency(addon.addon_amount)
+        ])
+      }
     }
 
     // Arrears (from prior unpaid years)

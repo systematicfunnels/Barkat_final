@@ -44,6 +44,8 @@ interface RateFormValues {
   rate_per_sqft: number
   gst_percent: number
   billing_frequency: string
+  due_date?: string
+  discount_percentage?: number
 }
 
 interface SlabFormValues {
@@ -71,10 +73,6 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const [isAddingSlab, setIsAddingSlab] = useState(false)
   const [filterFY, setFilterFY] = useState<string | null>(null)
   const [filterUnitType, setFilterUnitType] = useState<string>('All')
-  // Inline early-payment slab on the Add Rate form
-  const [inlineSlabEnabled, setInlineSlabEnabled] = useState(false)
-  const [inlineSlabDiscount, setInlineSlabDiscount] = useState<number>(10)
-  const [inlineSlabDueDate, setInlineSlabDueDate] = useState<string>('')
 
   const [rateForm] = Form.useForm<RateFormValues>()
   const [slabForm] = Form.useForm<SlabFormValues>()
@@ -122,9 +120,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       setIsAddingRate(false)
       setEditingRateId(null)
       setIsAddingSlab(false)
-      setInlineSlabEnabled(false)
-      setInlineSlabDiscount(10)
-      setInlineSlabDueDate('')
+      resetBillingDates()
       rateForm.resetFields()
       slabForm.resetFields()
     }
@@ -196,6 +192,46 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           gst_percent: values.gst_percent ?? 0,
           billing_frequency: values.billing_frequency || 'YEARLY'
         })
+        
+        // Handle slab update/create/delete for existing rate
+        if (values.due_date && values.discount_percentage !== undefined && values.discount_percentage > 0) {
+          try {
+            // Check if there's an existing slab
+            const existingSlabs = await window.api.rates.getSlabs(editingRateId)
+            if (existingSlabs && existingSlabs.length > 0) {
+              // Delete existing slabs and create new one (since updateSlab doesn't exist)
+              for (const slab of existingSlabs) {
+                if (slab.id) {
+                  await window.api.rates.deleteSlab(slab.id)
+                }
+              }
+            }
+            // Create new slab with updated values
+            await window.api.rates.addSlab({
+              rate_id: editingRateId,
+              due_date: values.due_date,
+              discount_percentage: values.discount_percentage,
+              is_early_payment: true
+            } as MaintenanceSlab)
+          } catch {
+            message.warning('Rate saved, but early payment discount could not be updated. You can manage it via the Slabs button.')
+          }
+        } else {
+          // Delete all slabs if discount is removed or set to 0
+          try {
+            const existingSlabs = await window.api.rates.getSlabs(editingRateId)
+            if (existingSlabs && existingSlabs.length > 0) {
+              for (const slab of existingSlabs) {
+                if (slab.id) {
+                  await window.api.rates.deleteSlab(slab.id)
+                }
+              }
+            }
+          } catch {
+            // Silently ignore errors when deleting slabs
+          }
+        }
+        
         message.success('Rate updated successfully')
       } else {
         const newRateId = await window.api.rates.create({
@@ -206,13 +242,13 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           project_id: projectId
         } as MaintenanceRate)
 
-        // Save inline early-payment slab if configured
-        if (inlineSlabEnabled && inlineSlabDiscount > 0 && inlineSlabDueDate) {
+        // Save inline early-payment slab if configured (for new rates)
+        if (values.due_date && values.discount_percentage !== undefined && values.discount_percentage > 0) {
           try {
             await window.api.rates.addSlab({
               rate_id: newRateId,
-              due_date: inlineSlabDueDate,
-              discount_percentage: inlineSlabDiscount,
+              due_date: values.due_date,
+              discount_percentage: values.discount_percentage,
               is_early_payment: true
             } as MaintenanceSlab)
           } catch {
@@ -225,9 +261,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
       setIsAddingRate(false)
       setEditingRateId(null)
-      setInlineSlabEnabled(false)
-      setInlineSlabDiscount(10)
-      setInlineSlabDueDate('')
+      resetBillingDates()
       rateForm.resetFields()
       fetchRates()
     } catch (error) {
@@ -239,9 +273,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
     }
   }
 
-  const handleEditRate = (rate: MaintenanceRate): void => {
+  const handleEditRate = async (rate: MaintenanceRate): Promise<void> => {
     setEditingRateId(rate.id ?? null)
     setIsAddingRate(true)
+    
+    // Pre-fill basic rate fields
     rateForm.setFieldsValue({
       financial_year: rate.financial_year,
       unit_type: rate.unit_type || 'Bungalow',
@@ -249,6 +285,27 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       gst_percent: rate.gst_percent ?? 0,
       billing_frequency: rate.billing_frequency || 'YEARLY'
     })
+    
+    // Load and pre-fill slab data if exists (only first slab supported in inline editing)
+    if (rate.id) {
+      try {
+        const slabs = await window.api.rates.getSlabs(rate.id)
+        if (slabs && slabs.length > 0) {
+          const firstSlab = slabs[0]
+          // Pre-fill billing dates from slab
+          rateForm.setFieldsValue({
+            due_date: firstSlab.due_date,
+            discount_percentage: firstSlab.discount_percentage
+          })
+          // Warn if multiple slabs exist (they can only be managed via Slabs button)
+          if (slabs.length > 1) {
+            message.info(`This rate has ${slabs.length} slabs. Only the first one is shown here. Use the "Slabs" button to manage all.`, 5)
+          }
+        }
+      } catch {
+        // Silently ignore slab fetch errors - form will just show empty billing dates
+      }
+    }
   }
 
   const handleDeleteRate = async (id: number): Promise<void> => {
@@ -264,11 +321,19 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
         setIsAddingRate(false)
         setEditingRateId(null)
         rateForm.resetFields()
+        resetBillingDates()
       }
     } catch (error) {
       console.error('Failed to delete rate:', error)
       message.error('Failed to delete rate')
     }
+  }
+
+  const resetBillingDates = (): void => {
+    rateForm.setFieldsValue({
+      due_date: undefined,
+      discount_percentage: undefined
+    })
   }
 
   const handleViewSlabs = async (rate: MaintenanceRate): Promise<void> => {
@@ -478,9 +543,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const handleCancelRateForm = (): void => {
     setIsAddingRate(false)
     setEditingRateId(null)
-    setInlineSlabEnabled(false)
-    setInlineSlabDiscount(10)
-    setInlineSlabDueDate('')
+    resetBillingDates()
     rateForm.resetFields()
   }
 
@@ -687,55 +750,36 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                 </Select>
               </Form.Item>
 
-              {/* Inline early-payment slab — only shown when creating a new rate */}
-              {!editingRateId && (
-                <div
-                  style={{
-                    gridColumn: 'span 2',
-                    border: '0.5px dashed var(--color-border-tertiary)',
-                    borderRadius: 6,
-                    padding: '10px 12px',
-                    marginBottom: 8,
-                    background: 'var(--color-background-secondary)'
-                  }}
+              {/* Billing Dates Section */}
+              <Divider style={{ margin: '12px 0' }} />
+              <div style={{ marginBottom: 8, fontWeight: 500, color: '#555' }}>Billing Dates & Early Payment Discount</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <Form.Item<RateFormValues>
+                  name="due_date"
+                  label="Due Date"
+                  tooltip="Payment due date"
+                  style={{ marginBottom: 8 }}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: inlineSlabEnabled ? 10 : 0 }}>
-                    <input
-                      type="checkbox"
-                      id="inline-slab-toggle"
-                      checked={inlineSlabEnabled}
-                      onChange={(e) => setInlineSlabEnabled(e.target.checked)}
-                      style={{ cursor: 'pointer' }}
-                    />
-                    <label htmlFor="inline-slab-toggle" style={{ fontSize: 12, cursor: 'pointer', color: 'var(--color-text-secondary)', userSelect: 'none' }}>
-                      Add early-payment discount (slab)
-                    </label>
-                  </div>
-                  {inlineSlabEnabled && (
-                    <Space wrap size={8} style={{ marginTop: 4 }}>
-                      <div>
-                        <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 3 }}>Discount %</div>
-                        <InputNumber
-                          min={0} max={100} value={inlineSlabDiscount}
-                          onChange={(v) => setInlineSlabDiscount(v ?? 10)}
-                          style={{ width: 100 }} size="small" addonAfter="%"
-                          placeholder="e.g. 10"
-                        />
-                      </div>
-                      <div>
-                        <div style={{ fontSize: 11, color: 'var(--color-text-secondary)', marginBottom: 3 }}>Due date (pay by)</div>
-                        <Input
-                          value={inlineSlabDueDate}
-                          onChange={(e) => setInlineSlabDueDate(e.target.value)}
-                          placeholder="YYYY-MM-DD"
-                          style={{ width: 140 }} size="small"
-                        />
-                      </div>
-                    </Space>
-                  )}
-                </div>
-              )}
-              <Form.Item style={{ marginBottom: 8 }}>
+                  <Input type="date" aria-label="Due date" />
+                </Form.Item>
+                <Form.Item<RateFormValues>
+                  name="discount_percentage"
+                  label="Discount %"
+                  tooltip="Early payment discount percentage"
+                  style={{ marginBottom: 8 }}
+                >
+                  <InputNumber
+                    min={0}
+                    max={100}
+                    placeholder="e.g. 10"
+                    style={{ width: 100 }}
+                    aria-label="Discount percentage"
+                    addonAfter="%"
+                  />
+                </Form.Item>
+              </div>
+
+              <Form.Item style={{ marginBottom: 8, marginTop: 12 }}>
                 <Space>
                   <Button type="primary" htmlType="submit" loading={loading}>
                     Save
