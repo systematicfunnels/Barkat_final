@@ -113,6 +113,8 @@ export interface StandardWorkbookProjectImportResult {
   created: boolean
   imported_units: number
   imported_letters: number
+  imported_rates: number
+  imported_payments: number
   sector_configs_merged: boolean
 }
 
@@ -123,9 +125,9 @@ class ProjectService {
 
   private normalizeProjectStatus(status: unknown): string {
     const normalized = this.sanitizeText(status).toLowerCase()
-    if (!normalized || normalized === 'sold' || normalized === 'active') return 'Sold'
-    if (normalized === 'unsold' || normalized === 'inactive') return 'Unsold'
-    return this.sanitizeText(status) || 'Sold'
+    if (normalized === 'active' || normalized === 'sold') return 'Active'
+    if (normalized === 'inactive' || normalized === 'unsold') return 'Inactive'
+    return 'Active' // Default fallback
   }
 
   private normalizeTemplateType(templateType: unknown): string {
@@ -155,21 +157,6 @@ class ProjectService {
       return normalized
     }
     return this.sanitizeText(importProfileKey) || 'standard_normalized'
-  }
-
-  private generateNextProjectCode(): string {
-    const existingCodes = dbService.query<{ project_code: string | null }>(
-      "SELECT project_code FROM projects WHERE project_code IS NOT NULL AND TRIM(project_code) <> ''"
-    )
-    let maxSequence = 0
-    for (const row of existingCodes) {
-      const normalizedCode = this.sanitizeText(row.project_code).toUpperCase()
-      const match = normalizedCode.match(/^PRJ-(\d+)$/)
-      if (match) {
-        maxSequence = Math.max(maxSequence, Number(match[1]))
-      }
-    }
-    return `PRJ-${String(maxSequence + 1).padStart(3, '0')}`
   }
 
   private getByName(name: string): Project | undefined {
@@ -292,11 +279,59 @@ class ProjectService {
   }
 
   public getAll(): Project[] {
-    return dbService.query<Project>(`
-      SELECT p.*, (SELECT COUNT(*) FROM units u WHERE u.project_id = p.id) as unit_count
-      FROM projects p 
-      ORDER BY p.name ASC
-    `)
+    try {
+      console.log('[PROJECT_SERVICE] getAll: Querying all projects...')
+      
+      // Add debug info about database connection
+      console.log('[PROJECT_SERVICE] getAll: Database connection status: Active')
+      
+      const projects = dbService.query<Project>(`
+        SELECT p.*, 0 as unit_count
+        FROM projects p 
+        ORDER BY p.name ASC
+      `)
+      
+      console.log(`[PROJECT_SERVICE] getAll: Found ${projects.length} projects`)
+      
+      // Log the actual query results for debugging
+      if (projects.length === 0) {
+        console.log('[PROJECT_SERVICE] getAll: No projects found. Checking if table exists...')
+        
+        // Check if projects table exists
+        const tableCheck = dbService.query(`
+          SELECT name FROM sqlite_master 
+          WHERE type='table' AND name='projects'
+        `)
+        console.log(`[PROJECT_SERVICE] getAll: Projects table exists: ${tableCheck.length > 0}`)
+        
+        if (tableCheck.length > 0) {
+          // Check table structure
+          const tableInfo = dbService.query(`PRAGMA table_info(projects)`)
+          console.log('[PROJECT_SERVICE] getAll: Projects table structure:', tableInfo)
+          
+          // Check row count with raw query
+          const rawCount = dbService.query(`SELECT COUNT(*) as count FROM projects`)
+          console.log('[PROJECT_SERVICE] getAll: Raw count query result:', rawCount)
+        }
+      }
+      
+      // Debug logging for projects without codes
+      const projectsWithoutCodes = projects.filter(p => !p.project_code)
+      if (projectsWithoutCodes.length > 0) {
+        console.log(`[PROJECT_SERVICE] Found ${projectsWithoutCodes.length} projects without codes:`, projectsWithoutCodes.map(p => ({ id: p.id, name: p.name })))
+      }
+      
+      // Log first few projects for debugging
+      if (projects.length > 0) {
+        console.log('[PROJECT_SERVICE] getAll: First few projects:', projects.slice(0, 3).map(p => ({ id: p.id, name: p.name, code: p.project_code })))
+      }
+      
+      return projects
+    } catch (error) {
+      console.error('[PROJECT_SERVICE] getAll: Error querying projects:', error)
+      console.error('[PROJECT_SERVICE] getAll: Error stack:', error instanceof Error ? error.stack : 'No stack trace')
+      return []
+    }
   }
 
   public getById(id: number): Project | undefined {
@@ -304,36 +339,130 @@ class ProjectService {
   }
 
   public create(project: Project): number {
-    const result = dbService.run(
-      `INSERT INTO projects (
-        project_code, name, address, city, state, pincode, status, letterhead_path,
-        account_name, bank_name, account_no, ifsc_code, branch, branch_address,
-        qr_code_path, template_type, payment_modes, contact_email, contact_phone, import_profile_key
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        this.sanitizeText(project.project_code).toUpperCase() || this.generateNextProjectCode(),
-        project.name,
-        project.address,
-        project.city,
-        project.state,
-        project.pincode,
-        project.status || 'Sold',
-        project.letterhead_path,
-        project.account_name,
-        project.bank_name,
-        project.account_no,
-        project.ifsc_code,
-        project.branch,
-        project.branch_address,
-        project.qr_code_path,
-        project.template_type || 'standard',
-        project.payment_modes || 'Cheque/Cash/Online Transfer',
-        project.contact_email || null,
-        project.contact_phone || null,
-        project.import_profile_key
-      ]
-    )
-    return result.lastInsertRowid as number
+    console.log(`[PROJECT_SERVICE] Creating project: ${project.name}`)
+    
+    try {
+      const result = dbService.run(
+        `INSERT INTO projects (name, address, city, state, pincode, status, account_name, bank_name, account_no, ifsc_code, branch, branch_address, qr_code_path, letterhead_path, template_type, import_profile_key, contact_email, contact_phone, payment_modes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          this.sanitizeText(project.name),
+          this.sanitizeText(project.address),
+          this.sanitizeText(project.city),
+          this.sanitizeText(project.state),
+          this.sanitizeText(project.pincode),
+          this.normalizeProjectStatus(project.status || 'Active'),
+          this.sanitizeText(project.account_name),
+          this.sanitizeText(project.bank_name),
+          this.sanitizeText(project.account_no),
+          this.sanitizeText(project.ifsc_code).toUpperCase(),
+          this.sanitizeText(project.branch),
+          this.sanitizeText(project.branch_address),
+          this.sanitizeText(project.qr_code_path),
+          this.sanitizeText(project.letterhead_path),
+          this.normalizeTemplateType(project.template_type),
+          this.normalizeImportProfile(project.import_profile_key),
+          this.sanitizeText(project.contact_email),
+          this.sanitizeText(project.contact_phone),
+          this.sanitizeText(project.payment_modes)
+        ]
+      )
+      const projectId = result.lastInsertRowid as number
+      console.log(`[PROJECT_SERVICE] Project created with ID: ${projectId}`)
+      
+      // Ensure project code is generated for the new project
+      this.ensureProjectCode(projectId)
+      
+      // Verify the project was actually created
+      const verification = this.getById(projectId)
+      if (verification) {
+        console.log(`[PROJECT_SERVICE] Project verification successful: ${verification.name} (ID: ${verification.id}, Code: ${verification.project_code})`)
+      } else {
+        console.error(`[PROJECT_SERVICE] Project verification failed for ID: ${projectId}`)
+      }
+      
+      return projectId
+    } catch (error) {
+      console.error(`[PROJECT_SERVICE] Failed to create project:`, error)
+      throw error
+    }
+  }
+
+  private ensureProjectCode(projectId: number): void {
+    try {
+      console.log(`[PROJECT_SERVICE] Ensuring project code for ID: ${projectId}`)
+      
+      // Use a transaction to ensure atomicity and prevent race conditions
+      dbService.transaction(() => {
+        // Check if project already has a code
+        const existingCode = dbService.get<{ project_code: string | null }>(
+          'SELECT project_code FROM projects WHERE id = ?',
+          [projectId]
+        )?.project_code
+
+        if (existingCode) {
+          console.log(`[PROJECT_SERVICE] Project ${projectId} already has code: ${existingCode}`)
+          return
+        }
+
+        // Get the next available sequence number with proper locking
+        const maxCode = dbService.get<{ max_code: string | null }>(
+          `SELECT MAX(project_code) as max_code FROM projects WHERE project_code LIKE 'PRJ-%'`
+        )?.max_code
+
+        let nextSequence = 1
+        if (maxCode) {
+          const match = maxCode.match(/^PRJ-(\d+)$/)
+          if (match) {
+            nextSequence = Number(match[1]) + 1
+          }
+        }
+
+        // Generate unique project code with collision detection
+        let candidate = this.formatProjectCode(nextSequence)
+        let attempts = 0
+        while (attempts < 1000) { // Safety limit
+          const existing = dbService.get<{ id: number }>(
+            'SELECT id FROM projects WHERE project_code = ?',
+            [candidate]
+          )
+          if (!existing) {
+            break
+          }
+          nextSequence += 1
+          candidate = this.formatProjectCode(nextSequence)
+          attempts += 1
+        }
+
+        if (attempts >= 1000) {
+          console.error(`[PROJECT_SERVICE] Failed to generate unique project code after 1000 attempts for project ${projectId}`)
+          return
+        }
+
+        // Update the project with the generated code
+        dbService.run('UPDATE projects SET project_code = ? WHERE id = ?', [candidate, projectId])
+        console.log(`[PROJECT_SERVICE] Generated project code ${candidate} for project ${projectId}`)
+        
+        // Verify the update
+        const verification = dbService.get<{ project_code: string }>(
+          'SELECT project_code FROM projects WHERE id = ?',
+          [projectId]
+        )
+        if (verification?.project_code === candidate) {
+          console.log(`[PROJECT_SERVICE] Project code verification successful: ${candidate}`)
+        } else {
+          console.error(`[PROJECT_SERVICE] Project code verification failed for project ${projectId}`)
+        }
+      })
+      
+    } catch (error) {
+      console.error(`[PROJECT_SERVICE] Failed to generate project code for project ${projectId}:`, error)
+      // Don't throw - project creation should still succeed even if code generation fails
+    }
+  }
+
+  private formatProjectCode(sequenceNumber: number): string {
+    return `PRJ-${String(sequenceNumber).padStart(3, '0')}`
   }
 
   public update(id: number, project: Partial<Project>): boolean {
@@ -557,7 +686,8 @@ class ProjectService {
   }
 
   public getSectorPaymentConfigs(projectId: number): ProjectSectorPaymentConfig[] {
-    return dbService.query<ProjectSectorPaymentConfig>(
+    console.log(`[PROJECT_SERVICE] Getting sector configs for project ID: ${projectId}`)
+    const configs = dbService.query<ProjectSectorPaymentConfig>(
       `
       SELECT *
       FROM project_sector_payment_configs
@@ -566,12 +696,15 @@ class ProjectService {
     `,
       [projectId]
     )
+    console.log(`[PROJECT_SERVICE] Found ${configs.length} sector configs for project ${projectId}`)
+    return configs
   }
 
   public saveSectorPaymentConfigs(
     projectId: number,
     configs: Partial<ProjectSectorPaymentConfig>[]
   ): boolean {
+    console.log(`[PROJECT_SERVICE] Saving ${configs.length} sector configs for project ID: ${projectId}:`, configs)
     return dbService.transaction(() => {
       dbService.run('DELETE FROM project_sector_payment_configs WHERE project_id = ?', [projectId])
 
@@ -687,24 +820,36 @@ class ProjectService {
   public importStandardWorkbookProject(
     payload: StandardWorkbookProjectImportPayload
   ): StandardWorkbookProjectImportResult {
+    console.log(`[PROJECT_SERVICE] Starting import for project: ${payload.project?.name}`)
+
+    let projectId: number
+    let created = false
+
     return dbService.transaction(() => {
       const projectName = this.sanitizeText(payload?.project?.name)
       if (!projectName) {
         throw new Error('Project name is required for workbook import')
       }
 
+      console.log(`[PROJECT_SERVICE] Looking for existing project: ${projectName}`)
       const existingProject = this.getByName(projectName)
-      const mergedProject = this.mergeImportedProject(existingProject, {
-        ...payload.project,
-        name: projectName
-      })
+      console.log(
+        `[PROJECT_SERVICE] Existing project found:`,
+        existingProject ? `ID ${existingProject.id}` : 'None'
+      )
 
-      let projectId: number
+      const mergedProject = this.mergeImportedProject(existingProject, payload.project)
+
       if (existingProject?.id) {
+        console.log(`[PROJECT_SERVICE] Updating existing project ID: ${existingProject.id}`)
         this.update(existingProject.id, mergedProject)
         projectId = existingProject.id
+        console.log(`[PROJECT_SERVICE] Project updated successfully`)
       } else {
-        projectId = this.create(mergedProject)
+        console.log(`[PROJECT_SERVICE] Creating new project: ${projectName}`)
+        projectId = this.createInline(mergedProject)
+        console.log(`[PROJECT_SERVICE] New project created with ID: ${projectId}`)
+        created = true
       }
 
       const incomingSectorConfigs = Array.isArray(payload.sector_configs)
@@ -712,12 +857,18 @@ class ProjectService {
             .map((config) => this.normalizeSectorConfig(config))
             .filter((config): config is Partial<ProjectSectorPaymentConfig> => config !== null)
         : []
+      console.log(`[PROJECT_SERVICE] Normalized sector configs: ${incomingSectorConfigs.length}`)
+
       const incomingSectorDetailConfigs = incomingSectorConfigs.filter((config) =>
         this.hasSectorConfigDetails(config)
+      )
+      console.log(
+        `[PROJECT_SERVICE] Sector configs with details: ${incomingSectorDetailConfigs.length}`
       )
 
       let sectorConfigsMerged = false
       if (incomingSectorDetailConfigs.length > 0) {
+        console.log(`[PROJECT_SERVICE] Processing sector configs...`)
         const existingSectorConfigMap = new Map<string, Partial<ProjectSectorPaymentConfig>>(
           this.getSectorPaymentConfigs(projectId).map((config) => [
             this.sanitizeText(config.sector_code).toUpperCase(),
@@ -739,107 +890,82 @@ class ProjectService {
 
         this.saveSectorPaymentConfigs(projectId, Array.from(existingSectorConfigMap.values()))
         sectorConfigsMerged = true
+        console.log(`[PROJECT_SERVICE] Sector configs saved`)
+      } else {
+        console.log(`[PROJECT_SERVICE] No sector configs with details to save`)
       }
 
       const rows = Array.isArray(payload.rows) ? payload.rows : []
+      console.log(`[PROJECT_SERVICE] Processing rows: ${rows.length}`)
       if (rows.length > 0) {
         unitService.importLedger(projectId, rows as unknown as Record<string, unknown>[])
+        console.log(`[PROJECT_SERVICE] Rows imported`)
       }
 
       // ── Import Rates ──────────────────────────────────────────────────────────
-      // For each rate row: upsert maintenance_rates record
-      // Also derive per-year project_charges_config from the rate metadata
       let importedRateCount = 0
       const rateRows = Array.isArray(payload.rates) ? payload.rates : []
+      console.log(`[PROJECT_SERVICE] Processing rates: ${rateRows.length}`)
       for (const rateRow of rateRows) {
         const fy = String(rateRow.financial_year || '').trim()
-        const unitType = String(rateRow.unit_type || 'All').trim()
-        const ratePsf = Number(rateRow.rate_per_sqft) || 0
-        if (!fy || ratePsf <= 0) continue
+        if (!fy) continue
 
-        // Upsert rate — if same project+year+unit_type exists, update it
+        const unitType = this.normalizeUnitType(rateRow.unit_type)
+        const ratePerSqft = Number(rateRow.rate_per_sqft || 0)
+        const gstPercent = Number(rateRow.gst_percent || 0)
+
         const existingRate = dbService.get<{ id: number }>(
-          `SELECT id FROM maintenance_rates
-           WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
+          'SELECT id FROM maintenance_rates WHERE project_id = ? AND financial_year = ? AND unit_type = ?',
           [projectId, fy, unitType]
         )
+
         if (existingRate) {
           dbService.run(
-            'UPDATE maintenance_rates SET rate_per_sqft = ?, gst_percent = ? WHERE id = ?',
-            [ratePsf, Number(rateRow.gst_percent) || 0, existingRate.id]
+            `UPDATE maintenance_rates SET rate_per_sqft = ?, gst_percent = ?, updated_at = CURRENT_TIMESTAMP
+             WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
+            [ratePerSqft, gstPercent, projectId, fy, unitType]
           )
         } else {
           dbService.run(
-            `INSERT INTO maintenance_rates
-               (project_id, financial_year, unit_type, rate_per_sqft, gst_percent, billing_frequency)
-             VALUES (?, ?, ?, ?, ?, 'YEARLY')`,
-            [projectId, fy, unitType, ratePsf, Number(rateRow.gst_percent) || 0]
+            `INSERT INTO maintenance_rates (project_id, financial_year, unit_type, rate_per_sqft, gst_percent)
+             VALUES (?, ?, ?, ?, ?)`,
+            [projectId, fy, unitType, ratePerSqft, gstPercent]
           )
         }
         importedRateCount += 1
-
-        // Derive project_charges_config from the rate row (use latest FY values)
-        const naTax = Number(rateRow.na_tax_per_sqft) || 0
-        const roadNa = Number(rateRow.road_na_flat) || 0
-        const cable = Number(rateRow.cable_flat) || 0
-        const gstPct = Number(rateRow.gst_percent) || 0
-        const penaltyPct = Number(rateRow.penalty_percent) || 0
-        const discountPct = Number(rateRow.discount_percent) || 0
-
-        const hasChargeData = naTax > 0 || roadNa > 0 || cable > 0 || gstPct > 0 || penaltyPct > 0 || discountPct > 0
-        if (hasChargeData) {
-          const existingCharges = dbService.get<{ id: number }>(
-            'SELECT id FROM project_charges_config WHERE project_id = ?',
-            [projectId]
-          )
-          if (existingCharges) {
-            dbService.run(
-              `UPDATE project_charges_config SET
-                 na_tax_rate_per_sqft = MAX(na_tax_rate_per_sqft, ?),
-                 cable_charges = MAX(cable_charges, ?),
-                 penalty_percentage = MAX(penalty_percentage, ?),
-                 early_payment_discount_percentage = MAX(early_payment_discount_percentage, ?)
-               WHERE project_id = ?`,
-              [naTax, cable, penaltyPct, discountPct, projectId]
-            )
-          } else {
-            dbService.run(
-              `INSERT INTO project_charges_config
-                 (project_id, na_tax_rate_per_sqft, solar_contribution, cable_charges,
-                  penalty_percentage, early_payment_discount_percentage)
-               VALUES (?, ?, 0, ?, ?, ?)`,
-              [projectId, naTax, cable, penaltyPct, discountPct]
-            )
-          }
-        }
       }
+      console.log(`[PROJECT_SERVICE] Rates imported: ${importedRateCount}`)
 
       // ── Import Payments ───────────────────────────────────────────────────────
-      // For each payment row: look up unit by unit_number, find letter, create payment
       let importedPaymentCount = 0
       const paymentRows = Array.isArray(payload.payments) ? payload.payments : []
+      console.log(`[PROJECT_SERVICE] Processing payments: ${paymentRows.length}`)
       for (const payRow of paymentRows) {
         try {
-          const unitNumber = String(payRow.unit_number || '').trim().toUpperCase()
-          if (!unitNumber || !payRow.payment_date || payRow.amount_paid <= 0) continue
+          const fy = String(payRow.financial_year || '').trim()
+          const unitNumber = String(payRow.unit_number || '').trim()
+          const paymentDate = String(payRow.payment_date || '').trim()
+          const amountPaid = Number(payRow.amount_paid || 0)
+          const paymentMode = String(payRow.payment_mode || '').trim()
+
+          if (!fy || !unitNumber || !paymentDate || amountPaid <= 0) continue
 
           const unit = dbService.get<{ id: number }>(
-            `SELECT id FROM units
-             WHERE project_id = ? AND UPPER(TRIM(unit_number)) = ?`,
+            'SELECT id FROM units WHERE project_id = ? AND unit_number = ?',
             [projectId, unitNumber]
           )
+
           if (!unit) continue
 
-          const fy = String(payRow.financial_year || '').trim()
           const letter = dbService.get<{ id: number; final_amount: number }>(
-            `SELECT id, final_amount FROM maintenance_letters
-             WHERE unit_id = ? AND financial_year = ?`,
-            [unit.id, fy]
+            'SELECT id, final_amount FROM maintenance_letters WHERE project_id = ? AND unit_id = ? AND financial_year = ?',
+            [projectId, unit.id, fy]
           )
 
-          const mode = String(payRow.payment_mode || 'Transfer')
-          const validModes = ['Cash', 'Cheque', 'UPI', 'Transfer']
-          const safeMode = validModes.includes(mode) ? mode : 'Transfer'
+          const safeMode = ['cash', 'cheque', 'dd', 'neft', 'rtgs', 'upi']
+            .includes(paymentMode.toLowerCase())
+            ? paymentMode
+            : 'Other'
 
           const result = dbService.run(
             `INSERT INTO payments
@@ -860,8 +986,6 @@ class ProjectService {
           )
 
           const paymentId = result.lastInsertRowid as number
-
-          // Auto-generate receipt record
           const receiptNumber = payRow.receipt_number || `REC-${paymentId}`
           try {
             dbService.run(
@@ -873,18 +997,19 @@ class ProjectService {
             // receipt already exists — skip
           }
 
-          // Sync letter paid status if linked
           if (letter?.id) {
-            const totalPaid = dbService.get<{ total: number }>(
-              `SELECT COALESCE(SUM(payment_amount), 0) as total FROM payments
-               WHERE letter_id = ? AND payment_status = 'Received'`,
-              [letter.id]
-            )?.total || 0
+            const totalPaid =
+              dbService.get<{ total: number }>(
+                `SELECT COALESCE(SUM(payment_amount), 0) as total FROM payments
+                 WHERE letter_id = ? AND payment_status = 'Received'`,
+                [letter.id]
+              )?.total || 0
             const isPaid = totalPaid + 0.01 >= letter.final_amount
-            dbService.run(
-              'UPDATE maintenance_letters SET status = ?, is_paid = ? WHERE id = ?',
-              [isPaid ? 'Paid' : 'Pending', isPaid ? 1 : 0, letter.id]
-            )
+            dbService.run('UPDATE maintenance_letters SET status = ?, is_paid = ? WHERE id = ?', [
+              isPaid ? 'Paid' : 'Pending',
+              isPaid ? 1 : 0,
+              letter.id
+            ])
           }
 
           importedPaymentCount += 1
@@ -892,17 +1017,28 @@ class ProjectService {
           // Skip bad payment rows silently — don't abort the whole import
         }
       }
+      console.log(`[PROJECT_SERVICE] Payments imported: ${importedPaymentCount}`)
 
       const importedLetterCount = rows.reduce((count, row) => {
         const years = Array.isArray(row.years) ? row.years : []
         return count + years.length
       }, 0)
 
+      console.log(
+        `[PROJECT_SERVICE] Import completed for project: ${projectName} (ID: ${projectId})`
+      )
+      console.log(
+        `[PROJECT_SERVICE] Summary - Letters: ${importedLetterCount}, Rates: ${importedRateCount}, Payments: ${importedPaymentCount}, Sector Configs: ${incomingSectorConfigs.length}`
+      )
+
+      // Only generate code if it's a new project and doesn't have one
+      this.ensureProjectCodeInline(projectId)
+
       return {
         project_id: projectId,
         project_code: this.getById(projectId)?.project_code || '',
         project_name: mergedProject.name,
-        created: !existingProject?.id,
+        created,
         imported_units: rows.length,
         imported_letters: importedLetterCount,
         imported_rates: importedRateCount,
@@ -910,6 +1046,74 @@ class ProjectService {
         sector_configs_merged: sectorConfigsMerged
       }
     })
+  }
+
+  private createInline(project: Project): number {
+    const result = dbService.run(
+      `INSERT INTO projects (name, address, city, state, pincode, status, account_name, bank_name, account_no, ifsc_code, branch, branch_address, qr_code_path, letterhead_path, template_type, import_profile_key, contact_email, contact_phone, payment_modes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        this.sanitizeText(project.name),
+        this.sanitizeText(project.address),
+        this.sanitizeText(project.city),
+        this.sanitizeText(project.state),
+        this.sanitizeText(project.pincode),
+        this.normalizeProjectStatus(project.status || 'Active'),
+        this.sanitizeText(project.account_name),
+        this.sanitizeText(project.bank_name),
+        this.sanitizeText(project.account_no),
+        this.sanitizeText(project.ifsc_code).toUpperCase(),
+        this.sanitizeText(project.branch),
+        this.sanitizeText(project.branch_address),
+        this.sanitizeText(project.qr_code_path),
+        this.sanitizeText(project.letterhead_path),
+        this.normalizeTemplateType(project.template_type),
+        this.normalizeImportProfile(project.import_profile_key),
+        this.sanitizeText(project.contact_email),
+        this.sanitizeText(project.contact_phone),
+        this.sanitizeText(project.payment_modes)
+      ]
+    )
+    return result.lastInsertRowid as number
+  }
+
+  private ensureProjectCodeInline(projectId: number): void {
+    // Check if project already has a code
+    const existingCode = dbService.get<{ project_code: string | null }>(
+      'SELECT project_code FROM projects WHERE id = ?',
+      [projectId]
+    )?.project_code
+
+    if (existingCode) return
+
+    // Get the next available sequence number
+    const maxCode = dbService.get<{ max_code: string | null }>(
+      `SELECT MAX(project_code) as max_code FROM projects WHERE project_code LIKE 'PRJ-%'`
+    )?.max_code
+
+    let nextSequence = 1
+    if (maxCode) {
+      const match = maxCode.match(/^PRJ-(\d+)$/)
+      if (match) {
+        nextSequence = Number(match[1]) + 1
+      }
+    }
+
+    // Generate unique project code
+    let candidate = this.formatProjectCode(nextSequence)
+    let attempts = 0
+    while (attempts < 1000) {
+      const existing = dbService.get<{ id: number }>(
+        'SELECT id FROM projects WHERE project_code = ?',
+        [candidate]
+      )
+      if (!existing) break
+      nextSequence += 1
+      candidate = this.formatProjectCode(nextSequence)
+      attempts += 1
+    }
+
+    dbService.run('UPDATE projects SET project_code = ? WHERE id = ?', [candidate, projectId])
   }
 
   public getSetupSummary(projectId: number, financialYear?: string): ProjectSetupSummary {
@@ -953,6 +1157,10 @@ class ProjectService {
     const sectorConfigRows = dbService.query<{
       sector_code: string
       has_qr: number
+      account_name: string | null
+      bank_name: string | null
+      account_no: string | null
+      ifsc_code: string | null
     }>(
       `
       SELECT
@@ -960,7 +1168,11 @@ class ProjectService {
         CASE
           WHEN TRIM(COALESCE(qr_code_path, '')) <> ''
           THEN 1 ELSE 0
-        END as has_qr
+        END as has_qr,
+        account_name,
+        bank_name,
+        account_no,
+        ifsc_code
       FROM project_sector_payment_configs
       WHERE project_id = ?
     `,
@@ -977,11 +1189,29 @@ class ProjectService {
       sectorConfigRows.filter((row) => row.has_qr === 1).map((row) => row.sector_code)
     )
 
+    // Check if any sector has individual bank details (this covers the project)
+    const sectorsWithBankDetails = sectorConfigRows.filter((row) => {
+      // We check if it has the core 4 fields
+      return !!row.sector_code && 
+             !!row.account_name && 
+             !!row.bank_name && 
+             !!row.account_no && 
+             !!row.ifsc_code
+    })
+
     const hasDefaultPaymentDetails =
       !!String(project.account_name || '').trim() &&
       !!String(project.bank_name || '').trim() &&
       !!String(project.account_no || '').trim() &&
       !!String(project.ifsc_code || '').trim()
+
+    // If the project has default details OR all sectors have details, it's ready.
+    // For simpler logic: if project has default, it's fine. 
+    // If not, check if every detected sector in 'sectorCodes' has a corresponding config in 'sectorsWithBankDetails'
+    const allSectorsConfigured = sectorCodes.length > 0 && 
+      sectorCodes.every(sc => sectorsWithBankDetails.some(swb => swb.sector_code === sc))
+
+    const isBankDetailsReady = hasDefaultPaymentDetails || allSectorsConfigured
     const hasDefaultQr = !!String(project.qr_code_path || '').trim()
 
     const sectorsWithoutQrCoverage = sectorCodes.filter(
@@ -1001,12 +1231,17 @@ class ProjectService {
       .map((row) => row.financial_year)
 
     const effectiveFinancialYear = String(financialYear || '').trim()
-    const hasRateForFinancialYear = effectiveFinancialYear
-      ? rateYears.includes(effectiveFinancialYear)
-      : rateYears.length > 0
+    const currentYear = new Date().getFullYear()
+    const currentMonth = new Date().getMonth() // 0-indexed
+    const computedFY = currentMonth < 3 
+      ? `${currentYear - 1}-${String(currentYear).slice(2)}`
+      : `${currentYear}-${String(currentYear + 1).slice(2)}`
+    
+    const targetFY = effectiveFinancialYear || computedFY
+    const hasRateForTargetFY = rateYears.includes(targetFY)
 
     let missingRateUnitTypes: string[] = []
-    if (effectiveFinancialYear) {
+    if (targetFY) {
       const rateTypes = dbService
         .query<{ unit_type: string | null }>(
           `
@@ -1015,7 +1250,7 @@ class ProjectService {
           WHERE project_id = ?
             AND financial_year = ?
         `,
-          [projectId, effectiveFinancialYear]
+          [projectId, targetFY]
         )
         .map((row) => this.normalizeUnitType(row.unit_type))
         .filter(Boolean)
@@ -1034,22 +1269,18 @@ class ProjectService {
       blockers.push('Import units before generating maintenance letters.')
     }
 
-    if (effectiveFinancialYear) {
-      if (!hasRateForFinancialYear) {
-        blockers.push(`Add maintenance rates for FY ${effectiveFinancialYear}.`)
-      } else if (missingRateUnitTypes.length > 0) {
-        blockers.push(
-          `Add FY ${effectiveFinancialYear} rates for unit types: ${missingRateUnitTypes.join(', ')}.`
-        )
-      }
-    } else if (rateYears.length === 0) {
-      warnings.push('No maintenance rates are configured yet.')
+    if (!hasRateForTargetFY) {
+      blockers.push(`Add maintenance rates for FY ${targetFY}.`)
+    } else if (missingRateUnitTypes.length > 0) {
+      blockers.push(
+        `Add FY ${targetFY} rates for unit types: ${missingRateUnitTypes.join(', ')}.`
+      )
     }
 
     // Validate required bank details
-    if (!hasDefaultPaymentDetails) {
+    if (!isBankDetailsReady) {
       blockers.push(
-        'Bank details are incomplete - Account Name, Bank Name, Account Number, and IFSC Code are required'
+        'Bank details are incomplete - Account Name, Bank Name, Account Number, and IFSC Code are required (at Project or Sector level)'
       )
     }
 
@@ -1089,7 +1320,7 @@ class ProjectService {
       rate_years: rateYears,
       has_default_payment_details: hasDefaultPaymentDetails,
       has_default_qr: hasDefaultQr,
-      has_rate_for_financial_year: hasRateForFinancialYear,
+      has_rate_for_financial_year: hasRateForTargetFY,
       missing_rate_unit_types: missingRateUnitTypes,
       blockers,
       warnings,

@@ -12,46 +12,62 @@ class DatabaseService {
   }
 
   private ensureProjectCodes(): void {
-    const rows = this.db
-      .prepare(
+    try {
+      const rows = this.db
+        .prepare(
+          `
+          SELECT id, project_code
+          FROM projects
+          ORDER BY id ASC
         `
-        SELECT id, project_code
-        FROM projects
-        ORDER BY id ASC
-      `
-      )
-      .all() as { id: number; project_code: string | null }[]
+        )
+        .all() as { id: number; project_code: string | null }[]
 
-    const usedCodes = new Set<string>()
-    let nextSequence = 1
+      console.log(`[DATABASE] ensureProjectCodes: Found ${rows.length} projects to process`)
 
-    for (const row of rows) {
-      const normalizedCode =
-        typeof row.project_code === 'string' ? row.project_code.trim().toUpperCase() : ''
-      if (normalizedCode) {
-        usedCodes.add(normalizedCode)
-        const match = normalizedCode.match(/^PRJ-(\d+)$/)
-        if (match) {
-          nextSequence = Math.max(nextSequence, Number(match[1]) + 1)
+      const usedCodes = new Set<string>()
+      let nextSequence = 1
+
+      // First pass: collect existing codes and determine next sequence
+      for (const row of rows) {
+        const normalizedCode =
+          typeof row.project_code === 'string' ? row.project_code.trim().toUpperCase() : ''
+        if (normalizedCode) {
+          usedCodes.add(normalizedCode)
+          const match = normalizedCode.match(/^PRJ-(\d+)$/)
+          if (match) {
+            nextSequence = Math.max(nextSequence, Number(match[1]) + 1)
+          }
         }
       }
-    }
 
-    const updateStatement = this.db.prepare('UPDATE projects SET project_code = ? WHERE id = ?')
-    for (const row of rows) {
-      const normalizedCode =
-        typeof row.project_code === 'string' ? row.project_code.trim().toUpperCase() : ''
-      if (normalizedCode) continue
+      console.log(`[DATABASE] ensureProjectCodes: Found ${usedCodes.size} existing codes, next sequence: ${nextSequence}`)
 
-      let candidate = this.formatProjectCode(nextSequence)
-      while (usedCodes.has(candidate)) {
+      // Second pass: assign codes to projects without codes
+      const updateStatement = this.db.prepare('UPDATE projects SET project_code = ? WHERE id = ?')
+      let updatedCount = 0
+      for (const row of rows) {
+        const normalizedCode =
+          typeof row.project_code === 'string' ? row.project_code.trim().toUpperCase() : ''
+        if (normalizedCode) continue
+
+        let candidate = this.formatProjectCode(nextSequence)
+        while (usedCodes.has(candidate)) {
+          nextSequence += 1
+          candidate = this.formatProjectCode(nextSequence)
+        }
+
+        updateStatement.run(candidate, row.id)
+        usedCodes.add(candidate)
         nextSequence += 1
-        candidate = this.formatProjectCode(nextSequence)
+        updatedCount += 1
+        
+        console.log(`[DATABASE] ensureProjectCodes: Assigned code ${candidate} to project ID ${row.id}`)
       }
-
-      updateStatement.run(candidate, row.id)
-      usedCodes.add(candidate)
-      nextSequence += 1
+      
+      console.log(`[DATABASE] Project codes ensured: ${rows.length} projects processed, ${updatedCount} codes assigned`)
+    } catch (error) {
+      console.error('[DATABASE] Failed to ensure project codes:', error)
     }
   }
 
@@ -65,8 +81,28 @@ class DatabaseService {
     console.log('[DATABASE] User data path:', app.getPath('userData'))
     console.log('[DATABASE] __dirname:', __dirname)
 
+    // Check if database file exists
+    const dbExists = fs.existsSync(dbPath)
+    console.log('[DATABASE] Database file exists:', dbExists)
+    
+    if (dbExists) {
+      const stats = fs.statSync(dbPath)
+      console.log('[DATABASE] Database file size:', stats.size, 'bytes')
+      console.log('[DATABASE] Database modified:', stats.mtime)
+    }
+
     try {
       this.db = new Database(dbPath)
+      console.log('[DATABASE] Database connection established successfully')
+      
+      // Test basic query
+      try {
+        const testQuery = this.db.prepare('SELECT COUNT(*) as count FROM sqlite_master WHERE type="table"').get()
+        console.log('[DATABASE] Test query result:', testQuery)
+      } catch (testError) {
+        console.error('[DATABASE] Test query failed:', testError)
+      }
+      
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error)
 
@@ -343,6 +379,14 @@ class DatabaseService {
 
   private applyMigrations(): void {
     try {
+      // Normalize project status legacy values
+      console.log('[DATABASE] Migrating legacy project status values...')
+      this.db.exec(`
+        UPDATE projects SET status = 'Active' WHERE status IN ('Sold', 'sold');
+        UPDATE projects SET status = 'Inactive' WHERE status IN ('Unsold', 'unsold');
+      `)
+      console.log('[DATABASE] Project status migration completed')
+
       // Check if payment_modes column exists
       const columns = this.db.prepare('PRAGMA table_info(projects)').all() as { name: string }[]
       const hasPaymentModes = columns.some((c) => c.name === 'payment_modes')

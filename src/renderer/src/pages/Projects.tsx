@@ -18,6 +18,7 @@ import {
   List,
   Alert
 } from 'antd'
+const { Title, Text, Paragraph } = Typography
 import {
   PlusOutlined,
   EditOutlined,
@@ -43,19 +44,23 @@ import MaintenanceRateModal from '../components/MaintenanceRateModal'
 import { parseStandardWorkbook, StandardWorkbookParseResult } from '../utils/standardWorkbook'
 
 const { Option } = Select
-// TabPane removed — using Tabs items API (Antd v5+)
-const { Text, Paragraph } = Typography
 
-// Intentionally empty by default: the app should not auto-save “sample” sector rows (A/B/C)
+// Intentionally empty by default: the app should not auto-save sector rows
 // into the database unless the user explicitly adds them.
 const getEmptySectorConfigs = (): Partial<ProjectSectorPaymentConfig>[] => []
 
-// Optional quick-start helper (used by the “Reset to A/B/C” button).
+// Optional quick-start helper for common sector patterns (A, B, C).
+// Users can also add sectors manually when importing project data.
 const getABCSectorConfigs = (): Partial<ProjectSectorPaymentConfig>[] => [
   { sector_code: 'A' },
   { sector_code: 'B' },
   { sector_code: 'C' }
 ]
+
+// Auto-populate sector configs from detected project sectors
+const getDetectedSectorConfigs = (sectorCodes: string[]): Partial<ProjectSectorPaymentConfig>[] => {
+  return sectorCodes.map(sector_code => ({ sector_code }))
+}
 
 const DEFAULT_PROJECT_FORM_VALUES: Partial<Project> = {
   status: 'Active',
@@ -131,11 +136,10 @@ const Projects: React.FC = () => {
 
   const [standardWorkbookPreview, setStandardWorkbookPreview] =
     useState<StandardWorkbookParseResult | null>(null)
-  const [isWorkbookPreviewOpen, setIsWorkbookPreviewOpen] = useState(false)
   const [isWorkbookImporting, setIsWorkbookImporting] = useState(false)
-  const [workbookFileName, setWorkbookFileName] = useState('')
   const [importResults, setImportResults] = useState<StandardWorkbookProjectImportResult[]>([])
   const [showImportSummary, setShowImportSummary] = useState(false)
+  const [showStandardImportModal, setShowStandardImportModal] = useState(false)
   const [sectorConfigs, setSectorConfigs] = useState<
     Partial<ProjectSectorPaymentConfig>[]
   >(getEmptySectorConfigs())
@@ -143,28 +147,34 @@ const Projects: React.FC = () => {
   const [form] = Form.useForm()
   const location = useLocation()
 
-  const fetchProjects = async (): Promise<void> => {
+  const fetchProjects = useCallback(async (): Promise<void> => {
+    console.log('[PROJECTS] Fetching projects...')
     setLoading(true)
     try {
+      console.log('[PROJECTS] Calling API...')
       const [data, summaries] = await Promise.all([
         window.api.projects.getAll(),
         window.api.projects.getSetupSummaries(currentFY)
       ])
+      console.log(`[PROJECTS] API response - projects: ${data.length}, summaries: ${summaries.length}`)
+      console.log('[PROJECTS] Project data:', data.map(p => ({ id: p.id, name: p.name, status: p.status })))
       setProjects(data)
       setProjectSetupSummaries(
         Object.fromEntries(summaries.map((summary) => [summary.project_id, summary]))
       )
+      console.log(`[PROJECTS] State updated - projects set to: ${data.length}`)
     } catch (error) {
+      console.error('[PROJECTS] Error fetching projects:', error)
       message.error('Failed to fetch projects')
-      console.error(error)
     } finally {
       setLoading(false)
+      console.log('[PROJECTS] fetchProjects completed')
     }
-  }
+  }, [currentFY])
 
   useEffect(() => {
     fetchProjects()
-  }, [])
+  }, [fetchProjects])
 
   useEffect(() => {
     const state = location.state as {
@@ -217,14 +227,14 @@ const Projects: React.FC = () => {
   const filteredProjects = useMemo(() => {
     return projects.filter((p) => {
       const matchesSearch =
-        !searchText ||
-        (p.project_code || '').toLowerCase().includes(searchText.toLowerCase()) ||
         p.name.toLowerCase().includes(searchText.toLowerCase()) ||
-        p.address?.toLowerCase().includes(searchText.toLowerCase()) ||
-        p.city?.toLowerCase().includes(searchText.toLowerCase())
-      const projectStatus = p.status || 'Inactive'
+        (p.project_code || '').toLowerCase().includes(searchText.toLowerCase()) ||
+        (p.city || '').toLowerCase().includes(searchText.toLowerCase())
+
+      const projectStatus = p.status || 'Active'
       const matchesStatus = !statusFilter || projectStatus === statusFilter
       const matchesCity = !cityFilter || p.city === cityFilter
+
       return matchesSearch && matchesStatus && matchesCity
     })
   }, [projects, searchText, statusFilter, cityFilter])
@@ -245,49 +255,6 @@ const Projects: React.FC = () => {
     form.setFieldsValue(DEFAULT_PROJECT_FORM_VALUES)
     setSectorConfigs(getEmptySectorConfigs())
     setIsModalOpen(true)
-  }
-
-  const pickProjectFile = async (
-    field: 'letterhead_path' | 'qr_code_path',
-    title: string
-  ): Promise<void> => {
-    console.log('🔍 [pickProjectFile] Starting file picker for field:', field)
-    try {
-      console.log('🔍 [pickProjectFile] Calling window.api.dialog.selectLocalFile...')
-      const selectedPath = await window.api.dialog.selectLocalFile({
-        title,
-        filters: [
-          {
-            name: 'Image Files',
-            extensions: ['png', 'jpg', 'jpeg']
-          }
-        ]
-      })
-      console.log('🔍 [pickProjectFile] Dialog result:', selectedPath)
-
-      if (selectedPath) {
-        console.log('🔍 [pickProjectFile] Copying file to assets...')
-        // Extract filename from path using JavaScript (path module has issues in renderer)
-        const fileName = selectedPath.split(/[\\/]/).pop() || 'file.png'
-        const targetDir = 'assets'
-        const targetPath = `${targetDir}/${fileName}`
-        
-        const copyResult = await window.api.files.copyAssetFile(selectedPath, targetPath)
-        console.log('🔍 [pickProjectFile] Copy result:', copyResult)
-        
-        if (copyResult.success) {
-          form.setFieldsValue({ [field]: targetPath })
-          message.success(`${field === 'qr_code_path' ? 'QR Code' : 'Letterhead'} copied successfully`)
-        } else {
-          message.error(`Failed to copy ${field === 'qr_code_path' ? 'QR Code' : 'Letterhead'}: ${copyResult.error}`)
-        }
-      } else {
-        console.log('🔍 [pickProjectFile] User cancelled or no file selected')
-      }
-    } catch (error) {
-      console.error('❌ [pickProjectFile] Failed to pick file:', error)
-      message.error('Failed to open file picker: ' + (error instanceof Error ? error.message : String(error)))
-    }
   }
 
   const pickSectorQrFile = async (index: number): Promise<void> => {
@@ -348,13 +315,6 @@ const Projects: React.FC = () => {
     setSectorConfigs((prev) => prev.filter((_, itemIndex) => itemIndex !== index))
   }
 
-  const closeWorkbookPreview = (force: boolean = false): void => {
-    if (isWorkbookImporting && !force) return
-    setIsWorkbookPreviewOpen(false)
-    setStandardWorkbookPreview(null)
-    setWorkbookFileName('')
-  }
-
   const handleStandardWorkbookImport = async (file: File): Promise<boolean> => {
     try {
       setImportResults([])
@@ -372,22 +332,19 @@ const Projects: React.FC = () => {
         return false
       }
 
-      setWorkbookFileName(file.name)
       setStandardWorkbookPreview(parsedWorkbook)
-      setIsWorkbookPreviewOpen(true)
 
       if (parsedWorkbook.workbook_blockers.length > 0) {
-        message.warning({
-          content: 'Workbook parsed with blockers. Review them before importing.',
+        message.error({
+          content: `Cannot import: ${parsedWorkbook.workbook_blockers[0]}`,
           key: 'excel_read',
           duration: 5
         })
-      } else {
-        message.success({
-          content: `Workbook parsed successfully. ${parsedWorkbook.projects.length} project(s) ready for review.`,
-          key: 'excel_read'
-        })
+        return false
       }
+
+      // Instead of showing a modal, proceed directly to execution
+      await executeDirectWorkbookImport(parsedWorkbook)
     } catch (error) {
       console.error('Error reading Excel file:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -400,17 +357,13 @@ const Projects: React.FC = () => {
     return false
   }
 
-  const executeStandardWorkbookImport = async (): Promise<void> => {
-    if (!standardWorkbookPreview) return
-    if (standardWorkbookPreview.workbook_blockers.length > 0) {
-      message.error('Resolve workbook blockers before importing.')
-      return
-    }
-
+  const executeDirectWorkbookImport = async (preview: StandardWorkbookParseResult): Promise<void> => {
     setIsWorkbookImporting(true)
+    message.loading({ content: 'Importing workbook data...', key: 'workbook_import_status' })
+    
     try {
       const results: StandardWorkbookProjectImportResult[] = []
-      for (const projectPreview of standardWorkbookPreview.projects) {
+      for (const projectPreview of preview.projects) {
         const result = await window.api.projects.importStandardWorkbookProject({
           project: projectPreview.project,
           sector_configs: projectPreview.sector_configs,
@@ -427,9 +380,17 @@ const Projects: React.FC = () => {
       const importedRates = results.reduce((sum, r) => sum + (r.imported_rates || 0), 0)
       const importedPayments = results.reduce((sum, r) => sum + (r.imported_payments || 0), 0)
 
+      // Check for projects missing bank details
+      const projectsMissingBankDetails = preview.projects.filter(p => 
+        !p.sector_configs || p.sector_configs.length === 0 || 
+        !p.sector_configs.some(sc => sc.account_name && sc.bank_name && sc.account_no && sc.ifsc_code)
+      ).map(p => p.project.name)
+
       setImportResults(results)
       setShowImportSummary(true)
-      closeWorkbookPreview(true)
+      setStandardWorkbookPreview(null)
+      setShowStandardImportModal(false)
+      
       await fetchProjects()
 
       const parts = [
@@ -440,24 +401,66 @@ const Projects: React.FC = () => {
         importedPayments > 0 ? `${importedPayments} payment(s)` : null
       ].filter(Boolean).join(', ')
 
-      showCompletionWithNextStep(
-        'projects',
-        'Projects imported',
-        navigate,
-        `Imported ${parts}.`
-      )
+      message.success({
+        content: `Successfully imported ${parts}.`,
+        key: 'workbook_import_status',
+        duration: 4
+      })
+
+      // Show warning for projects missing bank details
+      if (projectsMissingBankDetails.length > 0) {
+        message.warning({
+          content: `Note: ${projectsMissingBankDetails.join(', ')} - missing bank details. Please edit project to add bank information.`,
+          key: 'bank_details_missing',
+          duration: 6
+        })
+      }
     } catch (error) {
       console.error('Workbook import failed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      message.error(`Workbook import failed: ${errorMessage}`)
+      message.error({
+        content: `Workbook import failed: ${errorMessage}`,
+        key: 'workbook_import_status'
+      })
     } finally {
       setIsWorkbookImporting(false)
     }
   }
 
+  const executeStandardWorkbookImport = async (): Promise<void> => {
+    if (!standardWorkbookPreview) return
+    await executeDirectWorkbookImport(standardWorkbookPreview)
+  }
+
   const handleEdit = async (record: Project): Promise<void> => {
-    console.log('[EDIT PROJECT] Original record status:', record.status)
+    console.log('[EDIT PROJECT] Starting edit for project:', record.name, 'ID:', record.id)
     setEditingProject(record)
+    
+    // Fetch existing sector configs from database
+    console.log('[EDIT PROJECT] Fetching sector configs for project ID:', record.id)
+    try {
+      const existingSectorConfigs = await window.api.projects.getSectorPaymentConfigs(record.id!)
+      console.log('[EDIT PROJECT] Raw API response:', existingSectorConfigs)
+      console.log('[EDIT PROJECT] Sector configs count:', existingSectorConfigs?.length || 0)
+      
+      if (existingSectorConfigs && existingSectorConfigs.length > 0) {
+        console.log('[EDIT PROJECT] Sector configs found:', existingSectorConfigs.map(config => ({
+          sector_code: config.sector_code,
+          account_name: config.account_name,
+          bank_name: config.bank_name
+        })))
+      } else {
+        console.log('[EDIT PROJECT] No sector configs found for this project')
+      }
+      
+      setSectorConfigs(existingSectorConfigs || [])
+    } catch (error) {
+      console.error('[EDIT PROJECT] Failed to fetch sector configs:', error)
+      console.error('[EDIT PROJECT] Error details:', error instanceof Error ? error.message : String(error))
+      // Fallback to empty configs if fetch fails
+      setSectorConfigs(getEmptySectorConfigs())
+    }
+    
     const formValues = {
       ...DEFAULT_PROJECT_FORM_VALUES,
       ...record,
@@ -468,14 +471,8 @@ const Projects: React.FC = () => {
     }
     console.log('[EDIT PROJECT] Form values status:', formValues.status)
     form.setFieldsValue(formValues)
-    try {
-      const configs = await window.api.projects.getSectorPaymentConfigs(record.id!)
-      setSectorConfigs(configs.length > 0 ? configs : getEmptySectorConfigs())
-    } catch (error) {
-      console.error('Failed to fetch sector payment configs:', error)
-      setSectorConfigs(getEmptySectorConfigs())
-    }
     setIsModalOpen(true)
+    console.log('[EDIT PROJECT] Edit modal opened')
   }
 
   const handleRates = (record: Project): void => {
@@ -1077,218 +1074,177 @@ const Projects: React.FC = () => {
                 label: 'Bank Details',
                 icon: <BankOutlined />,
                 children: (
-                  <div
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: '16px',
-                      marginTop: 16
-                    }}
-                  >
-                    <Form.Item name="account_name" label="Name" style={{ gridColumn: 'span 2' }}>
-                      <Input />
-                    </Form.Item>
-
-                    <Form.Item name="bank_name" label="Bank Name">
-                      <Input />
-                    </Form.Item>
-
-                    <Form.Item name="account_no" label="Account No.">
-                      <Input />
-                    </Form.Item>
-
-                    <Form.Item name="ifsc_code" label="IFSC Code">
-                      <Input />
-                    </Form.Item>
-
-                    <Form.Item name="branch" label="Branch">
-                      <Input />
-                    </Form.Item>
-
-                    <Form.Item
-                      name="branch_address"
-                      label="Branch Address"
-                      style={{ gridColumn: 'span 2' }}
-                    >
-                      <Input />
-                    </Form.Item>
-
-                    <Form.Item name="contact_email" label="Society Contact Email">
-                      <Input type="email" placeholder="accounts@yoursociety.com (shown on PDF letterhead)" />
-                    </Form.Item>
-
-                    <Form.Item name="contact_phone" label="Society Contact Phone">
-                      <Input placeholder="+91-XXXXXXXXXX (shown on PDF letterhead)" />
-                    </Form.Item>
-
-                    <Form.Item name="payment_modes" label="Payment Modes" style={{ gridColumn: 'span 2' }}>
-                      <Input placeholder="e.g. Cheque / Cash / Online Transfer" />
-                    </Form.Item>
-
-                    <div style={{ gridColumn: 'span 2' }}>
-                      <Form.Item name="qr_code_path" label="Default QR / Barcode">
-                        <Input
-                          placeholder="Default QR image path (.png/.jpg/.jpeg)"
-                          addonAfter={
-                            <Button
-                              type="text"
-                              icon={<FolderOpenOutlined />}
-                              onClick={() =>
-                                pickProjectFile('qr_code_path', 'Select Default QR / Barcode')
-                              }
-                            >
-                              Browse
-                            </Button>
-                          }
-                        />
-                      </Form.Item>
-                    </div>
-
-                    <div style={{ gridColumn: 'span 2' }}>
-                      <Form.Item name="letterhead_path" label="Letterhead Image">
-                        <Input
-                          placeholder="Letterhead image path (.png/.jpg/.jpeg)"
-                          addonAfter={
-                            <Button
-                              type="text"
-                              icon={<FolderOpenOutlined />}
-                              onClick={() =>
-                                pickProjectFile('letterhead_path', 'Select Letterhead Image')
-                              }
-                            >
-                              Browse
-                            </Button>
-                          }
-                        />
-                      </Form.Item>
-                    </div>
-                  </div>
-                )
-              },
-              {
-                key: 'sector-payment',
-                label: 'Sector Payment Config',
-                children: (
                   <div style={{ marginTop: 16 }}>
-                    <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                      Configure sector-specific bank accounts and QR codes. Each sector can have
-                      its own bank account (e.g. Beverly Sector A vs B/C). Letters will use the
-                      sector account first, falling back to the project default.
-                    </Paragraph>
+                    {/* Sector-Specific Bank Details Section */}
+                    <div>
+                      <Title level={5} style={{ marginBottom: 16 }}>Bank Details</Title>
+                      <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                        Configure sector-specific bank accounts and QR codes. Each sector can have
+                        its own bank account. Letters will use the sector account first.
+                        Sectors will be automatically populated when importing project data.
+                      </Paragraph>
 
-                    {editingProjectSummary && editingProjectSummary.sector_codes.length > 0 && (
-                      <Alert
-                        type="info"
-                        showIcon
-                        message={`Detected sectors: ${editingProjectSummary.sector_codes.join(', ')}`}
-                        description="Add a row for each sector that has a different bank account or QR code."
-                        style={{ marginBottom: 16 }}
-                      />
-                    )}
-
-                    <Space direction="vertical" style={{ width: '100%' }} size="middle">
-                      {sectorConfigs.map((config, index) => (
-                        <Card
-                          key={`sector-config-${index}`}
-                          size="small"
-                          title={`Sector ${String(config.sector_code || index + 1)} Payment Config`}
-                          extra={
-                            <Button
-                              size="small"
-                              danger
-                              onClick={() => handleRemoveSectorConfigRow(index)}
-                              disabled={sectorConfigs.length <= 1}
-                            >
-                              Remove
-                            </Button>
-                          }
-                        >
-                          <div
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: '1fr 1fr',
-                              gap: '8px'
-                            }}
-                          >
-                            <Input
-                              value={String(config.sector_code || '')}
-                              onChange={(e) =>
-                                handleSectorConfigChange(index, 'sector_code', e.target.value)
-                              }
-                              placeholder="Sector Code (A / B / 4 / BMF)"
-                              addonBefore="Sector"
-                            />
-                            <Input
-                              value={String(config.account_name || '')}
-                              onChange={(e) =>
-                                handleSectorConfigChange(index, 'account_name', e.target.value)
-                              }
-                              placeholder="Account Name"
-                              addonBefore="A/c Name"
-                            />
-                            <Input
-                              value={String(config.bank_name || '')}
-                              onChange={(e) =>
-                                handleSectorConfigChange(index, 'bank_name', e.target.value)
-                              }
-                              placeholder="Bank Name"
-                              addonBefore="Bank"
-                            />
-                            <Input
-                              value={String(config.account_no || '')}
-                              onChange={(e) =>
-                                handleSectorConfigChange(index, 'account_no', e.target.value)
-                              }
-                              placeholder="Account Number"
-                              addonBefore="A/c No"
-                            />
-                            <Input
-                              value={String(config.ifsc_code || '')}
-                              onChange={(e) =>
-                                handleSectorConfigChange(
-                                  index,
-                                  'ifsc_code',
-                                  e.target.value.toUpperCase()
-                                )
-                              }
-                              placeholder="IFSC Code"
-                              addonBefore="IFSC"
-                            />
-                            <Input
-                              value={String(config.branch || '')}
-                              onChange={(e) =>
-                                handleSectorConfigChange(index, 'branch', e.target.value)
-                              }
-                              placeholder="Branch"
-                              addonBefore="Branch"
-                            />
-                            <div style={{ display: 'flex', gap: 8, gridColumn: 'span 2' }}>
-                              <Input
-                                value={String(config.qr_code_path || '')}
-                                onChange={(e) =>
-                                  handleSectorConfigChange(index, 'qr_code_path', e.target.value)
-                                }
-                                placeholder="QR Image Path (optional — .png/.jpg/.jpeg)"
-                                addonBefore="QR Path"
-                              />
-                              <Button
-                                icon={<FolderOpenOutlined />}
-                                onClick={() => pickSectorQrFile(index)}
+                      {editingProjectSummary && editingProjectSummary.sector_codes.length > 0 && (
+                        <Alert
+                          type="info"
+                          showIcon
+                          message={`Detected sectors: ${editingProjectSummary.sector_codes.join(', ')}`}
+                          description={
+                            <div>
+                              <div>Add a row for each sector that has a different bank account or QR code.</div>
+                              <Button 
+                                size="small" 
+                                type="link" 
+                                onClick={() => setSectorConfigs(getDetectedSectorConfigs(editingProjectSummary.sector_codes))}
+                                style={{ padding: 0, height: 'auto' }}
                               >
-                                Browse
+                                Auto-populate with detected sectors
                               </Button>
                             </div>
-                          </div>
-                        </Card>
-                      ))}
+                          }
+                          style={{ marginBottom: 16 }}
+                        />
+                      )}
 
-                      <Space>
-                        <Button onClick={handleAddSectorConfigRow}>Add Sector Row</Button>
-                        <Button onClick={() => setSectorConfigs(getABCSectorConfigs())}>
-                          Reset to A/B/C
+                      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                        {sectorConfigs.map((config, index) => (
+                          <Card
+                            key={`sector-config-${index}`}
+                            size="small"
+                            title={`Sector ${String(config.sector_code || index + 1)} Payment Config`}
+                            extra={
+                              <Button
+                                size="small"
+                                danger
+                                onClick={() => handleRemoveSectorConfigRow(index)}
+                                disabled={sectorConfigs.length <= 1}
+                              >
+                                Remove
+                              </Button>
+                            }
+                          >
+                            <div
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: '1fr 1fr',
+                                gap: '8px'
+                              }}
+                            >
+                              <Input
+                                value={String(config.sector_code || '')}
+                                onChange={(e) =>
+                                  handleSectorConfigChange(index, 'sector_code', e.target.value)
+                                }
+                                placeholder="Sector Code (e.g. A, B, C, 1, 2, etc.)"
+                                addonBefore="Sector"
+                              />
+                              <Input
+                                value={String(config.account_name || '')}
+                                onChange={(e) =>
+                                  handleSectorConfigChange(index, 'account_name', e.target.value)
+                                }
+                                placeholder="Account Name"
+                                addonBefore="A/c Name"
+                              />
+                              <Input
+                                value={String(config.bank_name || '')}
+                                onChange={(e) =>
+                                  handleSectorConfigChange(index, 'bank_name', e.target.value)
+                                }
+                                placeholder="Bank Name"
+                                addonBefore="Bank"
+                              />
+                              <Input
+                                value={String(config.account_no || '')}
+                                onChange={(e) =>
+                                  handleSectorConfigChange(index, 'account_no', e.target.value)
+                                }
+                                placeholder="Account Number"
+                                addonBefore="A/c No"
+                              />
+                              <Input
+                                value={String(config.ifsc_code || '')}
+                                onChange={(e) =>
+                                  handleSectorConfigChange(index, 'ifsc_code', e.target.value.toUpperCase())
+                                }
+                                placeholder="IFSC Code"
+                                addonBefore="IFSC"
+                              />
+                              <Input
+                                value={String(config.branch || '')}
+                                onChange={(e) =>
+                                  handleSectorConfigChange(index, 'branch', e.target.value)
+                                }
+                                placeholder="Branch"
+                                addonBefore="Branch"
+                              />
+                              <div style={{ gridColumn: 'span 2' }}>
+                                <Input
+                                  value={String(config.qr_code_path || '')}
+                                  onChange={(e) =>
+                                    handleSectorConfigChange(index, 'qr_code_path', e.target.value)
+                                  }
+                                  placeholder="Sector QR image path (.png/.jpg/.jpeg)"
+                                  addonAfter={
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<FolderOpenOutlined />}
+                                      onClick={() =>
+                                        pickSectorQrFile(index)
+                                      }
+                                    >
+                                      Browse
+                                    </Button>
+                                  }
+                                />
+                              </div>
+                            </div>
+                          </Card>
+                        ))}
+                        <Button
+                          type="dashed"
+                          onClick={handleAddSectorConfigRow}
+                          style={{ width: '100%' }}
+                          icon={<PlusOutlined />}
+                        >
+                          Add Sector Bank Config
                         </Button>
+                        <Space>
+                          {editingProjectSummary && editingProjectSummary.sector_codes.length > 0 ? (
+                            <Button size="small" onClick={() => setSectorConfigs(getDetectedSectorConfigs(editingProjectSummary.sector_codes))}>
+                              Use Detected Sectors ({editingProjectSummary.sector_codes.join(', ')})
+                            </Button>
+                          ) : (
+                            <Button size="small" onClick={() => setSectorConfigs(getABCSectorConfigs())}>
+                              Add Common Sectors (A, B, C)
+                            </Button>
+                          )}
+                          {editingProject && (
+                            <Button 
+                              size="small" 
+                              type="dashed" 
+                              onClick={async () => {
+                                console.log('[DEBUG] Manual fetch test for project:', editingProject.id)
+                                try {
+                                  const configs = await window.api.projects.getSectorPaymentConfigs(editingProject.id!)
+                                  console.log('[DEBUG] Manual fetch result:', configs)
+                                  message.info(`Found ${configs?.length || 0} sector configs`)
+                                } catch (error) {
+                                  console.error('[DEBUG] Manual fetch error:', error)
+                                  message.error('Fetch failed: ' + (error instanceof Error ? error.message : String(error)))
+                                }
+                              }}
+                            >
+                              Debug Fetch
+                            </Button>
+                          )}
+                          <Button size="small" onClick={() => setSectorConfigs(getEmptySectorConfigs())}>
+                            Clear All
+                          </Button>
+                        </Space>
                       </Space>
-                    </Space>
+                    </div>
                   </div>
                 )
               }
@@ -1297,15 +1253,50 @@ const Projects: React.FC = () => {
         </Form>
       </Modal>
 
+      {/* Import Summary Modal */}
       <Modal
-        title={
-          workbookFileName
-            ? `Import Standard Workbook: ${workbookFileName}`
-            : 'Import Standard Workbook'
-        }
-        open={isWorkbookPreviewOpen}
-        onCancel={() => closeWorkbookPreview()}
-        onOk={() => executeStandardWorkbookImport()}
+        title="Import Summary"
+        open={showImportSummary}
+        onCancel={() => setShowImportSummary(false)}
+        footer={[
+          <Button key="close" onClick={() => setShowImportSummary(false)}>
+            Close
+          </Button>
+        ]}
+        width={600}
+      >
+        <div style={{ maxHeight: '400px', overflow: 'auto' }}>
+          <List
+            dataSource={importResults}
+            renderItem={(result, index) => (
+              <List.Item>
+                <List.Item.Meta
+                  title={`${index + 1}. ${result.project_code || 'PRJ'} - ${result.project_name}`}
+                  description={
+                    <Space direction="vertical" size={0}>
+                      <Text>Units: {result.imported_units} | Letters: {result.imported_letters}</Text>
+                      <Text>Rates: {result.imported_rates} | Payments: {result.imported_payments}</Text>
+                      {result.created && (
+                        <Tag color="green">Successfully Created</Tag>
+                      )}
+                    </Space>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        </div>
+      </Modal>
+
+      {/* Standard Workbook Import Modal */}
+      <Modal
+        title="Import Projects from Standard Workbook"
+        open={showStandardImportModal}
+        onOk={executeStandardWorkbookImport}
+        onCancel={() => {
+          setShowStandardImportModal(false)
+          setStandardWorkbookPreview(null)
+        }}
         okText="Import Workbook"
         okButtonProps={{
           disabled:
