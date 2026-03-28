@@ -94,25 +94,11 @@ class PaymentService extends BasePDFGenerator {
         `SELECT p.*, u.unit_number, u.owner_name, u.contact_number, u.sector_code,
                 pr.name as project_name, pr.address, pr.city, pr.state,
                 pr.contact_email, pr.contact_phone,
-                pr.account_name as proj_account_name,
-                pr.bank_name    as proj_bank_name,
-                pr.account_no   as proj_account_no,
-                pr.ifsc_code    as proj_ifsc_code,
-                pr.branch       as proj_branch,
-                pr.branch_address as proj_branch_address,
-                pspc.account_name as sec_account_name,
-                pspc.bank_name    as sec_bank_name,
-                pspc.account_no   as sec_account_no,
-                pspc.ifsc_code    as sec_ifsc_code,
-                pspc.branch       as sec_branch,
                 r.receipt_number
          FROM payments p
          JOIN units u ON p.unit_id = u.id
          JOIN projects pr ON p.project_id = pr.id
          LEFT JOIN receipts r ON p.id = r.payment_id
-         LEFT JOIN project_sector_payment_configs pspc
-           ON pr.id = pspc.project_id
-          AND UPPER(TRIM(u.sector_code)) = UPPER(TRIM(pspc.sector_code))
          WHERE p.id = ?`,
         [paymentId]
       )
@@ -225,20 +211,6 @@ class PaymentService extends BasePDFGenerator {
         ]
       )
 
-      // ── Recipient ──
-      this.layout.currentY -= 10
-      this.drawSectionHeader('RECIPIENT DETAILS')
-      this.layout.currentY -= 10
-      this.drawInfoGrid(
-        ['Unit No:', 'Owner Name:', 'Contact:', 'Project:'],
-        [
-          payment.unit_number || '—',
-          payment.owner_name || '—',
-          payment.contact_number || '—',
-          payment.project_name || '—'
-        ]
-      )
-
       // ── Payment details table ──
       this.layout.currentY -= 10
       this.drawSectionHeader('PAYMENT DETAILS')
@@ -312,21 +284,8 @@ class PaymentService extends BasePDFGenerator {
 
       this.drawTable(['Particulars', 'Details'], tableRows)
 
-      // ── Bank details — prefer sector-specific account, fall back to project default ──
-      this.layout.currentY -= 10
-      const raw = payment as unknown as Record<string, string>
-      const hasSector = !!(raw.sec_account_name || raw.sec_account_no || raw.sec_bank_name)
-      this.drawBankDetails({
-        account_name:   hasSector ? raw.sec_account_name   : raw.proj_account_name,
-        bank_name:      hasSector ? raw.sec_bank_name      : raw.proj_bank_name,
-        account_no:     hasSector ? raw.sec_account_no     : raw.proj_account_no,
-        ifsc_code:      hasSector ? raw.sec_ifsc_code      : raw.proj_ifsc_code,
-        branch:         hasSector ? raw.sec_branch         : raw.proj_branch,
-        branch_address: hasSector ? undefined              : raw.proj_branch_address
-      })
-
       // ── Footer ──
-      this.drawFooter('Authorised Signatory')
+      this.drawFooter('This is an electronically generated receipt. No signature required.')
 
       const pdfBytes = await this.pdfDoc.save()
       const pdfDir = path.join(app.getPath('userData'), 'receipts')
@@ -545,64 +504,6 @@ class PaymentService extends BasePDFGenerator {
 
       return paymentId
     })
-  }
-
-  /**
-   * Draw bank details on receipt PDF — only shows fields that have real values
-   */
-  private drawBankDetails(bank: {
-    account_name?: string
-    bank_name?: string
-    account_no?: string
-    ifsc_code?: string
-    branch?: string
-    branch_address?: string
-  }): void {
-    this.page.drawText('Bank Details', {
-      x: this.MARGIN,
-      y: this.layout.currentY,
-      size: 10,
-      font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
-    })
-    this.layout.currentY -= 18
-
-    const fields: [string, string | undefined][] = [
-      ['Account Name', bank.account_name],
-      ['Account No', bank.account_no],
-      ['Bank Name', bank.bank_name],
-      ['IFSC Code', bank.ifsc_code],
-      ['Branch', bank.branch],
-      ['Branch Address', bank.branch_address]
-    ]
-
-    const lines = fields
-      .filter(([, v]) => v && String(v).trim() !== '')
-      .map(([label, v]) => `${label}: ${v}`)
-
-    if (lines.length === 0) {
-      this.page.drawText('Bank details not configured. Please update project settings.', {
-        x: this.MARGIN,
-        y: this.layout.currentY,
-        size: 9,
-        font: this.fonts.italic,
-        color: this.COLORS.GRAY
-      })
-      this.layout.currentY -= 14
-      return
-    }
-
-    lines.forEach((line) => {
-      this.page.drawText(line, {
-        x: this.MARGIN,
-        y: this.layout.currentY,
-        size: 9,
-        font: this.fonts.regular,
-        color: this.COLORS.TEXT
-      })
-      this.layout.currentY -= 12
-    })
-    this.layout.currentY -= 8
   }
 
   public delete(id: number): boolean {

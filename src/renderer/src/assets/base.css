@@ -2,6 +2,19 @@
   --ev-c-white: #ffffff;
   --ev-c-white-soft: #f8f8f8;
   --ev-c-white-mute: #f2f2f2;
+  
+  /* Global font contrast overrides for accessibility */
+  --ant-color-text: #111111;
+  --ant-color-text-secondary: #555555;
+  --ant-color-text-tertiary: #666666;
+  --ant-color-text-quaternary: #777777;
+  --ant-color-text-description: #555555;
+  --ant-color-text-disabled: #999999;
+  --ant-color-heading: #111111;
+  --ant-color-label: #222222;
+  --ant-color-form-text: #222222;
+  --ant-color-input-text: #111111;
+  --ant-color-input-placeholder: #888888;
 }
 
 *,
@@ -18,4 +31,1080 @@ body {
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  color: #111111;
+}
+
+/* Global text contrast overrides */
+.ant-typography {
+  color: #111111 !important;
+}
+
+.ant-typography-secondary {
+  color: #555555 !important;
+}
+
+.ant-table {
+  color: #111111 !important;
+}
+
+.ant-table-thead > tr > th {
+  color: #111111 !important;
+}
+
+.ant-table-tbody > tr > td {
+  color: #111111 !important;
+}
+
+.ant-form-item-label > label {
+  color: #222222 !important;
+}
+
+.ant-form-item-explain {
+  color: #555555 !important;
+}
+
+.ant-input {
+  color: #111111 !important;
+}
+
+.ant-input::placeholder {
+  color: #888888 !important;
+}
+
+.ant-select-selection-item {
+  color: #111111 !important;
+}
+
+.ant-card {
+  color: #111111 !important;
+}
+
+.ant-card-head-title {
+  color: #111111 !important;
+}
+
+.ant-card-meta-title {
+  color: #111111 !important;
+}
+
+.ant-card-meta-description {
+  color: #555555 !important;
+}
+
+.ant-statistic-title {
+  color: #555555 !important;
+}
+
+.ant-statistic-content {
+  color: #111111 !important;
+}
+
+.ant-descriptions-item-label {
+  color: #222222 !important;
+}
+
+.ant-descriptions-item-content {
+  color: #111111 !important;
+}
+
+.ant-modal-title {
+  color: #111111 !important;
+}
+
+.ant-drawer-title {
+  color: #111111 !important;
+}
+
+.ant-tag {
+  color: #111111 !important;
+}
+
+.ant-breadcrumb {
+  color: #111111 !important;
+}
+
+.ant-breadcrumb a {
+  color: #111111 !important;
+}
+
+.ant-breadcrumb-separator {
+  color: #555555 !important;
+}
+
+/* Ensure all text elements have proper contrast */
+p, span, div, h1, h2, h3, h4, h5, h6 {
+  color: inherit;
+}
+
+/* Restore default button text color */
+.ant-btn:not(.ant-btn-primary):not(.ant-btn-danger) {
+  color: #111111;
+}
+
+/* Override any gray text that might be too light */
+.ant-typography-secondary,
+.ant-typography-description,
+[class*="ant-"][class*="secondary"],
+[class*="ant-"][class*="description"],
+[class*="ant-"][class*="placeholder"] {
+  color: #555555 !important;
+}
+
+/* Sidebar and Menu Overrides */
+.ant-menu {
+  color: #ffffff !important;
+}
+
+.ant-menu-item {
+  color: #ffffff !important;
+}
+
+.ant-menu-item-selected {
+  color: #ffffff !important;
+}
+
+.ant-menu-item:hover {
+  color: #ffffff !important;
+}
+
+.ant-menu-submenu-title {
+  color: #ffffff !important;
+}
+
+.ant-menu-submenu-title:hover {
+  color: #ffffff !important;
+}
+
+.ant-menu-item-icon {
+  color: #ffffff !important;
+}
+
+/* Header text in sidebar */
+.ant-layout-sider .ant-layout-sider-children {
+  color: #ffffff !important;
+}
+
+/* Admin panel header text */
+.ant-layout-header span {
+  color: #555555 !important;
+}
+
+/* Sidebar branding text overrides */
+.ant-layout-sider .ant-layout-sider-children span {
+  color: #ffffff !important;
+}
+
+.ant-layout-sider .ant-layout-sider-children span[style*="rgba(255,255,255,0.65)"] {
+  color: #ffffff !important;
+}
+
+/* Additional sidebar elements */
+.ant-menu-dark {
+  background: #001529 !important;
+}
+
+.ant-menu-dark .ant-menu-item {
+  color: #ffffff !important;
+}
+
+.ant-menu-dark .ant-menu-item-selected {
+  background-color: #1890ff !important;
+  color: #ffffff !important;
+}
+
+.ant-menu-dark .ant-menu-item:hover {
+  background-color: #40a9ff !important;
+  color: #ffffff !important;
+}
+
+/* Dropdown and tooltip text in sidebar */
+.ant-dropdown-menu {
+  color: #111111 !important;
+}
+
+.ant-dropdown-menu-item {
+  color: #111111 !important;
+}
+
+.ant-tooltip-inner {
+  color: #ffffff !important;
+}
+
+/* Navigation icons */
+.anticon {
+  color: inherit !important;
+}
+
+/* CTA Buttons - Primary */
+.ant-btn {
+  color: #ffffff !important;
+}
+
+.ant-btn-primary {
+  background-color: #1890ff !important;
+  border-color: #1890ff !important;
+  color: #ffffff !important;
+}
+
+.ant-btn-primary:hover {
+  background-color: #40a9ff !important;
+  border-color: #40a9ff !important;
+  color: #ffffff !important;
+}
+
+.ant-btn-primary:focus {
+  background-color: #096dd9 !important;
+  border-color: #096dd9 !important;
+  color: #ffffff !important;
+}
+
+/* CTA Buttons - Default */
+.ant-btn-default {
+  color: #111111 !important;
+  border-color: #d9d9d9 !important;
+  background-color: #ffffff !important;
+}
+
+.ant-btn-default:hover {
+  color: #1890ff !important;
+  border-color: #1890ff !important;
+}
+
+/* CTA Buttons - Danger */
+.ant-btn-danger {
+  background-color: #ff4d4f !important;
+  border-color: #ff4d4f !important;
+  color: #ffffff !important;
+}
+
+.ant-btn-danger:hover {
+  background-color: #ff7875 !important;
+  border-color: #ff7875 !important;
+  color: #ffffff !important;
+}
+
+/* CTA Buttons - Link type */
+.ant-btn-link {
+  color: #1890ff !important;
+}
+
+.ant-btn-link:hover {
+  color: #40a9ff !important;
+}
+
+/* CTA Buttons - Text type */
+.ant-btn-text {
+  color: #111111 !important;
+}
+
+.ant-btn-text:hover {
+  color: #1890ff !important;
+}
+
+/* CTA Buttons - Dashed */
+.ant-btn-dashed {
+  color: #111111 !important;
+  border-color: #d9d9d9 !important;
+  background-color: transparent !important;
+}
+
+.ant-btn-dashed:hover {
+  color: #1890ff !important;
+  border-color: #1890ff !important;
+}
+
+/* Small buttons */
+.ant-btn-sm {
+  font-size: 14px !important;
+}
+
+/* Large buttons */
+.ant-btn-lg {
+  font-size: 16px !important;
+}
+
+/* Button icons */
+.anticon + span {
+  color: inherit !important;
+}
+
+/* Links */
+a {
+  color: #1890ff;
+}
+
+a:hover {
+  color: #40a9ff;
+}
+
+a:visited {
+  color: #722ed1;
+}
+
+/* Ant Design Typography links */
+.ant-typography a {
+  color: #1890ff !important;
+}
+
+.ant-typography a:hover {
+  color: #40a9ff !important;
+}
+
+/* Card hoverable CTAs */
+.ant-card-hoverable:hover {
+  border-color: #1890ff !important;
+}
+
+/* Quick action cards */
+.ant-card:hover .ant-typography {
+  color: #111111 !important;
+}
+
+.ant-card:hover .ant-typography-secondary {
+  color: #555555 !important;
+}
+
+/* Upload component */
+.ant-upload-list-item-name {
+  color: #111111 !important;
+}
+
+.ant-upload-drag {
+  border-color: #d9d9d9 !important;
+}
+
+.ant-upload-drag:hover {
+  border-color: #1890ff !important;
+}
+
+/* Modal footer buttons */
+.ant-modal-footer .ant-btn {
+  color: #111111 !important;
+}
+
+.ant-modal-footer .ant-btn-primary {
+  color: #ffffff !important;
+}
+
+/* Table action buttons */
+.ant-table-cell .ant-btn {
+  color: #111111 !important;
+}
+
+.ant-table-cell .ant-btn-primary {
+  color: #ffffff !important;
+}
+
+/* Tag close buttons */
+.ant-tag-close-icon {
+  color: #111111 !important;
+}
+
+.ant-tag-close-icon:hover {
+  color: #ff4d4f !important;
+}
+
+/* Focus States for Accessibility */
+.ant-btn:focus-visible {
+  outline: 2px solid #1890ff !important;
+  outline-offset: 2px !important;
+}
+
+.ant-input:focus {
+  border-color: #1890ff !important;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2) !important;
+}
+
+.ant-select-focused .ant-select-selector {
+  border-color: #1890ff !important;
+  box-shadow: 0 0 0 2px rgba(24, 144, 255, 0.2) !important;
+}
+
+/* Form Elements */
+.ant-form-item-required::before {
+  color: #ff4d4f !important;
+}
+
+.ant-form-item-extra {
+  color: #555555 !important;
+}
+
+/* Checkbox and Radio */
+.ant-checkbox-wrapper {
+  color: #111111 !important;
+}
+
+.ant-radio-wrapper {
+  color: #111111 !important;
+}
+
+/* Switch */
+.ant-switch {
+  background-color: #bfbfbf !important;
+}
+
+.ant-switch-checked {
+  background-color: #1890ff !important;
+}
+
+/* Slider */
+.ant-slider-track {
+  background-color: #1890ff !important;
+}
+
+.ant-slider-handle {
+  border-color: #1890ff !important;
+}
+
+/* Date Picker */
+.ant-picker {
+  color: #111111 !important;
+}
+
+.ant-picker-input > input {
+  color: #111111 !important;
+}
+
+/* Tabs */
+.ant-tabs-tab {
+  color: #555555 !important;
+}
+
+.ant-tabs-tab-active {
+  color: #1890ff !important;
+}
+
+/* Pagination */
+.ant-pagination-item {
+  color: #111111 !important;
+}
+
+.ant-pagination-item-active {
+  color: #1890ff !important;
+  border-color: #1890ff !important;
+}
+
+/* Badge */
+.ant-badge-count {
+  color: #ffffff !important;
+}
+
+/* Alert */
+.ant-alert-message {
+  color: #111111 !important;
+}
+
+.ant-alert-description {
+  color: #555555 !important;
+}
+
+/* Popover */
+.ant-popover-title {
+  color: #111111 !important;
+}
+
+.ant-popover-inner-content {
+  color: #111111 !important;
+}
+
+/* List */
+.ant-list-item-meta-title {
+  color: #111111 !important;
+}
+
+.ant-list-item-meta-description {
+  color: #555555 !important;
+}
+
+/* Empty State */
+.ant-empty-description {
+  color: #555555 !important;
+}
+
+/* Result */
+.ant-result-title {
+  color: #111111 !important;
+}
+
+.ant-result-subtitle {
+  color: #555555 !important;
+}
+
+/* Steps */
+.ant-steps-item-title {
+  color: #111111 !important;
+}
+
+.ant-steps-item-description {
+  color: #555555 !important;
+}
+
+/* Timeline */
+.ant-timeline-item-content {
+  color: #111111 !important;
+}
+
+/* ===============================
+   ELDERLY-FRIENDLY MODAL OVERRIDES
+   =============================== */
+
+/* Modal base styling */
+.ant-modal {
+  font-size: 16px !important;
+}
+
+.ant-modal-title {
+  color: #111111 !important;
+  font-size: 20px !important;
+  font-weight: 600 !important;
+}
+
+.ant-modal-body {
+  color: #111111 !important;
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+}
+
+.ant-modal-footer {
+  font-size: 16px !important;
+}
+
+/* Modal content text */
+.ant-modal-body .ant-typography {
+  color: #111111 !important;
+  font-size: 16px !important;
+}
+
+.ant-modal-body .ant-typography-secondary {
+  color: #555555 !important;
+  font-size: 15px !important;
+}
+
+/* Warning/info text in modals */
+.ant-modal-body div[style*="font-size: 12px"] {
+  font-size: 14px !important;
+  color: #555555 !important;
+}
+
+.ant-modal-body div[style*="color: '#666'"] {
+  color: #555555 !important;
+}
+
+/* Modal icons */
+.ant-modal-body .anticon {
+  font-size: 24px !important;
+}
+
+/* Confirmation dialog specific */
+.ant-modal-confirm-title {
+  color: #111111 !important;
+  font-size: 20px !important;
+  font-weight: 600 !important;
+}
+
+.ant-modal-confirm-content {
+  color: #111111 !important;
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+}
+
+/* ===============================
+   ELDERLY-FRIENDLY TEXT CONTENT
+   =============================== */
+
+/* Base font size increase for readability */
+.ant-typography {
+  color: #111111 !important;
+  font-size: 16px !important;
+}
+
+.ant-typography h1 {
+  font-size: 28px !important;
+}
+
+.ant-typography h2 {
+  font-size: 24px !important;
+}
+
+.ant-typography h3 {
+  font-size: 20px !important;
+}
+
+.ant-typography h4 {
+  font-size: 18px !important;
+}
+
+/* Paragraph text - scoped to content areas */
+.content-area p,
+.ant-card-body p,
+.ant-modal-body p {
+  font-size: 16px !important;
+  line-height: 1.6 !important;
+  color: #111111 !important;
+}
+
+/* Labels and descriptions */
+label {
+  font-size: 16px !important;
+  color: #222222 !important;
+}
+
+/* Card text */
+.ant-card-body {
+  font-size: 16px !important;
+}
+
+/* Table text - already covered but ensure size */
+.ant-table {
+  font-size: 15px !important;
+}
+
+.ant-table-thead > tr > th {
+  font-size: 15px !important;
+  font-weight: 600 !important;
+}
+
+/* Form items */
+.ant-form-item-label {
+  font-size: 16px !important;
+}
+
+.ant-form-item-control {
+  font-size: 16px !important;
+}
+
+/* Input fields */
+.ant-input {
+  font-size: 16px !important;
+}
+
+.ant-input::placeholder {
+  font-size: 15px !important;
+}
+
+/* Select dropdowns */
+.ant-select {
+  font-size: 16px !important;
+}
+
+/* Buttons - ensure readable text */
+.ant-btn {
+  font-size: 16px !important;
+}
+
+.ant-btn-sm {
+  font-size: 14px !important;
+}
+
+.ant-btn-lg {
+  font-size: 18px !important;
+}
+
+/* Menu items - sidebar */
+.ant-menu-item {
+  font-size: 16px !important;
+}
+
+/* Breadcrumb */
+.ant-breadcrumb {
+  font-size: 15px !important;
+}
+
+/* Stats and numbers */
+.ant-statistic-title {
+  font-size: 14px !important;
+}
+
+.ant-statistic-content {
+  font-size: 24px !important;
+}
+
+/* Tags */
+.ant-tag {
+  font-size: 14px !important;
+}
+
+/* Alerts */
+.ant-alert-message {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+}
+
+.ant-alert-description {
+  font-size: 15px !important;
+}
+
+/* Empty states */
+.ant-empty-description {
+  font-size: 16px !important;
+}
+
+/* List items */
+.ant-list-item {
+  font-size: 16px !important;
+}
+
+/* Timeline */
+.ant-timeline-item-content {
+  font-size: 15px !important;
+}
+
+/* Steps */
+.ant-steps-item-title {
+  font-size: 16px !important;
+}
+
+.ant-steps-item-description {
+  font-size: 14px !important;
+}
+
+/* Tooltip - larger text */
+.ant-tooltip-inner {
+  font-size: 14px !important;
+}
+
+/* Popover */
+.ant-popover-title {
+  font-size: 16px !important;
+  font-weight: 600 !important;
+}
+
+.ant-popover-inner-content {
+  font-size: 15px !important;
+}
+
+/* ===============================
+   SPACING FOR ELDERLY USERS
+   =============================== */
+
+/* Increase padding for touch targets */
+.ant-btn {
+  padding: 8px 16px !important;
+  min-height: 40px !important;
+}
+
+.ant-btn-sm {
+  padding: 4px 12px !important;
+  min-height: 32px !important;
+}
+
+.ant-menu-item {
+  padding: 12px 24px !important;
+  min-height: 48px !important;
+}
+
+.ant-input {
+  padding: 10px 12px !important;
+  min-height: 40px !important;
+}
+
+.ant-select-selector {
+  padding: 8px 12px !important;
+  min-height: 40px !important;
+}
+
+/* Form item spacing */
+.ant-form-item {
+  margin-bottom: 20px !important;
+}
+
+/* Card spacing */
+.ant-card {
+  margin-bottom: 16px !important;
+}
+
+/* Table cell spacing */
+.ant-table-cell {
+  padding: 12px 16px !important;
+}
+
+/* Modal spacing */
+.ant-modal-body {
+  padding: 24px !important;
+}
+
+.ant-modal-footer {
+  padding: 16px 24px !important;
+}
+
+/* ===============================
+   ICON ACCESSIBILITY FOR ELDERLY
+   =============================== */
+
+/* Base icon sizing - minimum 16px for readability */
+.anticon {
+  font-size: 16px !important;
+}
+
+/* Small icons - enforce minimum size */
+.anticon[style*="font-size: 10px"],
+.anticon[style*="fontSize: 10"],
+svg[style*="font-size: 10px"],
+svg[style*="fontSize: 10"] {
+  font-size: 16px !important;
+}
+
+.anticon[style*="font-size: 12px"],
+.anticon[style*="fontSize: 12"],
+svg[style*="font-size: 12px"],
+svg[style*="fontSize: 12"] {
+  font-size: 16px !important;
+}
+
+/* Dashboard stat card icons - minimum 20px */
+.ant-statistic .anticon,
+.ant-statistic svg {
+  font-size: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+}
+
+/* Large icons */
+.anticon-lg,
+.anticon[style*="font-size: 24px"],
+.anticon[style*="fontSize: 24"],
+svg[size="24"] {
+  font-size: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+}
+
+/* Extra large icons */
+.anticon-2x,
+.anticon[style*="font-size: 32px"],
+.anticon[style*="fontSize: 32"] {
+  font-size: 32px !important;
+  min-width: 32px !important;
+  min-height: 32px !important;
+}
+
+/* Modal icons - larger for visibility */
+.ant-modal-body .anticon {
+  font-size: 24px !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
+}
+
+/* Confirmation dialog icons */
+.ant-modal-confirm-body .anticon {
+  font-size: 28px !important;
+  min-width: 28px !important;
+  min-height: 28px !important;
+}
+
+/* Menu icons - sidebar */
+.ant-menu-item .anticon {
+  font-size: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  margin-right: 12px !important;
+}
+
+/* Button icons - ensure visibility */
+.ant-btn .anticon {
+  font-size: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+}
+
+.ant-btn-sm .anticon {
+  font-size: 14px !important;
+}
+
+.ant-btn-lg .anticon {
+  font-size: 18px !important;
+}
+
+/* Icon-only buttons - larger touch target */
+.ant-btn-icon-only {
+  width: 40px !important;
+  height: 40px !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.ant-btn-icon-only .anticon {
+  font-size: 18px !important;
+}
+
+/* Table icons */
+.ant-table-cell .anticon {
+  font-size: 16px !important;
+}
+
+/* Form field icons */
+.ant-form-item .anticon {
+  font-size: 16px !important;
+}
+
+/* Input prefix/suffix icons */
+.ant-input-prefix .anticon,
+.ant-input-suffix .anticon {
+  font-size: 18px !important;
+  color: #555555 !important;
+}
+
+/* Select icons */
+.ant-select-arrow .anticon {
+  font-size: 14px !important;
+  color: #555555 !important;
+}
+
+/* Tooltip trigger icons */
+.ant-tooltip-trigger .anticon,
+.anticon-question-circle,
+.anticon-info-circle,
+.anticon-exclamation-circle {
+  font-size: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+}
+
+/* Alert icons */
+.ant-alert-icon .anticon {
+  font-size: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+}
+
+/* Message/Notification icons */
+.ant-message .anticon {
+  font-size: 18px !important;
+}
+
+.ant-notification-notice-icon {
+  font-size: 24px !important;
+}
+
+/* Collapse/Accordion icons */
+.ant-collapse-header .anticon {
+  font-size: 16px !important;
+}
+
+/* Breadcrumb icons */
+.ant-breadcrumb .anticon {
+  font-size: 14px !important;
+}
+
+/* Tag icons */
+.ant-tag .anticon {
+  font-size: 12px !important;
+}
+
+.ant-tag-close-icon {
+  font-size: 14px !important;
+}
+
+/* Upload icons */
+.ant-upload .anticon {
+  font-size: 20px !important;
+}
+
+/* Result component icons */
+.ant-result-icon .anticon {
+  font-size: 48px !important;
+}
+
+/* Steps icons */
+.ant-steps-item-icon .anticon {
+  font-size: 16px !important;
+}
+
+/* Tab icons */
+.ant-tabs-tab .anticon {
+  font-size: 16px !important;
+  margin-right: 8px !important;
+}
+
+/* Card action icons */
+.ant-card-actions .anticon {
+  font-size: 18px !important;
+}
+
+/* Popover icons */
+.ant-popover-inner-content .anticon {
+  font-size: 16px !important;
+}
+
+/* Drawer icons */
+.ant-drawer-header .anticon {
+  font-size: 18px !important;
+}
+
+/* Header icons */
+.ant-layout-header .anticon {
+  font-size: 18px !important;
+}
+
+/* Statistic icons (currency, etc.) */
+.ant-statistic-prefix .anticon,
+.ant-statistic-suffix .anticon {
+  font-size: 20px !important;
+}
+
+/* Icon color contrast enforcement */
+.anticon {
+  color: inherit !important;
+}
+
+/* Ensure icons are not too light */
+.anticon[style*="color: '#bfbfbf'"],
+.anticon[style*="color: #bfbfbf"],
+.anticon[style*="color: '#d9d9d9'"],
+.anticon[style*="color: #d9d9d9"] {
+  color: #666666 !important;
+}
+
+/* Lucide icons (if used) */
+svg.lucide {
+  min-width: 16px !important;
+  min-height: 16px !important;
+}
+
+svg.lucide[style*="size: 24"] {
+  width: 24px !important;
+  height: 24px !important;
+}
+
+/* Icon spacing in buttons and elements */
+.ant-btn > .anticon + span,
+.ant-btn > span + .anticon {
+  margin-left: 8px !important;
+}
+
+/* Tooltip icons - high visibility */
+.ant-tooltip-inner .anticon {
+  font-size: 16px !important;
+  margin-right: 8px !important;
+}
+
+/* Loading/Spin icons - larger */
+.ant-spin .anticon,
+.ant-spin-dot {
+  font-size: 20px !important;
+}
+
+/* Empty state icons */
+.ant-empty .anticon,
+.ant-empty-image svg {
+  min-width: 64px !important;
+  min-height: 64px !important;
+}
+
+/* All SVG icons minimum sizing - scoped to ant-design icons only */
+svg.anticon {
+  min-width: 16px !important;
+  min-height: 16px !important;
+}
+
+/* Icon containers - ensure proper sizing */
+.anticon-container,
+.icon-wrapper {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  min-width: 24px !important;
+  min-height: 24px !important;
 }

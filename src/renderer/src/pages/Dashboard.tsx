@@ -184,12 +184,12 @@ const Dashboard: React.FC = () => {
       path: '/units'
     },
     {
-      title: 'PENDING UNITS',
+      title: 'DEFAULTER UNITS',
       value: stats.pendingUnits,
       icon: <FileTextOutlined style={{ color: '#cf1322' }} />,
       color: '#cf1322',
       path: '/units',
-      tooltip: 'Units with outstanding maintenance payments for current financial year'
+      tooltip: 'Units with unpaid maintenance for the selected financial year'
     },
     {
       title: 'TOTAL OUTSTANDING',
@@ -441,10 +441,10 @@ const Dashboard: React.FC = () => {
                             {card.title}
                           </Text>
                           {card.tooltip && (
-                            <QuestionCircleOutlined style={{ fontSize: 10, color: '#bfbfbf' }} />
+                            <QuestionCircleOutlined style={{ fontSize: 14, color: '#bfbfbf' }} />
                           )}
                         </div>
-                        <ArrowRightOutlined style={{ fontSize: 12, color: '#bfbfbf' }} />
+                        <ArrowRightOutlined style={{ fontSize: 16, color: '#555555' }} />
                       </div>
                     }
                     value={card.value}
@@ -466,7 +466,7 @@ const Dashboard: React.FC = () => {
                     }}
                   />
                   {hasActiveFilters && (
-                    <Text type="secondary" style={{ fontSize: 10, marginTop: 4, display: 'block' }}>
+                    <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
                       Filtered view
                     </Text>
                   )}
