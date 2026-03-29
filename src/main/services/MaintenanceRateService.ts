@@ -7,6 +7,7 @@ export interface MaintenanceRate {
   unit_type?: string
   rate_per_sqft: number
   gst_percent?: number
+  penalty_percentage?: number
   billing_frequency?: string
   created_at?: string
   project_name?: string
@@ -44,14 +45,15 @@ class MaintenanceRateService {
   public create(rate: MaintenanceRate): number {
     const result = dbService.run(
       `INSERT INTO maintenance_rates (
-        project_id, financial_year, unit_type, rate_per_sqft, gst_percent, billing_frequency
-      ) VALUES (?, ?, ?, ?, ?, ?)`,
+        project_id, financial_year, unit_type, rate_per_sqft, gst_percent, penalty_percentage, billing_frequency
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         rate.project_id,
         rate.financial_year,
         rate.unit_type || 'Bungalow',
         rate.rate_per_sqft,
         rate.gst_percent ?? 0,
+        rate.penalty_percentage ?? null,
         rate.billing_frequency || 'YEARLY'
       ]
     )
@@ -65,6 +67,7 @@ class MaintenanceRateService {
       'unit_type',
       'rate_per_sqft',
       'gst_percent',
+      'penalty_percentage',
       'billing_frequency'
     ]
     const keys = Object.keys(rate).filter(

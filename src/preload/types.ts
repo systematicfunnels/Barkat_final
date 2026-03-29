@@ -261,6 +261,9 @@ export interface LetterCalculation {
     rate_per_sqft: number
   }
   arrears_breakdown: ArrearsEntry[]
+  penalty_percentage: number
+  discount_percentage: number
+  due_date: string
   current_year_charges: {
     base_amount: number
     na_tax: number

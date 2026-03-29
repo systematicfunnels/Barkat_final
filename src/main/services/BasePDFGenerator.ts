@@ -319,11 +319,24 @@ export abstract class BasePDFGenerator {
     // 2-col (receipt): 40% label / 60% value
     // 3-col: 50% / 25% / 25%
     // 4-col (letter): 45% / 18.33% / 18.33% / 18.34% - adjusted to prevent overflow
+    // 8-col (maintenance letter table): percentages that sum to 100%
     let columnWidths: number[]
     if (headers.length === 2) {
       columnWidths = [contentWidth * 0.4, contentWidth * 0.6]
     } else if (headers.length === 3) {
       columnWidths = [contentWidth * 0.5, contentWidth * 0.25, contentWidth * 0.25]
+    } else if (headers.length === 8) {
+      // 8-column table: 22% / 10% / 13% / 11% / 11% / 11% / 11% / 11%
+      columnWidths = [
+        contentWidth * 0.22,  // Particulars (wider for text)
+        contentWidth * 0.10,  // Plot Area
+        contentWidth * 0.13,  // Rate per sqft
+        contentWidth * 0.11,  // Amount
+        contentWidth * 0.11,  // Penalty
+        contentWidth * 0.11,  // Discount
+        contentWidth * 0.11,  // Before due date
+        contentWidth * 0.11   // After due date
+      ]
     } else {
       // 4-col (letter): use exact fractions to avoid floating-point precision issues
       columnWidths = [

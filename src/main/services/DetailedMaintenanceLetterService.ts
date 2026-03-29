@@ -60,6 +60,9 @@ export interface LetterCalculation {
     rate_per_sqft: number
   }
   arrears_breakdown: ArrearsEntry[]
+  penalty_percentage: number
+  discount_percentage: number
+  due_date: string
   current_year_charges: {
     base_amount: number
     na_tax: number
@@ -321,10 +324,17 @@ class DetailedMaintenanceLetterService {
     const amount_payable_after_due = grand_total_before_discount
 
     const bank_details = this.getBankDetails(projectId, unitDetails.sector_code)
+    
+    // Get due date for the financial year
+    const [startYear] = financialYear.split('-')
+    const deadlineDate = `30 Jun ${parseInt(startYear) + 1}`
 
     return {
       unit_details: unitDetails,
       arrears_breakdown,
+      penalty_percentage: chargesConfig.penalty_percentage,
+      discount_percentage: chargesConfig.early_payment_discount_percentage,
+      due_date: deadlineDate,
       current_year_charges,
       charges_breakdown,
       totals: {

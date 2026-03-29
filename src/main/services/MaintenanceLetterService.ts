@@ -417,6 +417,36 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const letter = this.getById(id)
     if (!letter) throw new Error('Maintenance letter not found')
 
+    // Validate required bank details before generation
+    // Prefer sector-specific bank details when present, fall back to project defaults
+    const hasSectorBank = !!(letter.sector_account_name || letter.sector_account_no || letter.sector_bank_name)
+    const effectiveAccountName = hasSectorBank ? letter.sector_account_name : letter.account_name
+    const effectiveAccountNo = hasSectorBank ? letter.sector_account_no : letter.account_no
+    const effectiveBankName = hasSectorBank ? letter.sector_bank_name : letter.bank_name
+    const effectiveIfsc = hasSectorBank ? letter.sector_ifsc_code : letter.ifsc_code
+
+    // Check required bank details (QR is optional)
+    const missingBankDetails: string[] = []
+    if (!effectiveAccountName || String(effectiveAccountName).trim() === '') {
+      missingBankDetails.push('Account Name')
+    }
+    if (!effectiveAccountNo || String(effectiveAccountNo).trim() === '') {
+      missingBankDetails.push('Account Number')
+    }
+    if (!effectiveBankName || String(effectiveBankName).trim() === '') {
+      missingBankDetails.push('Bank Name')
+    }
+    if (!effectiveIfsc || String(effectiveIfsc).trim() === '') {
+      missingBankDetails.push('IFSC Code')
+    }
+
+    if (missingBankDetails.length > 0) {
+      throw new Error(
+        `Cannot generate PDF: Missing required bank details: ${missingBankDetails.join(', ')}. ` +
+        `Please configure bank details in Project Settings first.`
+      )
+    }
+
     // Get add-ons for this letter
     const addOns = this.getAddOns(id)
 
@@ -751,18 +781,18 @@ class MaintenanceLetterService extends BasePDFGenerator {
   }
 
   private drawAmountTable(letter: MaintenanceLetter, addOns: LetterAddOn[]): void {
-    // Get maintenance rate — respect unit_type, also fetch gst_percent
+    // Get maintenance rate with penalty_percentage — respect unit_type
     const rate =
-      dbService.get<{ rate_per_sqft: number; gst_percent: number }>(
-        `SELECT rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent
+      dbService.get<{ rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
+        `SELECT rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent, penalty_percentage
          FROM maintenance_rates
          WHERE project_id = ? AND financial_year = ? AND unit_type = (
            SELECT unit_type FROM units WHERE id = ?
          )`,
         [letter.project_id, letter.financial_year, letter.unit_id]
       ) ||
-      dbService.get<{ rate_per_sqft: number; gst_percent: number }>(
-        `SELECT rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent
+      dbService.get<{ rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
+        `SELECT rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent, penalty_percentage
          FROM maintenance_rates
          WHERE project_id = ? AND financial_year = ?
            AND (unit_type = 'All' OR unit_type IS NULL)`,
@@ -771,75 +801,106 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     const ratePerSqft = rate?.rate_per_sqft || 0
 
-    // Use stored discount_amount (calculated from slabs at letter creation time)
-    const discountAmount = letter.discount_amount || 0
+    // Get unit area
+    const unit = dbService.get<{ area_sqft: number }>(
+      'SELECT area_sqft FROM units WHERE id = ?',
+      [letter.unit_id]
+    )
+    const plotArea = unit?.area_sqft || 0
 
-    // Column headers: use real due_date, not hardcoded date
+    // Calculate base maintenance amount
+    const baseAmount = plotArea * ratePerSqft
+
+    // Get effective penalty and discount percentages
+    // Priority: 1. maintenance_rates.penalty_percentage, 2. project_charges_config.penalty_percentage, 3. default 21%
+    const chargesConfig = projectService.getChargesConfig(letter.project_id)
+    const penaltyPercentage = rate?.penalty_percentage ?? chargesConfig?.penalty_percentage ?? 21
+    const discountPercentage = chargesConfig?.early_payment_discount_percentage ?? 10
+
+    // Calculate penalty and discount amounts (applied only to base maintenance)
+    const penaltyAmount = baseAmount * (penaltyPercentage / 100)
+    const discountAmount = baseAmount * (discountPercentage / 100)
+
+    // Calculate Before and After amounts for base maintenance
+    const beforeAmount = baseAmount - discountAmount
+    const afterAmount = baseAmount + penaltyAmount
+
+    // Due date for column headers
     const dueDateFormatted = letter.due_date ? this.formatDate(letter.due_date) : 'Due Date'
+
+    // 8-column headers with dynamic penalty/discount percentages
     const headers = [
       'Particulars',
-      'Amount',
-      `Before ${dueDateFormatted} (Early Payment)`,
+      'Plot Area (Sqft)',
+      'Rate per year / per sqft',
+      'Amount (Rs.)',
+      `${penaltyPercentage}% Penalty`,
+      `Discount ${discountPercentage}%`,
+      `Before ${dueDateFormatted}`,
       `After ${dueDateFormatted}`
     ]
+
     const rows: string[][] = []
 
-    // Base maintenance
-    const maintenanceAmount = letter.base_amount
-    const maintenanceEarly =
-      discountAmount > 0 ? maintenanceAmount - discountAmount : maintenanceAmount
-
+    // Base maintenance row (all 8 columns populated)
     rows.push([
-      `Current Maintenance (@ Rs.${ratePerSqft.toFixed(2)}/sqft)`,
-      this.formatCurrency(maintenanceAmount),
-      this.formatCurrency(maintenanceEarly),
-      this.formatCurrency(maintenanceAmount)
+      `Current Maintenance\n@ Rs. ${ratePerSqft.toFixed(2)} / sqft`,
+      plotArea.toLocaleString('en-IN'),
+      `Rs. ${ratePerSqft.toFixed(2)}`,
+      this.formatCurrency(baseAmount),
+      this.formatCurrency(penaltyAmount),
+      this.formatCurrency(discountAmount),
+      this.formatCurrency(beforeAmount),
+      this.formatCurrency(afterAmount)
     ])
 
-    // All add-ons (stored as individual rows — naTax, solar, cable, manual, templates)
-    // Filter out zero-amount add-ons (e.g., Cable Charges when not applicable)
+    // All add-ons (penalty/discount columns blank, Before/After same as Amount)
     for (const addon of addOns) {
       if (addon.addon_amount > 0) {
         rows.push([
           addon.addon_name,
+          '',  // Blank for add-ons
+          '',  // Blank for add-ons
           this.formatCurrency(addon.addon_amount),
-          this.formatCurrency(addon.addon_amount),
-          this.formatCurrency(addon.addon_amount)
+          '',  // Blank - no penalty on add-ons
+          '',  // Blank - no discount on add-ons
+          this.formatCurrency(addon.addon_amount),  // Same as amount
+          this.formatCurrency(addon.addon_amount)   // Same as amount
         ])
       }
     }
 
-    // Arrears (from prior unpaid years)
+    // Arrears (penalty/discount columns blank, Before/After same as Amount)
     if (letter.arrears && letter.arrears > 0) {
       rows.push([
         'Arrears (Previous Outstanding)',
+        '',  // Blank for arrears
+        '',  // Blank for arrears
         this.formatCurrency(letter.arrears),
-        this.formatCurrency(letter.arrears),
-        this.formatCurrency(letter.arrears)
+        '',  // Blank - no penalty on arrears
+        '',  // Blank - no discount on arrears
+        this.formatCurrency(letter.arrears),  // Same as amount
+        this.formatCurrency(letter.arrears)   // Same as amount
       ])
     }
 
-    // Totals
+    // Calculate totals for Before and After columns
     const addOnsTotal = addOns.reduce((s, a) => s + a.addon_amount, 0)
     const arrearsAmount = letter.arrears || 0
-    const totalFull = maintenanceAmount + addOnsTotal + arrearsAmount
-    const totalEarly = maintenanceEarly + addOnsTotal + arrearsAmount
 
-    // Early-payment discount row
-    if (discountAmount > 0) {
-      rows.push([
-        `Early Payment Discount`,
-        '',
-        `-${this.formatCurrency(discountAmount)}`,
-        '-'
-      ])
-    }
+    const totalBefore = beforeAmount + addOnsTotal + arrearsAmount
+    const totalAfter = afterAmount + addOnsTotal + arrearsAmount
 
+    // Total row
     rows.push([
       'Total Amount Payable',
       '',
-      this.formatCurrency(totalEarly),
-      this.formatCurrency(totalFull)
+      '',
+      '',
+      '',
+      '',
+      this.formatCurrency(totalBefore),
+      this.formatCurrency(totalAfter)
     ])
 
     this.drawTable(headers, rows)

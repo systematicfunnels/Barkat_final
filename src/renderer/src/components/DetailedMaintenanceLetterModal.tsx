@@ -110,43 +110,143 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
 
   const arrearsColumns = [
     {
-      title: 'Financial Year',
-      dataIndex: 'financial_year',
-      key: 'financial_year'
+      title: 'Particulars',
+      dataIndex: 'particulars',
+      key: 'particulars',
+      width: '25%',
+      render: (_: any, record: any) => {
+        const text = record.isBase ? (
+          <div>
+            <div>Current Maintenance</div>
+            <Text type="secondary" style={{ fontSize: '12px' }}>
+              @ Rs. {calculation?.unit_details.rate_per_sqft.toFixed(2)} / sqft
+            </Text>
+          </div>
+        ) : record.description;
+
+        return record.isTotal ? <Text strong>{text}</Text> : text;
+      }
+    },
+    {
+      title: 'Plot Area (Sqft)',
+      dataIndex: 'plot_area',
+      key: 'plot_area',
+      align: 'center' as const,
+      width: '10%',
+      render: (val: any) => val || '—'
+    },
+    {
+      title: 'Rate per year / per sqft',
+      dataIndex: 'rate',
+      key: 'rate',
+      align: 'right' as const,
+      width: '13%',
+      render: (val: any) => (val ? `Rs. ${val.toFixed(2)}` : '—')
     },
     {
       title: 'Amount (Rs.)',
       dataIndex: 'amount',
       key: 'amount',
-      render: (amount: number) => amount.toFixed(2)
+      align: 'right' as const,
+      width: '11%',
+      render: (val: number, record: any) => {
+        const text = val ? `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '—';
+        return record.isTotal ? <Text strong>{text}</Text> : text;
+      }
     },
     {
-      title: 'Penalty (21%)',
+      title: `${calculation?.penalty_percentage}% Penalty`,
       dataIndex: 'penalty',
       key: 'penalty',
-      render: (penalty: number) => penalty.toFixed(2)
+      align: 'right' as const,
+      width: '11%',
+      render: (val: any) => (val ? `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '—')
     },
     {
-      title: 'Total with Penalty',
-      dataIndex: 'total_with_penalty',
-      key: 'total_with_penalty',
-      render: (total: number) => total.toFixed(2)
+      title: `Discount ${calculation?.discount_percentage}%`,
+      dataIndex: 'discount',
+      key: 'discount',
+      align: 'right' as const,
+      width: '11%',
+      render: (val: any) => (val ? `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '—')
+    },
+    {
+      title: `Before ${calculation?.due_date}`,
+      dataIndex: 'before',
+      key: 'before',
+      align: 'right' as const,
+      width: '11%',
+      render: (val: number, record: any) => {
+        const text = `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
+        return record.isTotal ? <Text strong>{text}</Text> : text;
+      }
+    },
+    {
+      title: `After ${calculation?.due_date}`,
+      dataIndex: 'after',
+      key: 'after',
+      align: 'right' as const,
+      width: '11%',
+      render: (val: number, record: any) => {
+        const text = `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
+        return record.isTotal ? <Text strong>{text}</Text> : text;
+      }
     }
   ]
 
-  const chargesColumns = [
+  const tableData = calculation ? [
+    // Base Maintenance Row
     {
-      title: 'Description',
-      dataIndex: 'description',
-      key: 'description'
+      key: 'base',
+      isBase: true,
+      description: 'Current Maintenance',
+      plot_area: calculation.unit_details.plot_area,
+      rate: calculation.unit_details.rate_per_sqft,
+      amount: calculation.current_year_charges.base_amount,
+      penalty: calculation.current_year_charges.base_amount * (calculation.penalty_percentage / 100),
+      discount: calculation.current_year_charges.base_amount * (calculation.discount_percentage / 100),
+      before: calculation.current_year_charges.base_amount - (calculation.current_year_charges.base_amount * (calculation.discount_percentage / 100)),
+      after: calculation.current_year_charges.base_amount + (calculation.current_year_charges.base_amount * (calculation.penalty_percentage / 100))
     },
+    // Add-on Rows
+    ...calculation.charges_breakdown.filter(c => c.description !== `Current ${calculation.due_date.split(' ')[2]}`).map((charge, idx) => ({
+      key: `charge-${idx}`,
+      description: charge.description,
+      plot_area: null,
+      rate: null,
+      amount: charge.amount,
+      penalty: null,
+      discount: null,
+      before: charge.amount,
+      after: charge.amount
+    })),
+    // Arrears Rows
+    ...calculation.arrears_breakdown.map((arrears, idx) => ({
+      key: `arrears-${idx}`,
+      description: `Arrears (${arrears.financial_year})`,
+      plot_area: null,
+      rate: null,
+      amount: arrears.amount,
+      penalty: null,
+      discount: null,
+      before: arrears.total_with_penalty, // Arrears already include penalty in "Before" if that's how it's handled, or matches Amount
+      after: arrears.total_with_penalty
+    })),
+    // Total Row
     {
-      title: 'Amount (Rs.)',
-      dataIndex: 'amount',
-      key: 'amount',
-      render: (amount: number) => amount.toFixed(2)
+      key: 'total',
+      isBase: false,
+      isTotal: true,
+      description: 'Total Amount Payable',
+      plot_area: null,
+      rate: null,
+      amount: null,
+      penalty: null,
+      discount: null,
+      before: calculation.totals.amount_payable_before_due,
+      after: calculation.totals.amount_payable_after_due
     }
-  ]
+  ] : [] as any[]
 
   return (
     <Modal
@@ -256,31 +356,50 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
             </div>
           </div>
 
-          <Divider />
-
-          {/* Arrears Breakdown */}
-          {calculation.arrears_breakdown.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              <Title level={4}>Arrears Breakdown</Title>
-              <Table
-                dataSource={calculation.arrears_breakdown}
-                columns={arrearsColumns}
-                pagination={false}
-                size="small"
-                rowKey={(_, index) => `arrears-${index}`}
-              />
+          {/* Redesigned 8-Column Table */}
+          <div className="maintenance-table-container" style={{ marginBottom: 24 }}>
+            <div style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              marginBottom: 12,
+              borderBottom: '2px solid #1d4e89',
+              paddingBottom: 8
+            }}>
+              <Title level={4} style={{ margin: 0, color: '#1d4e89' }}>
+                Maintenance Demand Notice — FY {calculation.due_date.split(' ')[2]}
+              </Title>
             </div>
-          )}
+            
+            <style dangerouslySetInnerHTML={{ __html: `
+              .maintenance-table .ant-table-thead > tr > th {
+                background-color: #e6e9ef !important;
+                color: #1d4e89 !important;
+                font-weight: bold !important;
+                text-align: center !important;
+                border-bottom: 1px solid #d9d9d9 !important;
+              }
+              .maintenance-table .ant-table-tbody > tr > td {
+                border-bottom: 1px solid #f0f0f0 !important;
+              }
+              .maintenance-table .total-row {
+                background-color: #f8f9fb !important;
+              }
+              .maintenance-table .total-row td {
+                border-top: 2px solid #d9d9d9 !important;
+                border-bottom: 2px solid #d9d9d9 !important;
+              }
+            `}} />
 
-          {/* Current Year Charges */}
-          <div style={{ marginBottom: 16 }}>
-            <Title level={4}>Current Year Charges</Title>
             <Table
-              dataSource={calculation.charges_breakdown}
-              columns={chargesColumns}
+              className="maintenance-table"
+              dataSource={tableData}
+              columns={arrearsColumns}
               pagination={false}
-              size="small"
-              rowKey={(_, index) => `charge-${index}`}
+              size="middle"
+              bordered
+              rowClassName={(record) => record.isTotal ? 'total-row' : ''}
+              summary={() => null}
             />
           </div>
 

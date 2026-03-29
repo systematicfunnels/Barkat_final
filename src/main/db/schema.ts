@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS maintenance_rates (
   unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden', 'All')), -- Aligned with ER
   rate_per_sqft REAL NOT NULL CHECK(rate_per_sqft > 0),
   gst_percent REAL DEFAULT 0 CHECK(gst_percent >= 0),   -- e.g. 18 for 18% GST
+  penalty_percentage REAL DEFAULT NULL CHECK(penalty_percentage IS NULL OR (penalty_percentage BETWEEN 0 AND 100)),
   billing_frequency TEXT DEFAULT 'YEARLY',
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE

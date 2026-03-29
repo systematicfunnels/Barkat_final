@@ -460,6 +460,12 @@ class DatabaseService {
         console.log('[DATABASE] gst_percent column added to maintenance_rates')
       }
 
+      // Add penalty_percentage to maintenance_rates for project+FY specific configuration
+      if (!ratesCols.some((c) => c.name === 'penalty_percentage')) {
+        this.db.exec('ALTER TABLE maintenance_rates ADD COLUMN penalty_percentage REAL DEFAULT NULL')
+        console.log('[DATABASE] penalty_percentage column added to maintenance_rates')
+      }
+
       // Ensure project_addon_templates table exists (new in this version)
       this.db.exec(`
         CREATE TABLE IF NOT EXISTS project_addon_templates (
@@ -542,6 +548,7 @@ class DatabaseService {
               unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden', 'All')),
               rate_per_sqft REAL NOT NULL CHECK(rate_per_sqft > 0),
               gst_percent REAL DEFAULT 0 CHECK(gst_percent >= 0),
+              penalty_percentage REAL DEFAULT NULL,
               billing_frequency TEXT DEFAULT 'YEARLY',
               created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
               FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
