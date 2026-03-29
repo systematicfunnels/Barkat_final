@@ -36,7 +36,6 @@ export enum UnitType {
   BUNGALOW = 'Bungalow',
   PLOT = 'Plot',
   GARDEN = 'Garden',
-  BMF = 'BMF',
   ALL = 'All'
 }
 

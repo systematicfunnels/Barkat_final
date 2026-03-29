@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS units (
   project_id INTEGER NOT NULL,
   unit_number TEXT NOT NULL,
   sector_code TEXT, -- Sector/Block code (e.g. A, B, C, 1, 2)
-  unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden', 'BMF')), -- Plot, Bungalow
+  unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden')), -- Plot, Bungalow
   area_sqft REAL NOT NULL CHECK(area_sqft > 0),
   owner_name TEXT NOT NULL,
   contact_number TEXT,
@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS units (
   billing_address TEXT,
   resident_address TEXT,
   penalty REAL DEFAULT 0 CHECK(penalty >= 0),
+  penalty_percentage REAL DEFAULT NULL CHECK(penalty_percentage IS NULL OR (penalty_percentage BETWEEN 0 AND 100)),
   status TEXT DEFAULT 'Sold' CHECK(status IN ('Sold', 'Unsold', 'Vacant')), -- Sold, Unsold, Vacant
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS maintenance_rates (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
   financial_year TEXT NOT NULL, -- e.g. 2024-25
-  unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden', 'BMF', 'All')), -- Aligned with ER
+  unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden', 'All')), -- Aligned with ER
   rate_per_sqft REAL NOT NULL CHECK(rate_per_sqft > 0),
   gst_percent REAL DEFAULT 0 CHECK(gst_percent >= 0),   -- e.g. 18 for 18% GST
   billing_frequency TEXT DEFAULT 'YEARLY',

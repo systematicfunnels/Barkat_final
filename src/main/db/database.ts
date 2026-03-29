@@ -437,6 +437,22 @@ class DatabaseService {
       // SQLite doesn't support ALTER COLUMN, so we only need to handle future inserts
       // The schema CREATE TABLE already has the wider CHECK, migration handles existing db via rebuild if needed
 
+      // Migrate existing BMF unit types to Bungalow before applying constraints
+      console.log('[DATABASE] Migrating legacy BMF unit types to Bungalow...')
+      const bmfMigrationResult = this.db.prepare(`
+        UPDATE units 
+        SET unit_type = 'Bungalow' 
+        WHERE unit_type = 'BMF' OR unit_type = 'bmf'
+      `).run()
+      console.log(`[DATABASE] Migrated ${bmfMigrationResult.changes} BMF units to Bungalow`)
+
+      const bmfRatesMigrationResult = this.db.prepare(`
+        UPDATE maintenance_rates 
+        SET unit_type = 'Bungalow' 
+        WHERE unit_type = 'BMF' OR unit_type = 'bmf'
+      `).run()
+      console.log(`[DATABASE] Migrated ${bmfRatesMigrationResult.changes} BMF maintenance rates to Bungalow`)
+
       // Add gst_percent to maintenance_rates if missing
       const ratesCols = this.db.prepare('PRAGMA table_info(maintenance_rates)').all() as { name: string }[]
       if (!ratesCols.some((c) => c.name === 'gst_percent')) {
@@ -523,7 +539,7 @@ class DatabaseService {
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               project_id INTEGER NOT NULL,
               financial_year TEXT NOT NULL,
-              unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden', 'BMF', 'All')),
+              unit_type TEXT DEFAULT 'Bungalow' CHECK(unit_type IN ('Bungalow', 'Plot', 'Garden', 'All')),
               rate_per_sqft REAL NOT NULL CHECK(rate_per_sqft > 0),
               gst_percent REAL DEFAULT 0 CHECK(gst_percent >= 0),
               billing_frequency TEXT DEFAULT 'YEARLY',
@@ -790,6 +806,15 @@ class DatabaseService {
           this.db.exec("ALTER TABLE units ADD COLUMN status TEXT DEFAULT 'Sold'")
         if (!columns.some((c) => c.name === 'penalty'))
           this.db.exec('ALTER TABLE units ADD COLUMN penalty REAL DEFAULT 0')
+        if (!columns.some((c) => c.name === 'penalty_percentage')) {
+          try {
+            this.db.exec('ALTER TABLE units ADD COLUMN penalty_percentage REAL DEFAULT NULL CHECK(penalty_percentage IS NULL OR (penalty_percentage BETWEEN 0 AND 100))')
+            console.log('[DATABASE] penalty_percentage column added to units')
+          } catch (error) {
+            console.error('[DATABASE] Failed to add penalty_percentage column to units:', error)
+            // Continue execution - this is not a critical failure
+          }
+        }
         if (!columns.some((c) => c.name === 'billing_address'))
           this.db.exec('ALTER TABLE units ADD COLUMN billing_address TEXT')
         if (!columns.some((c) => c.name === 'resident_address'))

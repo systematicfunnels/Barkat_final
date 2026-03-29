@@ -1,6 +1,5 @@
 import { dbService } from '../db/database'
 import { projectService } from './ProjectService'
-import { addonTemplateService } from './AddonTemplateService'
 import { BasePDFGenerator } from './BasePDFGenerator'
 import fs from 'fs'
 import path from 'path'
@@ -165,6 +164,18 @@ class MaintenanceLetterService extends BasePDFGenerator {
     )
   }
 
+  public getLetterIdByProjectUnitAndYear(
+    projectId: number,
+    unitId: number,
+    financialYear: string
+  ): number | null {
+    const result = dbService.get<{ id: number }>(
+      'SELECT id FROM maintenance_letters WHERE project_id = ? AND unit_id = ? AND financial_year = ?',
+      [projectId, unitId, financialYear]
+    )
+    return result?.id || null
+  }
+
   public createBatch(
     projectId: number,
     financialYear: string,
@@ -230,12 +241,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
           const gstPercent = rate.gst_percent || 0
           const gstAmount = gstPercent > 0 ? Math.round(baseAmount * gstPercent) / 100 : 0
 
-          // 3. Additional Project Charges — only if configured and > 0
-          const naTax = unit.area_sqft * (chargesConfig.na_tax_rate_per_sqft || 0)
-          const solar = chargesConfig.solar_contribution || 0
-          const cable = chargesConfig.cable_charges || 0
-
-          // 3. Manual Add-ons from the UI
+          // 3. Manual Add-ons from the UI (unit-specific)
           const addOnsTotal = addOns?.reduce((sum, addon) => sum + addon.addon_amount, 0) || 0
 
           // 4. Arrears — sum of genuinely unpaid prior-year letters (payments minus letter final)
@@ -281,7 +287,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
           }
 
           // Final amount = sum of all charges — discount is stored separately, not subtracted yet
-          const finalAmount = baseAmount + gstAmount + naTax + solar + cable + addOnsTotal + totalArrears
+          const finalAmount = baseAmount + gstAmount + addOnsTotal + totalArrears
 
           const result = dbService.run(
             `INSERT INTO maintenance_letters (
@@ -313,27 +319,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
             )
           }
 
-          // Store naTax, solar, cable as individual add_on rows so PDF shows real line items
-          if (naTax > 0) {
-            dbService.run(
-              `INSERT INTO add_ons (letter_id, addon_name, addon_amount) VALUES (?, ?, ?)`,
-              [letterId, 'N.A. Tax', Math.round(naTax * 100) / 100]
-            )
-          }
-          if (solar > 0) {
-            dbService.run(
-              `INSERT INTO add_ons (letter_id, addon_name, addon_amount) VALUES (?, ?, ?)`,
-              [letterId, 'Solar Contribution', solar]
-            )
-          }
-          if (cable > 0) {
-            dbService.run(
-              `INSERT INTO add_ons (letter_id, addon_name, addon_amount) VALUES (?, ?, ?)`,
-              [letterId, 'Cable Charges', cable]
-            )
-          }
-
-          // Manual add-ons from the billing form
+          // Manual add-ons from billing form
           if (addOns && addOns.length > 0) {
             for (const addon of addOns) {
               dbService.run(
@@ -343,33 +329,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
             }
           }
 
-          // Add addon templates as add-ons for transparency
-          const addonTemplates = addonTemplateService.getEnabledTemplates(projectId)
-
-          for (const template of addonTemplates) {
-            let amount = template.amount
-
-            // If it's a rate_per_sqft type, calculate based on unit area
-            if (template.addon_type === 'rate_per_sqft') {
-              const unitRow = dbService.get<{ area_sqft: number }>(
-                'SELECT area_sqft FROM units WHERE id = ?',
-                [unitId]
-              )
-              amount = template.amount * (unitRow?.area_sqft || 0)
-            }
-            
-            if (amount > 0) {
-              dbService.run(
-                `
-                INSERT INTO add_ons (letter_id, addon_name, addon_amount, remarks)
-                VALUES (?, ?, ?, ?)
-              `,
-                [letterId, template.addon_name, amount, 'Pre-configured add-on']
-              )
-            }
-          }
-
-          // Standard charges (N.A. Tax, Solar, Cable) are stored as add_on rows above
+          // Add-ons are stored as individual rows above
           // so each line item appears transparently in the PDF
         }
 
@@ -463,7 +423,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     await this.initializePDF()
 
     // Letterhead
-    this.drawLetterhead(letter)
+    this.drawLetterheadLetter(letter)
 
     // Letter details
     this.layout.currentY -= 20
@@ -507,11 +467,25 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     const pdfBytes = await this.pdfDoc.save()
     const pdfDir = path.join(app.getPath('userData'), 'maintenance-letters')
-    if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir)
+    
+    try {
+      if (!fs.existsSync(pdfDir)) {
+        fs.mkdirSync(pdfDir, { recursive: true })
+      }
+    } catch (error) {
+      console.error('Failed to create PDF directory:', error)
+      throw new Error('Unable to create PDF output directory')
+    }
 
     const fileName = `MaintenanceLetter_${letter.id}.pdf`
     const filePath = path.join(pdfDir, fileName)
-    fs.writeFileSync(filePath, pdfBytes)
+    
+    try {
+      fs.writeFileSync(filePath, pdfBytes)
+    } catch (error) {
+      console.error('Failed to write PDF file:', error)
+      throw new Error('Unable to save PDF file')
+    }
 
     // Update PDF path in database
     dbService.run('UPDATE maintenance_letters SET pdf_path = ? WHERE id = ?', [filePath, id])
@@ -631,7 +605,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     return lines
   }
 
-  private drawLetterhead(letter: MaintenanceLetter): void {
+  protected drawLetterheadLetter(letter: MaintenanceLetter): void {
     // Get project details for dynamic heading
     const project = dbService.get<{ 
       name: string; 
@@ -725,7 +699,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     return months[month] || 'April'
   }
 
-  private drawRecipientSection(letter: MaintenanceLetter): void {
+  protected drawRecipientSection(letter: MaintenanceLetter): void {
     // Get unit details with more information
     const unit = dbService.get<{
       unit_number: string;
@@ -872,8 +846,21 @@ class MaintenanceLetterService extends BasePDFGenerator {
   }
 
   private drawPaymentDetails(letter: MaintenanceLetter): void {
-    // Get project charges configuration for discount/penalty calculations
+    // Get unit-specific penalty first, then fallback to project charges
+    const unit = dbService.get<{ penalty_percentage: number }>(
+      'SELECT penalty_percentage FROM units WHERE id = ?',
+      [letter.unit_id]
+    )
+    
     const chargesConfig = projectService.getChargesConfig(letter.project_id)
+    
+    // Penalty inheritance: Unit → Project → Default (21%)
+    let penaltyPercentage = 21 // Default fallback
+    if (unit?.penalty_percentage != null) { // Using != to catch both null and undefined
+      penaltyPercentage = unit.penalty_percentage
+    } else if (chargesConfig?.penalty_percentage != null) {
+      penaltyPercentage = chargesConfig.penalty_percentage
+    }
     
     this.page.drawText('Payment Details:', {
       x: this.MARGIN,
@@ -890,7 +877,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const paymentInfo = [
       `Due Date: ${this.formatDate(letter.due_date || '')}`,
       `Payment Mode: ${paymentModes}`,
-      `Late Payment Charges: ${chargesConfig.penalty_percentage || 0}% per annum`
+      `Late Payment Charges: ${penaltyPercentage}% per annum`
     ]
 
     paymentInfo.forEach((info, index) => {
@@ -934,7 +921,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     return 'Cheque/Cash/Online Transfer'
   }
 
-  private async drawBankDetails(letter: MaintenanceLetter): Promise<void> {
+  protected async drawBankDetails(letter: MaintenanceLetter): Promise<void> {
     // Prefer sector-specific bank details when present, fall back to project defaults
     const hasSectorBank = !!(letter.sector_account_name || letter.sector_account_no || letter.sector_bank_name)
 

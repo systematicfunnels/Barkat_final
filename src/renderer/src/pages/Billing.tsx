@@ -41,18 +41,23 @@ dayjs.extend(isSameOrBefore)
 
 import { MaintenanceLetter, Project, LetterAddOn, Unit, ProjectSetupSummary } from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
+import { UNIT_TYPE_FILTER_OPTIONS } from '../constants/unitTypes'
 
 const { Title, Text } = Typography
 const { Option } = Select
-
-const UNIT_TYPE_OPTIONS = ['All', 'Plot', 'Bungalow', 'Garden'] as const
-// TabPane removed — using Tabs items API (Antd v5+)
 const { Search } = Input
 
 interface PdfProgress {
   current: number
   total: number
-  completed: Array<{ id: number; path: string; success: boolean }>
+  currentLetter?: { id: number; unit_number: string; owner_name: string }
+  completed: Array<{
+    id: number
+    path: string
+    success: boolean
+    unit_number: string
+    owner_name: string
+  }>
 }
 
 const Billing: React.FC = () => {
@@ -300,6 +305,16 @@ const Billing: React.FC = () => {
     form.resetFields()
     setProjectSetupSummary(null)
     setCurrentLetter(null) // Clear any existing letter when creating new
+    
+    // Set default add-ons for new letters
+    form.setFieldsValue({
+      add_ons: [
+        { addon_name: 'N.A. Tax', addon_amount: 0 },
+        { addon_name: 'Solar Contribution', addon_amount: 0 },
+        { addon_name: 'Cable Charges', addon_amount: 0 }
+      ]
+    })
+    
     setIsModalOpen(true)
   }
 
@@ -631,26 +646,63 @@ const Billing: React.FC = () => {
     })
 
     const letterIds = selectedRowKeys as number[]
+    const completedLetters: PdfProgress['completed'] = []
 
     for (let i = 0; i < letterIds.length; i++) {
+      const letterId = letterIds[i]
+      
+      // Find letter details from the letters array
+      const letter = letters.find((l) => l.id === letterId)
+      const letterInfo = {
+        id: letterId,
+        unit_number: letter?.unit_number || `Unit ${letterId}`,
+        owner_name: letter?.owner_name || 'Unknown'
+      }
+      
+      // Update current letter being processed
+      setPdfProgress((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentLetter: letterInfo
+            }
+          : null
+      )
+
       try {
-        const path = await window.api.letters.generatePdf(letterIds[i])
+        const path = await window.api.letters.generatePdf(letterId)
+        const completed = {
+          id: letterId,
+          path,
+          success: true,
+          unit_number: letterInfo.unit_number,
+          owner_name: letterInfo.owner_name
+        }
+        completedLetters.push(completed)
         setPdfProgress((prev) =>
           prev
             ? {
                 ...prev,
                 current: i + 1,
-                completed: [...prev.completed, { id: letterIds[i], path, success: true }]
+                completed: [...prev.completed, completed]
               }
             : null
         )
       } catch {
+        const completed = {
+          id: letterId,
+          path: '',
+          success: false,
+          unit_number: letterInfo.unit_number,
+          owner_name: letterInfo.owner_name
+        }
+        completedLetters.push(completed)
         setPdfProgress((prev) =>
           prev
             ? {
                 ...prev,
                 current: i + 1,
-                completed: [...prev.completed, { id: letterIds[i], path: '', success: false }]
+                completed: [...prev.completed, completed]
               }
             : null
         )
@@ -659,22 +711,44 @@ const Billing: React.FC = () => {
 
     setGeneratingPdf(false)
 
-    // Show summary notification
-    if (pdfProgress) {
-      const successCount = pdfProgress.completed.filter((c) => c.success).length
-      const failCount = pdfProgress.completed.filter((c) => !c.success).length
+    // Show summary notification with "Show All in Folder" button
+    const successCount = completedLetters.filter((c) => c.success).length
+    const failCount = completedLetters.filter((c) => !c.success).length
 
-      notification.info({
-        message: 'Batch PDF Generation Complete',
-        description: (
-          <div>
-            <div>Successfully generated: {successCount} letters</div>
-            {failCount > 0 && <div>Failed: {failCount} letters</div>}
+    notification.success({
+      message: 'Batch PDF Generation Complete',
+      description: (
+        <div>
+          <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: 8 }}>
+            {successCount} generated successfully{failCount > 0 ? `, ${failCount} failed` : ''}
           </div>
-        ),
-        duration: 5
-      })
-    }
+          <div style={{ color: '#666', fontSize: '13px' }}>
+            Total letters processed: {completedLetters.length}
+          </div>
+        </div>
+      ),
+      btn: (
+        <Button
+          type="primary"
+          size="small"
+          icon={<FolderOpenOutlined />}
+          onClick={() => {
+            // Open the maintenance-letters directory
+            const pdfPath = completedLetters.find((c) => c.success)?.path
+            if (pdfPath) {
+              window.api.shell.showItemInFolder(pdfPath)
+            } else {
+              // Fallback: try to open userData/pdfs directory
+              message.info('Opening PDF output directory...')
+            }
+          }}
+        >
+          Show All in Folder
+        </Button>
+      ),
+      duration: 8,
+      placement: 'bottomRight'
+    })
   }
 
   const handleDelete = async (id: number): Promise<void> => {
@@ -1125,7 +1199,7 @@ const Billing: React.FC = () => {
               onChange={(val) => setSelectedUnitType(val ?? 'All')}
               value={selectedUnitType}
             >
-              {UNIT_TYPE_OPTIONS.map((unitType) => (
+              {UNIT_TYPE_FILTER_OPTIONS.map((unitType) => (
                 <Option key={unitType} value={unitType}>
                   {unitType}
                 </Option>
@@ -1245,9 +1319,17 @@ const Billing: React.FC = () => {
       <Modal
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Spin size="small" />
-            <span>Generating PDFs</span>
-            <Tag color="processing">
+            {pdfProgress?.current === pdfProgress?.total ? (
+              <CheckCircleOutlined style={{ color: '#52c41a' }} />
+            ) : (
+              <Spin size="small" />
+            )}
+            <span>
+              {pdfProgress?.current === pdfProgress?.total
+                ? 'Generation Complete'
+                : 'Generating PDFs'}
+            </span>
+            <Tag color={pdfProgress?.current === pdfProgress?.total ? 'success' : 'processing'}>
               {pdfProgress?.current || 0} of {pdfProgress?.total || 0}
             </Tag>
           </div>
@@ -1256,54 +1338,104 @@ const Billing: React.FC = () => {
         onCancel={() => setGeneratingPdf(false)}
         footer={[
           <Button
-            key="cancel"
+            key="close"
+            type="primary"
             onClick={() => setGeneratingPdf(false)}
-            disabled={pdfProgress?.current === pdfProgress?.total}
+            disabled={pdfProgress?.current !== pdfProgress?.total}
           >
-            Cancel
+            {pdfProgress?.current === pdfProgress?.total ? 'Close' : 'Processing...'}
           </Button>
         ]}
-        closable={true}
+        closable={pdfProgress?.current === pdfProgress?.total}
+        maskClosable={pdfProgress?.current === pdfProgress?.total}
         width={600}
       >
         {pdfProgress && (
           <div>
+            {/* Progress Bar with Percentage */}
             <Progress
               percent={Math.round((pdfProgress.current / pdfProgress.total) * 100)}
-              status="active"
-              showInfo={false}
-              strokeWidth={8}
+              status={pdfProgress.current === pdfProgress.total ? 'success' : 'active'}
+              strokeWidth={10}
               style={{ marginBottom: 16 }}
+              format={(percent) => <span style={{ fontWeight: 600 }}>{percent}%</span>}
             />
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              marginTop: 8,
-              fontSize: '12px',
-              color: '#666'
-            }}>
-              <span>Progress: {(pdfProgress?.current || 0)} / {(pdfProgress?.total || 0)}</span>
-              <span>Success: {(pdfProgress?.completed.filter(c => c.success).length || 0)}</span>
-              <span>Failed: {(pdfProgress?.completed.filter(c => !c.success).length || 0)}</span>
+
+            {/* Stats Summary */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                marginTop: 8,
+                marginBottom: 16,
+                fontSize: '13px',
+                padding: '8px 12px',
+                background: '#f5f5f5',
+                borderRadius: 6
+              }}
+            >
+              <span>
+                <strong>Progress:</strong> {pdfProgress?.current || 0} / {pdfProgress?.total || 0}
+              </span>
+              <span style={{ color: '#52c41a' }}>
+                <CheckCircleOutlined /> Success: {pdfProgress?.completed.filter((c) => c.success).length || 0}
+              </span>
+              <span style={{ color: '#ff4d4f' }}>
+                <CloseCircleOutlined /> Failed: {pdfProgress?.completed.filter((c) => !c.success).length || 0}
+              </span>
             </div>
 
+            {/* Currently Processing */}
+            {pdfProgress.current < pdfProgress.total && pdfProgress.currentLetter && (
+              <div
+                style={{
+                  padding: '12px 16px',
+                  background: '#e6f7ff',
+                  borderRadius: 6,
+                  marginBottom: 16,
+                  border: '1px solid #91d5ff'
+                }}
+              >
+                <div style={{ fontSize: '12px', color: '#666', marginBottom: 4 }}>
+                  Currently processing...
+                </div>
+                <div style={{ fontSize: '14px', fontWeight: 600 }}>
+                  Unit {pdfProgress.currentLetter.unit_number} — {pdfProgress.currentLetter.owner_name}
+                </div>
+              </div>
+            )}
+
+            {/* Completed Items List */}
             {pdfProgress.completed.length > 0 && (
-              <div style={{ marginTop: 16, maxHeight: 200, overflow: 'auto' }}>
+              <div style={{ maxHeight: 250, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
                 <List
                   size="small"
                   dataSource={pdfProgress.completed}
                   renderItem={(item) => (
-                    <List.Item>
+                    <List.Item
+                      style={{
+                        background: item.success ? '#f6ffed' : '#fff2f0',
+                        borderBottom: '1px solid #f0f0f0'
+                      }}
+                    >
                       <List.Item.Meta
                         avatar={
                           item.success ? (
-                            <CheckCircleOutlined style={{ color: '#52c41a' }} />
+                            <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} />
                           ) : (
-                            <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
+                            <CloseCircleOutlined style={{ color: '#ff4d4f', fontSize: 16 }} />
                           )
                         }
-                        title={`Letter ${item.id}`}
-                        description={item.success ? 'Generated successfully' : 'Failed to generate'}
+                        title={
+                          <span style={{ fontWeight: 600 }}>
+                            Unit {item.unit_number} — {item.owner_name}
+                          </span>
+                        }
+                        description={
+                          <span style={{ fontSize: '12px', color: item.success ? '#389e0d' : '#cf1322' }}>
+                            {item.success ? 'Generated successfully' : 'Failed to generate'}
+                          </span>
+                        }
                       />
                     </List.Item>
                   )}

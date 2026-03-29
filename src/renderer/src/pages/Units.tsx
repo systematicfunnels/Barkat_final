@@ -31,18 +31,11 @@ import { IndianRupee } from 'lucide-react'
 import { Unit, Project } from '@preload/types'
 import { readExcelFile } from '../utils/excelReader'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
+import { UNIT_TYPES, UNIT_TYPE_COLORS } from '../constants/unitTypes'
 
 const { Title, Text, Paragraph } = Typography
 const { Option } = Select
 const { Search } = Input
-
-const UNIT_TYPE_OPTIONS = ['Plot', 'Bungalow', 'Garden', 'BMF'] as const
-const UNIT_TYPE_TAG_COLORS: Record<string, string> = {
-  Plot: 'green',
-  Bungalow: 'blue',
-  Garden: 'gold',
-  BMF: 'purple'
-}
 
 interface ImportUnitPreview extends Unit {
   previewId: string
@@ -914,7 +907,7 @@ const Units: React.FC = () => {
       sorter: (a: Unit, b: Unit) => (a.unit_type || '').localeCompare(b.unit_type || ''),
       render: (type: string) => {
         const label = type || 'Plot'
-        const color = UNIT_TYPE_TAG_COLORS[label] || 'default'
+        const color = UNIT_TYPE_COLORS[label] || 'default'
         return <Tag color={color}>{label}</Tag>
       }
     },
@@ -960,6 +953,14 @@ const Units: React.FC = () => {
       align: 'right' as const,
       render: (val: number) => (val ? `₹${val}` : '-'),
       sorter: (a: Unit, b: Unit) => (a.penalty || 0) - (b.penalty || 0)
+    },
+    {
+      title: 'Late Payment %',
+      dataIndex: 'penalty_percentage',
+      key: 'penalty_percentage',
+      align: 'right' as const,
+      render: (val: number) => (val !== null && val !== undefined ? `${val}%` : 'Default'),
+      sorter: (a: Unit, b: Unit) => (a.penalty_percentage || 0) - (b.penalty_percentage || 0)
     },
     {
       title: 'Status',
@@ -1088,7 +1089,7 @@ const Units: React.FC = () => {
               onChange={setSelectedUnitType}
               value={selectedUnitType}
             >
-              {UNIT_TYPE_OPTIONS.map((unitType) => (
+              {UNIT_TYPES.map((unitType) => (
                 <Option key={unitType} value={unitType}>
                   {unitType}
                 </Option>
@@ -1483,7 +1484,7 @@ const Units: React.FC = () => {
                           style={{ width: '100%', minWidth: '80px' }}
                           dropdownMatchSelectWidth={false}
                         >
-                          {UNIT_TYPE_OPTIONS.map((unitType) => (
+                          {UNIT_TYPES.map((unitType) => (
                             <Option key={unitType} value={unitType}>
                               {unitType}
                             </Option>
@@ -1677,7 +1678,6 @@ const Units: React.FC = () => {
                 <Option value="Plot">Plot</Option>
                 <Option value="Bungalow">Bungalow</Option>
                 <Option value="Garden">Garden</Option>
-                <Option value="BMF">BMF</Option>
               </Select>
             </Form.Item>
             <Form.Item
@@ -1707,6 +1707,18 @@ const Units: React.FC = () => {
                 parser={(displayValue) =>
                   displayValue?.replace(/₹\s?|(,*)/g, '') as unknown as number
                 }
+              />
+            </Form.Item>
+            <Form.Item name="penalty_percentage" label="Late Payment Charges (%)">
+              <InputNumber<number>
+                style={{ width: '100%' }}
+                min={0}
+                max={100}
+                formatter={(value) => `${value}%`}
+                parser={(displayValue) =>
+                  displayValue?.replace('%', '') as unknown as number
+                }
+                placeholder="Leave blank to use project default"
               />
             </Form.Item>
           </div>

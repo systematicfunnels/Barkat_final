@@ -265,7 +265,6 @@ class ProjectService {
     if (!normalized || normalized === 'flat' || normalized === 'bungalow') return 'Bungalow'
     if (normalized === 'plot') return 'Plot'
     if (normalized === 'garden') return 'Garden'
-    if (normalized === 'bmf') return 'BMF'
     if (normalized === 'all' || normalized === 'all units') return 'All'
     return String(unitType || '').trim() || 'Bungalow'
   }

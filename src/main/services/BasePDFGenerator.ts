@@ -32,6 +32,23 @@ export interface PDFColors {
   BACKGROUND: RGB
 }
 
+export interface BankDetails {
+  account_name?: string
+  bank_name?: string
+  account_no?: string
+  ifsc_code?: string
+  branch?: string
+  branch_address?: string
+  qr_code_path?: string
+}
+
+export interface RecipientDetails {
+  owner_name?: string
+  unit_number?: string
+  project_name?: string
+  sector_code?: string
+}
+
 /**
  * Base PDF Generator class with standardized layout and styling
  */
@@ -136,6 +153,131 @@ export abstract class BasePDFGenerator {
   }
 
   /**
+   * Draw standardized letterhead with company info
+   */
+  protected drawLetterhead(companyName?: string, subtitle?: string): void {
+    const name = companyName?.trim() || ''
+    if (!name) return
+
+    this.page.drawText(name, {
+      x: this.MARGIN,
+      y: this.layout.currentY,
+      size: 16,
+      font: this.fonts.bold,
+      color: this.COLORS.PRIMARY
+    })
+    this.layout.currentY -= 20
+
+    if (subtitle) {
+      this.page.drawText(subtitle, {
+        x: this.MARGIN,
+        y: this.layout.currentY,
+        size: 10,
+        font: this.fonts.regular,
+        color: this.COLORS.GRAY
+      })
+      this.layout.currentY -= 15
+    }
+
+    this.drawDivider()
+  }
+
+  /**
+   * Draw recipient section
+   */
+  protected drawRecipientSection(recipient: RecipientDetails): void {
+    const recipientLines = [
+      'To,',
+      recipient.owner_name || 'N/A',
+      recipient.unit_number || 'N/A',
+      recipient.project_name || 'N/A'
+    ]
+
+    // Add sector code if available
+    if (recipient.sector_code?.trim()) {
+      recipientLines.push(`Sector: ${recipient.sector_code}`)
+    }
+
+    const lineCount = recipientLines.length
+
+    recipientLines.forEach((line, index) => {
+      this.page.drawText(line, {
+        x: this.MARGIN,
+        y: this.layout.currentY - index * 12,
+        size: index === 0 ? 10 : 9,
+        font: index === 0 ? this.fonts.bold : this.fonts.regular,
+        color: this.COLORS.TEXT
+      })
+    })
+
+    this.layout.currentY -= lineCount * 12 + 20
+  }
+
+  /**
+   * Draw standardized bank details
+   */
+  protected drawBankDetails(bank: BankDetails): void {
+    this.page.drawText('Bank Details for Payment:', {
+      x: this.MARGIN,
+      y: this.layout.currentY,
+      size: 10,
+      font: this.fonts.bold,
+      color: this.COLORS.PRIMARY
+    })
+
+    this.layout.currentY -= 20
+
+    const fields: [string, string | undefined][] = [
+      ['Account Name', bank.account_name],
+      ['Bank Name', bank.bank_name],
+      ['Branch', bank.branch],
+      ['Account Number', bank.account_no],
+      ['IFSC Code', bank.ifsc_code]
+    ]
+
+    const bankInfo = fields
+      .filter(([, v]) => v && String(v).trim() !== '')
+      .map(([label, v]) => `${label}: ${v}`)
+
+    if (bankInfo.length === 0) {
+      this.page.drawText('Bank details not configured. Please update project settings.', {
+        x: this.MARGIN,
+        y: this.layout.currentY,
+        size: 9,
+        font: this.fonts.italic,
+        color: this.COLORS.GRAY
+      })
+      this.layout.currentY -= 14
+      return
+    }
+
+    bankInfo.forEach((info, index) => {
+      this.page.drawText(info, {
+        x: this.MARGIN,
+        y: this.layout.currentY - index * 12,
+        size: 9,
+        font: this.fonts.regular,
+        color: this.COLORS.TEXT
+      })
+    })
+
+    this.layout.currentY -= bankInfo.length * 12
+
+    if (bank.branch_address) {
+      this.page.drawText(`Branch Address: ${bank.branch_address}`, {
+        x: this.MARGIN,
+        y: this.layout.currentY,
+        size: 9,
+        font: this.fonts.regular,
+        color: this.COLORS.TEXT
+      })
+      this.layout.currentY -= 20
+    } else {
+      this.layout.currentY -= 20
+    }
+  }
+
+  /**
    * Draw section header with background
    */
   protected drawSectionHeader(title: string): void {
@@ -167,6 +309,10 @@ export abstract class BasePDFGenerator {
    * Draw table with standardized styling and proper borders
    */
   protected drawTable(headers: string[], rows: string[][]): void {
+    if (headers.length === 0 || rows.length === 0) {
+      return
+    }
+    
     const { contentWidth } = this.layout
     
     // Compute column widths dynamically based on header count
@@ -179,11 +325,12 @@ export abstract class BasePDFGenerator {
     } else if (headers.length === 3) {
       columnWidths = [contentWidth * 0.5, contentWidth * 0.25, contentWidth * 0.25]
     } else {
+      // 4-col (letter): use exact fractions to avoid floating-point precision issues
       columnWidths = [
-        contentWidth * 0.45,
-        contentWidth * 0.1833,
-        contentWidth * 0.1833,
-        contentWidth * 0.1834
+        contentWidth * (45 / 100),     // 45%
+        contentWidth * (55 / 300),     // ~18.33%
+        contentWidth * (55 / 300),     // ~18.33%
+        contentWidth * (55 / 300)      // ~18.33%
       ]
     }
     
@@ -193,7 +340,7 @@ export abstract class BasePDFGenerator {
       return hasLongText ? 40 : 30
     }
     
-    const headerHeight = 32
+    const headerHeight = 40 // Increased header height for better visibility
     const totalRowsHeight = rows.reduce((sum, row) => sum + calculateRowHeight(row), 0)
     const totalTableHeight = headerHeight + totalRowsHeight
     
@@ -203,7 +350,7 @@ export abstract class BasePDFGenerator {
     const tableWidth = contentWidth
     const tableHeight = totalTableHeight
 
-    // Draw complete table border
+    // Draw complete table border with thicker border
     this.page.drawRectangle({
       x: tableX,
       y: tableY,
@@ -211,24 +358,32 @@ export abstract class BasePDFGenerator {
       height: tableHeight,
       color: this.COLORS.BORDER,
       borderColor: this.COLORS.BORDER,
-      borderWidth: 1.5,
+      borderWidth: 2,
       borderOpacity: 1
     })
 
-    // Draw header background
+    // Draw header background with darker shade
     this.page.drawRectangle({
       x: tableX,
       y: tableY + tableHeight - headerHeight,
       width: tableWidth,
       height: headerHeight,
-      color: this.COLORS.BACKGROUND
+      color: rgb(0.9, 0.9, 0.9) // Light gray background for header
     })
 
-    // Draw header text with proper alignment
+    // Draw header separator line
+    this.page.drawLine({
+      start: { x: tableX, y: tableY + tableHeight - headerHeight },
+      end: { x: tableX + tableWidth, y: tableY + tableHeight - headerHeight },
+      thickness: 1.5,
+      color: this.COLORS.BORDER
+    })
+
+    // Draw header text with better styling
     let currentX = tableX
     headers.forEach((header, i) => {
       const columnWidth = columnWidths[i]
-      const headerWidth = this.fonts.bold.widthOfTextAtSize(header, 10)
+      const headerWidth = this.fonts.bold.widthOfTextAtSize(header, 11) // Increased font size
       
       // Truncate if too long
       let displayHeader = header
@@ -236,21 +391,21 @@ export abstract class BasePDFGenerator {
       const maxHeaderWidth = columnWidth - 12 // 6px padding on each side
       
       if (headerWidth > maxHeaderWidth) {
-        const avgCharWidth = 5.5
+        const avgCharWidth = 6
         const maxChars = Math.floor(maxHeaderWidth / avgCharWidth)
         displayHeader = header.substring(0, maxChars - 3) + '...'
-        actualHeaderWidth = this.fonts.bold.widthOfTextAtSize(displayHeader, 10)
+        actualHeaderWidth = this.fonts.bold.widthOfTextAtSize(displayHeader, 11)
       }
       
-      // Center header within column
+      // Center header within column with better vertical positioning
       const columnCenter = currentX + (columnWidth / 2)
       const textX = columnCenter - (actualHeaderWidth / 2)
-      const textY = tableY + tableHeight - headerHeight + 10
+      const textY = tableY + tableHeight - headerHeight + 14 // Better vertical centering
       
       this.page.drawText(displayHeader, {
         x: textX,
         y: textY,
-        size: 10,
+        size: 11, // Increased header font size
         font: this.fonts.bold,
         color: this.COLORS.PRIMARY
       })
@@ -268,27 +423,27 @@ export abstract class BasePDFGenerator {
       currentX += columnWidth
     })
 
-    // Draw data rows
+    // Draw data rows with better alternating colors
     let currentRowY = tableY + tableHeight - headerHeight
     rows.forEach((row, rowIndex) => {
       const rowHeight = calculateRowHeight(row)
       currentRowY -= rowHeight
       
-      // Draw row background (zebra striping)
+      // Draw row background with better contrast
       if (rowIndex % 2 === 0) {
         this.page.drawRectangle({
           x: tableX + 1, // Inside border
           y: currentRowY + 1,
           width: tableWidth - 2,
           height: rowHeight - 2,
-          color: this.COLORS.LIGHT_GRAY
+          color: rgb(0.97, 0.97, 0.97) // Very light gray for even rows
         })
       }
       
-      // Draw row data with proper alignment and text wrapping
+      // Draw row data with improved alignment
       let currentX = tableX
       row.forEach((cell, colIndex) => {
-        const columnWidth = columnWidths[colIndex]
+        const columnWidth = columnWidths[colIndex] ?? contentWidth / headers.length
         const cellY = currentRowY + rowHeight - 18 // Vertical alignment with padding
         
         // Text wrapping logic for particulars column
@@ -330,7 +485,7 @@ export abstract class BasePDFGenerator {
           this.page.drawText(line1, {
             x: currentX + 8, // 8px padding from left border
             y: cellY,
-            size: 9,
+            size: 10,
             font: this.fonts.regular,
             color: this.COLORS.TEXT
           })
@@ -340,7 +495,7 @@ export abstract class BasePDFGenerator {
             this.page.drawText(line2, {
               x: currentX + 8, // Same padding
               y: cellY - 16,
-              size: 9,
+              size: 10,
               font: this.fonts.regular,
               color: this.COLORS.TEXT
             })

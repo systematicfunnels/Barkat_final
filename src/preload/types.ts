@@ -59,6 +59,9 @@ export interface Unit {
   contact_number?: string
   email?: string
   penalty?: number
+  penalty_percentage?: number
+  billing_address?: string
+  resident_address?: string
 }
 
 export interface MaintenanceLetter {

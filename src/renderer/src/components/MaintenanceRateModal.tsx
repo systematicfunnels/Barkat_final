@@ -36,7 +36,7 @@ interface MaintenanceRateModalProps {
 const { Option } = Select
 const { Text, Title } = Typography
 
-const UNIT_TYPE_OPTIONS = ['All', 'Plot', 'Bungalow', 'Garden', 'BMF'] as const
+const UNIT_TYPE_OPTIONS = ['All', 'Plot', 'Bungalow', 'Garden'] as const
 
 interface RateFormValues {
   financial_year: string

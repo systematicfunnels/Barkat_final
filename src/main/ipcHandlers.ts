@@ -408,11 +408,17 @@ export function registerIpcHandlers(): void {
       if (!isFinancialYear(financialYear)) {
         throw new Error('Invalid financial year format (expected YYYY-YY)')
       }
-      return await detailedMaintenanceLetterService.generateDetailedPdf(
+      // Look up the letter ID first
+      const letterId = maintenanceLetterService.getLetterIdByProjectUnitAndYear(
         projectId,
         unitId,
         financialYear
       )
+      if (!letterId) {
+        throw new Error('Maintenance letter not found for the specified project, unit, and financial year')
+      }
+      // Use the unified renderer
+      return await maintenanceLetterService.generatePdf(letterId)
     }
   )
 

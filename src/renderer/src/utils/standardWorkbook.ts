@@ -83,10 +83,9 @@ const normalizeUnitStatus = (value: unknown): string => {
 
 const normalizeUnitType = (value: unknown): string => {
   const normalized = text(value).toLowerCase()
-  if (!normalized || normalized === 'flat' || normalized === 'bungalow') return 'Bungalow'
+  if (!normalized || normalized === 'flat' || normalized === 'bungalow' || normalized === 'bmf') return 'Bungalow'
   if (normalized === 'plot') return 'Plot'
   if (normalized === 'garden') return 'Garden'
-  if (normalized === 'bmf') return 'BMF'
   return text(value) || 'Bungalow'
 }
 

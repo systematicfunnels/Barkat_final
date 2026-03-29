@@ -12,6 +12,7 @@ export interface Unit {
   email?: string
   status?: string
   penalty?: number
+  penalty_percentage?: number
   billing_address?: string
   resident_address?: string
   project_name?: string // Joined field
@@ -52,7 +53,6 @@ class UnitService {
     if (!normalized || normalized === 'flat' || normalized === 'bungalow') return 'Bungalow'
     if (normalized === 'plot') return 'Plot'
     if (normalized === 'garden') return 'Garden'
-    if (normalized === 'bmf') return 'BMF'
     return this.sanitizeText(unitType) || 'Bungalow'
   }
 
@@ -122,8 +122,8 @@ class UnitService {
     const normalizedSectorCode = this.normalizeSectorCode(unit.sector_code, unit.unit_number)
     const result = dbService.run(
       `INSERT INTO units (
-        project_id, unit_number, sector_code, unit_type, area_sqft, owner_name, contact_number, email, billing_address, resident_address, status, penalty
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        project_id, unit_number, sector_code, unit_type, area_sqft, owner_name, contact_number, email, billing_address, resident_address, status, penalty, penalty_percentage
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         unit.project_id,
         unit.unit_number,
@@ -136,7 +136,8 @@ class UnitService {
         unit.billing_address || '',
         unit.resident_address || '',
         this.normalizeUnitStatus(unit.status),
-        unit.penalty || 0
+        unit.penalty || 0,
+        unit.penalty_percentage || null
       ]
     )
     return result.lastInsertRowid as number
@@ -170,7 +171,8 @@ class UnitService {
       'billing_address',
       'resident_address',
       'status',
-      'penalty'
+      'penalty',
+      'penalty_percentage'
     ]
     const keys = Object.keys(normalizedUnit).filter(
       (key) => allowedColumns.includes(key) && key !== 'id' && key !== 'project_name'
