@@ -2,6 +2,16 @@
   --ev-c-white: #ffffff;
   --ev-c-white-soft: #f8f8f8;
   --ev-c-white-mute: #f2f2f2;
+  --shell-sidebar-bg: #102822;
+  --shell-sidebar-bg-strong: #0d1f1a;
+  --shell-sidebar-border: rgba(255, 255, 255, 0.08);
+  --shell-sidebar-text: rgba(234, 248, 242, 0.86);
+  --shell-sidebar-text-muted: rgba(214, 235, 226, 0.6);
+  --shell-sidebar-active: rgba(116, 198, 157, 0.18);
+  --shell-sidebar-active-border: rgba(157, 228, 201, 0.22);
+  --shell-panel-bg: rgba(255, 255, 255, 0.88);
+  --shell-panel-border: rgba(15, 23, 42, 0.08);
+  --shell-panel-shadow: 0 18px 40px rgba(15, 23, 42, 0.08);
   
   /* Global font contrast overrides for accessibility */
   --ant-color-text: #111111;
@@ -1687,8 +1697,335 @@ svg.anticon {
   min-width: 600px;
 }
 
+.responsive-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.responsive-form-grid.tight {
+  gap: 8px;
+}
+
+.responsive-form-grid .span-2 {
+  grid-column: span 2;
+}
+
+.responsive-page-container {
+  width: 100%;
+  min-width: 0;
+}
+
+.responsive-page-container .ant-card,
+.responsive-page-container .ant-table-wrapper,
+.responsive-page-container .ant-space,
+.responsive-page-container .ant-row,
+.responsive-page-container .ant-col {
+  min-width: 0;
+}
+
+.responsive-stack-row {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.responsive-summary-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.app-shell {
+  background:
+    radial-gradient(circle at top left, rgba(116, 198, 157, 0.12), transparent 24%),
+    linear-gradient(180deg, #f8fcfa 0%, #f2f5f7 100%);
+}
+
+.app-shell-sidebar .ant-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  padding: 0 14px 18px;
+}
+
+.app-shell-brand {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: linear-gradient(180deg, rgba(13, 31, 26, 0.98), rgba(13, 31, 26, 0.92));
+}
+
+.app-shell-brand-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(180deg, rgba(116, 198, 157, 0.28), rgba(116, 198, 157, 0.12));
+  border: 1px solid rgba(157, 228, 201, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.app-shell-eyebrow {
+  color: var(--shell-sidebar-text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.app-shell-brand-title {
+  color: #f7fffb;
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.app-shell-brand-subtitle {
+  color: var(--shell-sidebar-text-muted);
+  font-size: 12px;
+}
+
+.app-shell-menu.ant-menu {
+  background: transparent !important;
+  border-inline-end: none !important;
+}
+
+.app-shell-menu .ant-menu-item,
+.app-shell-menu .ant-menu-submenu-title {
+  height: 48px !important;
+  margin: 4px 0 !important;
+  border-radius: 14px !important;
+  color: var(--shell-sidebar-text) !important;
+}
+
+.app-shell-menu .ant-menu-item .ant-menu-title-content,
+.app-shell-menu .ant-menu-submenu-title .ant-menu-title-content {
+  color: inherit !important;
+}
+
+.app-shell-menu .ant-menu-item-selected {
+  background: var(--shell-sidebar-active) !important;
+  border: 1px solid var(--shell-sidebar-active-border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.app-shell-menu .ant-menu-item:hover,
+.app-shell-menu .ant-menu-submenu-title:hover {
+  background: rgba(255, 255, 255, 0.06) !important;
+}
+
+.app-shell-main {
+  min-width: 0;
+}
+
+.app-shell-header {
+  background: rgba(255, 255, 255, 0.82) !important;
+}
+
+.app-shell-header-title {
+  color: #10211a;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.app-shell-header-subtitle {
+  color: #5b6b63;
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.app-shell-header-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 16px;
+  min-width: 0;
+}
+
+.app-shell-status-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: #2d7a5e;
+  box-shadow: 0 0 0 4px rgba(45, 122, 94, 0.12);
+}
+
+.app-shell-status-text {
+  color: #5b6b63;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.app-shell-avatar {
+  border: 1px solid rgba(45, 122, 94, 0.12);
+}
+
+.app-shell-content {
+  min-width: 0;
+}
+
+.app-shell-content-inner > .ant-breadcrumb {
+  margin-bottom: 18px;
+}
+
+.app-shell-content-inner .ant-card {
+  border-radius: 20px;
+  border: 1px solid var(--shell-panel-border);
+  background: var(--shell-panel-bg);
+  box-shadow: var(--shell-panel-shadow);
+  backdrop-filter: blur(10px);
+}
+
+.app-shell-content-inner .ant-card .ant-card-head {
+  border-bottom-color: rgba(15, 23, 42, 0.06);
+}
+
+.app-shell-content-inner .ant-table-wrapper,
+.app-shell-content-inner .ant-tabs,
+.app-shell-content-inner .ant-alert,
+.app-shell-content-inner .ant-statistic {
+  min-width: 0;
+}
+
+.app-shell-content-inner .ant-table-wrapper .ant-table {
+  background: transparent;
+}
+
+.app-shell-content-inner .ant-table-container,
+.app-shell-content-inner .ant-table-content {
+  border-radius: 16px;
+}
+
+.app-shell-drawer-title {
+  color: #f7fffb;
+  font-weight: 600;
+}
+
+.page-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.page-hero {
+  padding: 24px 28px;
+  border-radius: 24px;
+  border: 1px solid rgba(45, 122, 94, 0.12);
+  background:
+    radial-gradient(circle at top right, rgba(116, 198, 157, 0.18), transparent 30%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(240, 248, 244, 0.92));
+  box-shadow: 0 16px 38px rgba(45, 122, 94, 0.08);
+}
+
+.page-hero .responsive-page-header {
+  margin-bottom: 0 !important;
+}
+
+.page-hero-subtitle {
+  color: #597066;
+  font-size: 15px;
+  max-width: 760px;
+}
+
+.page-toolbar-card {
+  border-radius: 22px !important;
+}
+
+.page-toolbar-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.page-toolbar-card .ant-collapse {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.page-toolbar-card .ant-collapse > .ant-collapse-item > .ant-collapse-header {
+  background: rgba(45, 122, 94, 0.04);
+}
+
+.page-toolbar-card .table-scroll-wrapper {
+  margin-top: 4px;
+}
+
+.page-chip-bar {
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(45, 122, 94, 0.06);
+  border: 1px solid rgba(45, 122, 94, 0.08);
+}
+
+.page-chip-bar .ant-tag {
+  border-radius: 999px;
+}
+
+.page-stat-card {
+  overflow: hidden;
+  transition:
+    transform 0.2s ease,
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.page-stat-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 38px rgba(15, 23, 42, 0.12);
+}
+
+.page-soft-panel {
+  padding: 18px;
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(245,250,247,0.8));
+  border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.page-table-card {
+  overflow: hidden;
+}
+
+.page-table-card .ant-card-head {
+  min-height: 60px;
+}
+
+.page-table-card .ant-alert {
+  border-radius: 14px;
+}
+
+.page-info-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.page-action-card {
+  height: 100%;
+}
+
+.page-action-card .ant-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.page-action-card .ant-btn {
+  align-self: flex-start;
+}
+
 /* Responsive modal styles */
 @media (max-width: 768px) {
+  .responsive-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .responsive-form-grid .span-2 {
+    grid-column: span 1;
+  }
+
   .responsive-modal .ant-modal {
     max-width: 100vw !important;
     top: 0 !important;
@@ -1703,6 +2040,35 @@ svg.anticon {
   
   .responsive-modal-form .ant-form-item {
     margin-bottom: 16px !important;
+  }
+
+  .app-shell-header-title {
+    font-size: 16px;
+  }
+
+  .app-shell-header-status {
+    gap: 10px;
+  }
+
+  .app-shell-status-text {
+    display: none;
+  }
+
+  .app-shell-content-inner .ant-card {
+    border-radius: 16px;
+  }
+
+  .page-hero {
+    padding: 20px 18px;
+    border-radius: 18px;
+  }
+
+  .page-hero-subtitle {
+    font-size: 14px;
+  }
+
+  .page-info-grid {
+    grid-template-columns: 1fr;
   }
   
   /* Stack form items vertically on mobile */
@@ -1734,6 +2100,10 @@ svg.anticon {
 }
 
 @media (max-width: 375px) {
+  .app-shell-brand-title {
+    font-size: 18px;
+  }
+
   .responsive-card-grid {
     grid-template-columns: 1fr;
     gap: 12px;
@@ -1832,4 +2202,3 @@ html, body, #root {
     max-height: calc(100vh - 100px);
   }
 }
-

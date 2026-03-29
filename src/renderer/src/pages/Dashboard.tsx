@@ -212,7 +212,8 @@ const Dashboard: React.FC = () => {
   ]
 
   return (
-    <div style={{ margin: '0 auto' }}>
+    <div className="responsive-page-container page-screen" style={{ margin: '0 auto' }}>
+      <div className="page-hero">
       <div
         className="responsive-page-header"
         style={{
@@ -223,7 +224,7 @@ const Dashboard: React.FC = () => {
           <Title level={2} style={{ margin: 0, fontWeight: 700 }}>
             Dashboard
           </Title>
-          <Text type="secondary" style={{ fontSize: 16 }}>
+          <Text type="secondary" className="page-hero-subtitle" style={{ fontSize: 16 }}>
             Welcome back! Summary for Financial Year <strong>{selectedFY}</strong>
             {selectedFY === defaultFY && ' (Current)'}
           </Text>
@@ -232,12 +233,15 @@ const Dashboard: React.FC = () => {
           size="middle"
           wrap
           className="responsive-filters"
+          direction="horizontal"
           style={{
+            width: '100%',
+            justifyContent: 'flex-end',
             opacity: loading ? 0.7 : 1,
             pointerEvents: loading ? 'none' : 'auto'
           }}
         >
-          <Space direction="vertical" align="start">
+          <Space orientation="vertical" align="start">
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <Text type="secondary" strong style={{ fontSize: 12 }}>
                 Project
@@ -260,7 +264,7 @@ const Dashboard: React.FC = () => {
               ))}
             </Select>
           </Space>
-          <Space direction="vertical" align="start">
+          <Space orientation="vertical" align="start">
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <Text type="secondary" strong style={{ fontSize: 12 }}>
                 Financial Year
@@ -278,7 +282,7 @@ const Dashboard: React.FC = () => {
               onChange={(value) => setSelectedFY(value)}
               value={selectedFY}
               disabled={loading}
-              dropdownRender={(menu) => (
+              popupRender={(menu) => (
                 <>
                   <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>
                     <Space size="small">
@@ -314,7 +318,7 @@ const Dashboard: React.FC = () => {
               ))}
             </Select>
           </Space>
-          <Space direction="vertical" align="start">
+          <Space orientation="vertical" align="start">
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <Text type="secondary" strong style={{ fontSize: 12 }}>
                 Unit Type
@@ -336,7 +340,7 @@ const Dashboard: React.FC = () => {
               ))}
             </Select>
           </Space>
-          <Space direction="vertical" align="start">
+          <Space orientation="vertical" align="start">
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <Text type="secondary" strong style={{ fontSize: 12 }}>
                 Status
@@ -357,13 +361,15 @@ const Dashboard: React.FC = () => {
           </Space>
         </Space>
       </div>
+      </div>
 
       {/* Filter Summary Section */}
       {hasActiveFilters && (
         <div
-          style={{ marginBottom: 24, padding: '12px 16px', background: '#fafafa', borderRadius: 6 }}
+          className="page-chip-bar"
+          style={{ marginBottom: 0, padding: '12px 16px', background: '#fafafa', borderRadius: 6 }}
         >
-          <Space wrap align="center">
+          <Space wrap align="center" className="responsive-action-bar">
             <Text type="secondary" style={{ fontSize: '12px', fontWeight: 500 }}>
               Active filters:
             </Text>
@@ -415,9 +421,9 @@ const Dashboard: React.FC = () => {
         {statCards.map((card, index) => (
           <Col key={index} xs={24} sm={12} lg={index >= 3 ? 6 : 4}>
             <Card
-              bordered={false}
+              variant="borderless"
               hoverable
-              className="admin-stat-card"
+              className="admin-stat-card page-stat-card"
               onClick={() => navigate(card.path)}
               style={{ height: '100%', cursor: 'pointer' }}
             >
@@ -433,7 +439,7 @@ const Dashboard: React.FC = () => {
                           marginBottom: 4
                         }}
                       >
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 }}>
                           <Text type="secondary" strong style={{ fontSize: 12 }}>
                             {card.title}
                           </Text>
@@ -456,10 +462,12 @@ const Dashboard: React.FC = () => {
                             })}`
                         : undefined
                     }
-                    valueStyle={{
-                      color: card.color,
-                      fontWeight: 700,
-                      fontSize: hasActiveFilters ? '20px' : '24px'
+                    styles={{
+                      content: {
+                        color: card.color,
+                        fontWeight: 700,
+                        fontSize: hasActiveFilters ? '20px' : '24px'
+                      }
                     }}
                   />
                   {hasActiveFilters && (
@@ -478,14 +486,16 @@ const Dashboard: React.FC = () => {
         <Col xs={24}>
           <Card
             title="Quick Actions"
-            bordered={false}
-            headStyle={{ borderBottom: '1px solid #f0f0f0' }}
+            variant="borderless"
+            styles={{ header: { borderBottom: '1px solid #f0f0f0' } }}
+            className="page-toolbar-card"
           >
             <Row gutter={[16, 16]}>
               <Col xs={24} sm={8}>
                 <Card
                   hoverable
                   size="small"
+                  className="page-action-card"
                   style={{
                     textAlign: 'center',
                     background: '#f6ffed',
@@ -505,6 +515,7 @@ const Dashboard: React.FC = () => {
                 <Card
                   hoverable
                   size="small"
+                  className="page-action-card"
                   style={{
                     textAlign: 'center',
                     background: '#e6f7ff',
@@ -524,6 +535,7 @@ const Dashboard: React.FC = () => {
                 <Card
                   hoverable
                   size="small"
+                  className="page-action-card"
                   style={{
                     textAlign: 'center',
                     background: '#fff7e6',

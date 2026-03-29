@@ -1,9 +1,10 @@
-import React from 'react'
-import { Card, Space, Button, Tag, Typography, Input, Select, InputNumber } from 'antd'
+import React, { useState, useEffect } from 'react'
+import { Card, Space, Button, Tag, Typography, Input, Select, InputNumber, Grid } from 'antd'
 import { ClearOutlined, FilterOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
 const { Option } = Select
+const { useBreakpoint } = Grid
 
 export interface FilterOption {
   key: string
@@ -43,32 +44,52 @@ export function FilterPanel({
   children,
   loading = false
 }: FilterPanelProps) {
-  const activeFilters: FilterOption[] = []
+  const screens = useBreakpoint()
+  const isMobile = !screens.md
+  const isTablet = screens.md && !screens.lg
+  
+  const [activeFilters, setActiveFilters] = useState<FilterOption[]>([])
 
-  filters.forEach((field) => {
-    const value = values[field.key]
-    if (value !== undefined && value !== null && value !== '') {
-      let displayValue = String(value)
-      if (field.type === 'select' && field.options) {
-        const option = field.options.find((o) => o.value === value)
-        if (option) displayValue = option.label
+  useEffect(() => {
+    const newActiveFilters: FilterOption[] = []
+    filters.forEach((field) => {
+      const value = values[field.key]
+      if (value !== undefined && value !== null && value !== '') {
+        let displayValue = String(value)
+        if (field.type === 'select' && field.options) {
+          const option = field.options.find((o) => o.value === value)
+          if (option) displayValue = option.label
+        }
+
+        newActiveFilters.push({
+          key: field.key,
+          label: `${field.label}: ${displayValue}`,
+          value,
+          onRemove: () => onChange(field.key, undefined)
+        })
       }
-
-      activeFilters.push({
-        key: field.key,
-        label: `${field.label}: ${displayValue}`,
-        value,
-        onRemove: () => onChange(field.key, undefined)
-      })
-    }
-  })
+    })
+    setActiveFilters(newActiveFilters)
+  }, [filters, values, onChange])
 
   const hasActiveFilters = activeFilters.length > 0
 
   const renderField = (field: FilterField) => {
+    // Responsive widths based on screen size
+    const getResponsiveWidth = () => {
+      if (field.width) return field.width
+      if (isMobile) {
+        return field.type === 'search' ? '100%' : '100%'
+      }
+      if (isTablet) {
+        return field.type === 'search' ? 240 : 140
+      }
+      return field.type === 'search' ? 280 : 160
+    }
+    
     const commonStyle = {
-      width: field.width || (field.type === 'search' ? 280 : 160),
-      minWidth: field.type === 'search' ? 200 : 120
+      width: getResponsiveWidth(),
+      minWidth: isMobile ? '100%' : (field.type === 'search' ? 200 : 120)
     }
 
     switch (field.type) {
@@ -118,8 +139,9 @@ export function FilterPanel({
       case 'range':
         {
           const rangeValue = Array.isArray(values[field.key]) ? values[field.key] as [unknown, unknown] : undefined
+          const rangeStyle = isMobile ? { width: '100%' } : { width: 200 }
           return (
-            <Input.Group compact key={field.key} style={{ display: 'flex', gap: 4 }}>
+            <Input.Group compact key={field.key} style={{ display: 'flex', gap: 4, ...rangeStyle }}>
               <InputNumber
                 placeholder="Min"
                 value={typeof rangeValue?.[0] === 'number' ? rangeValue[0] : undefined}
@@ -127,7 +149,7 @@ export function FilterPanel({
                   const current = rangeValue || [null, null]
                   onChange(field.key, [min, current[1]])
                 }}
-                style={{ width: 'calc(50% - 14px)' }}
+                style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
               <span style={{ padding: '0 8px', lineHeight: '32px' }}>to</span>
               <InputNumber
@@ -137,7 +159,7 @@ export function FilterPanel({
                   const current = rangeValue || [null, null]
                   onChange(field.key, [current[0], max])
                 }}
-                style={{ width: 'calc(50% - 14px)' }}
+                style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
             </Input.Group>
           )
@@ -150,9 +172,15 @@ export function FilterPanel({
 
   return (
     <Card size="small" loading={loading}>
-      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+      <Space orientation="vertical" style={{ width: '100%' }} size="middle">
         <div>
-          <Space wrap className="responsive-filters" size="middle">
+          <Space 
+            wrap 
+            className="responsive-filters" 
+            size="middle"
+            orientation={isMobile ? 'vertical' : 'horizontal'}
+            style={{ width: '100%' }}
+          >
             {filters.map(renderField)}
             {children}
           </Space>
@@ -160,8 +188,8 @@ export function FilterPanel({
 
         {showActiveFilters && hasActiveFilters && (
           <div style={{ marginTop: 8 }}>
-            <Space wrap align="center">
-              <Text type="secondary" style={{ fontSize: '12px' }}>
+            <Space wrap align="center" size="small">
+              <Text type="secondary" style={{ fontSize: isMobile ? '14px' : '12px' }}>
                 <FilterOutlined /> Applied filters:
               </Text>
               {activeFilters.map((filter) => (
@@ -169,7 +197,7 @@ export function FilterPanel({
                   key={filter.key}
                   closable
                   onClose={filter.onRemove}
-                  style={{ fontSize: '12px' }}
+                  style={{ fontSize: isMobile ? '14px' : '12px' }}
                 >
                   {filter.label}
                 </Tag>
@@ -177,10 +205,10 @@ export function FilterPanel({
               {showClearButton && (
                 <Button
                   type="link"
-                  size="small"
+                  size={isMobile ? 'middle' : 'small'}
                   icon={<ClearOutlined />}
                   onClick={onClear}
-                  style={{ fontSize: '12px', padding: 0, height: 'auto' }}
+                  style={{ fontSize: isMobile ? '14px' : '12px', padding: isMobile ? '4px 8px' : 0, height: isMobile ? 32 : 'auto' }}
                 >
                   Clear all
                 </Button>
@@ -217,7 +245,7 @@ export const createSearchFilter = (
   label,
   type: 'search',
   placeholder: placeholder || `Search ${label.toLowerCase()}...`,
-  width: 280
+  width: undefined // Let responsive logic handle it
 })
 
 export const createRangeFilter = (key: string, label: string): FilterField => ({

@@ -559,7 +559,8 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       onCancel={onCancel}
       footer={null}
       width={900}
-      style={{ maxWidth: '95vw' }}
+      style={{ maxWidth: '95vw', maxHeight: '90vh', top: 20 }}
+      bodyStyle={{ maxHeight: 'calc(90vh - 100px)', overflowY: 'auto', padding: '16px 24px' }}
       destroyOnClose
     >
       <div style={{ marginBottom: 24 }}>

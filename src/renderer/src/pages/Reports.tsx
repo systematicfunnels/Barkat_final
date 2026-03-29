@@ -793,35 +793,43 @@ const Reports: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: '0 8px' }}>
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 24,
-          flexWrap: 'wrap',
-          gap: '16px'
-        }}
-      >
-        <Title level={2} style={{ margin: 0 }}>
-          Financial Reports
-        </Title>
-        <Space>
-          <Button
-            icon={<FileExcelOutlined />}
-            onClick={exportToExcel}
-            disabled={pivotData.length === 0 || exporting}
-            loading={exporting}
-          >
-            {exporting ? 'Exporting...' : 'Export Excel'}
-          </Button>
-        </Space>
+    <div className="page-screen" style={{ padding: '0 8px' }}>
+      <div className="page-hero">
+        <div
+          className="responsive-page-header"
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 24,
+            flexWrap: 'wrap',
+            gap: '16px'
+          }}
+        >
+          <div>
+            <Title level={2} style={{ margin: 0 }}>
+              Financial Reports
+            </Title>
+            <Text type="secondary" className="page-hero-subtitle">
+              Analyze billed, collected, and outstanding amounts across projects and financial years.
+            </Text>
+          </div>
+          <Space className="responsive-action-bar">
+            <Button
+              icon={<FileExcelOutlined />}
+              onClick={exportToExcel}
+              disabled={pivotData.length === 0 || exporting}
+              loading={exporting}
+            >
+              {exporting ? 'Exporting...' : 'Export Excel'}
+            </Button>
+          </Space>
+        </div>
       </div>
 
-      <Card style={{ marginBottom: 24 }}>
+      <Card style={{ marginBottom: 0 }} className="page-toolbar-card">
         <div style={{ marginBottom: 16 }}>
-          <Space wrap size="middle">
+          <Space wrap size="middle" className="responsive-filters">
             <Search
               placeholder="Search unit, owner, or project..."
               prefix={<SearchOutlined />}
@@ -885,7 +893,7 @@ const Reports: React.FC = () => {
                 </Option>
               ))}
             </Select>
-            <Space wrap>
+            <Space wrap className="responsive-stack">
               <InputNumber
                 placeholder="Min Outstanding"
                 style={{ width: '100%', minWidth: 120 }}
@@ -906,7 +914,7 @@ const Reports: React.FC = () => {
 
           {/* Filter Summary Chips */}
           {hasActiveFilters && (
-            <div style={{ marginTop: 16 }}>
+            <div className="page-chip-bar" style={{ marginTop: 16 }}>
               <Space wrap>
                 <Text type="secondary" style={{ fontSize: '12px' }}>
                   Applied filters:
@@ -966,6 +974,7 @@ const Reports: React.FC = () => {
           }
           style={{ marginBottom: 24 }}
           bodyStyle={{ padding: '16px 0' }}
+          className="page-toolbar-card"
         >
           <Row gutter={[16, 16]}>
             {yearlyTotals.map((total) => {
@@ -975,6 +984,7 @@ const Reports: React.FC = () => {
                   <Card
                     size="small"
                     bordered
+                    className="page-stat-card"
                     title={
                       <Space direction="vertical" size={0} style={{ width: '100%' }}>
                         <Text strong style={{ fontSize: '16px' }}>
@@ -1025,7 +1035,7 @@ const Reports: React.FC = () => {
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={8}>
-          <Card bordered={false} className="report-stat-card billed">
+          <Card bordered={false} className="report-stat-card billed page-stat-card">
             <Statistic
               title="TOTAL BILLED"
               value={stats.totalBilled}
@@ -1036,7 +1046,7 @@ const Reports: React.FC = () => {
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card bordered={false} className="report-stat-card collected">
+          <Card bordered={false} className="report-stat-card collected page-stat-card">
             <Statistic
               title="TOTAL COLLECTED"
               value={stats.totalCollected}
@@ -1047,7 +1057,7 @@ const Reports: React.FC = () => {
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card bordered={false} className="report-stat-card outstanding">
+          <Card bordered={false} className="report-stat-card outstanding page-stat-card">
             <Statistic
               title="TOTAL OUTSTANDING"
               value={stats.outstanding}
@@ -1076,6 +1086,7 @@ const Reports: React.FC = () => {
           </Space>
         }
         bodyStyle={{ padding: 0 }}
+        className="page-table-card"
         extra={
           shouldCollapseYears && (
             <Text type="secondary" style={{ fontSize: '12px' }}>

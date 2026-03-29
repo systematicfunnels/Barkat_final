@@ -255,6 +255,8 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
       onCancel={handleCancel}
       footer={null}
       width={1000}
+      style={{ maxWidth: '95vw', maxHeight: '90vh', top: 20 }}
+      bodyStyle={{ maxHeight: 'calc(90vh - 100px)', overflowY: 'auto' }}
       destroyOnClose
     >
       <Form

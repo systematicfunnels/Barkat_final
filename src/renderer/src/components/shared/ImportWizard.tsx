@@ -15,7 +15,8 @@ import {
   InputNumber,
   Input,
   message,
-  Divider
+  Divider,
+  Grid
 } from 'antd'
 import {
   CheckCircleOutlined,
@@ -29,6 +30,7 @@ import {
 
 const { Title, Text, Paragraph } = Typography
 const { Option } = Select
+const { useBreakpoint } = Grid
 
 export type ImportStep = 'upload' | 'validate' | 'preview' | 'import'
 
@@ -98,6 +100,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
   const [importResults, setImportResults] = useState<{ success: number; failed: number; errors: ValidationError[] }>({ success: 0, failed: 0, errors: [] })
   const [editingRow, setEditingRow] = useState<string | null>(null)
   const [editValues, setEditValues] = useState<Record<string, unknown>>({})
+  const screens = useBreakpoint()
+  const isMobile = !screens.md
+  const isTiny = !screens.sm
 
   const steps = useMemo(() => [
     { title: 'Upload', description: 'Select file' },
@@ -611,15 +616,20 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
       title={title}
       open={open}
       onCancel={onClose}
-      width={960}
+      width={isMobile ? '100vw' : 960}
+      style={{ maxWidth: '95vw', maxHeight: '90vh', top: isMobile ? 0 : 24 }}
+      bodyStyle={{ maxHeight: 'calc(90vh - 110px)', overflowY: 'auto' }}
       footer={null}
       destroyOnClose
+      className={isMobile ? 'mobile-fullscreen-modal' : undefined}
     >
       <Steps
         current={currentStep}
         items={steps}
         onChange={handleStepChange}
         style={{ marginBottom: 24 }}
+        direction={isTiny ? 'vertical' : 'horizontal'}
+        size={isMobile ? 'small' : 'default'}
       />
       {renderStepContent()}
     </Modal>

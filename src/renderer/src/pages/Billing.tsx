@@ -1096,7 +1096,7 @@ const Billing: React.FC = () => {
   ]
 
   return (
-    <div>
+    <div className="page-screen">
       {/* Navigation guard: show setup prompt when no projects or no ready projects */}
       {projects.length === 0 && !loading && (
         <Alert
@@ -1130,18 +1130,26 @@ const Billing: React.FC = () => {
           }
         />
       )}
-      <Card style={{ marginBottom: 16 }}>
+      <div className="page-hero">
         <div
+          className="responsive-page-header"
           style={{
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            marginBottom: 16
+            marginBottom: 16,
+            flexWrap: 'wrap',
+            gap: 16
           }}
         >
-          <Title level={4} style={{ margin: 0 }}>
-            Maintenance Letters
-          </Title>
+          <div>
+            <Title level={2} style={{ margin: 0 }}>
+              Maintenance Letters
+            </Title>
+            <Text type="secondary" className="page-hero-subtitle">
+              Configure annual letters, generate PDFs, and manage billing progress across units.
+            </Text>
+          </div>
           <Space>
             {selectedRowKeys.length > 0 && (
               <>
@@ -1163,6 +1171,9 @@ const Billing: React.FC = () => {
             </Button>
           </Space>
         </div>
+      </div>
+
+      <Card style={{ marginBottom: 0 }} className="page-toolbar-card page-table-card">
 
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Space wrap size="middle">
@@ -1602,11 +1613,12 @@ const Billing: React.FC = () => {
                         }
                   }
                 >
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="responsive-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     <Form.Item
                       name="project_id"
                       label="Select Project"
                       rules={[{ required: true, message: 'Please select project' }]}
+                      className="span-2"
                       style={{ gridColumn: 'span 2' }}
                     >
                       <Select placeholder="Select a project">

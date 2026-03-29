@@ -786,7 +786,7 @@ const Payments: React.FC = () => {
   }, [showAllUnits, bulkPayments, unitsWithLettersDue])
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div className="page-screen" style={{ padding: '24px' }}>
       {/* Navigation guard: show setup prompt when no projects */}
       {projects.length === 0 && !loading && (
         <Alert
@@ -804,67 +804,73 @@ const Payments: React.FC = () => {
           }
         />
       )}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: 24,
-          flexWrap: 'wrap',
-          gap: '16px'
-        }}
-      >
-        <div>
-          <Title level={2} style={{ margin: 0 }}>
-            Payments & Receipts
-          </Title>
-          {filteredPaymentsCount > 0 && (
-            <Text type="secondary" style={{ fontSize: '14px' }}>
-              {filteredPaymentsCount} payment{filteredPaymentsCount !== 1 ? 's' : ''}
+      <div className="page-hero">
+        <div
+          className="responsive-page-header"
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 24,
+            flexWrap: 'wrap',
+            gap: '16px'
+          }}
+        >
+          <div>
+            <Title level={2} style={{ margin: 0 }}>
+              Payments & Receipts
+            </Title>
+            <Text type="secondary" className="page-hero-subtitle">
+              Capture collections, issue receipts, and process bulk payment updates with fewer clicks.
             </Text>
-          )}
+            {filteredPaymentsCount > 0 && (
+              <Text type="secondary" style={{ fontSize: '14px', display: 'block', marginTop: 6 }}>
+                {filteredPaymentsCount} payment{filteredPaymentsCount !== 1 ? 's' : ''}
+              </Text>
+            )}
+          </div>
+          <Space className="responsive-action-bar">
+            {selectedRowKeys.length > 0 && (
+              <>
+                <Button
+                  type="primary"
+                  icon={<PrinterOutlined />}
+                  onClick={handleBatchReceipts}
+                  loading={generatingReceipts}
+                >
+                  Batch Receipts ({selectedRowKeys.length})
+                </Button>
+                <Button
+                  danger
+                  icon={<DeleteOutlined />}
+                  onClick={handleBulkDelete}
+                  aria-label={`Delete ${selectedRowKeys.length} selected payments`}
+                >
+                  Delete Selected ({selectedRowKeys.length})
+                </Button>
+              </>
+            )}
+            <Button
+              icon={<TableOutlined />}
+              onClick={handleBulkAdd}
+              aria-label="Open bulk payment entry"
+            >
+              Record Bulk Payments
+            </Button>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleAdd}
+              style={{ fontWeight: 600 }}
+              aria-label="Record new payment"
+            >
+              Record Payment
+            </Button>
+          </Space>
         </div>
-        <Space>
-          {selectedRowKeys.length > 0 && (
-            <>
-              <Button
-                type="primary"
-                icon={<PrinterOutlined />}
-                onClick={handleBatchReceipts}
-                loading={generatingReceipts}
-              >
-                Batch Receipts ({selectedRowKeys.length})
-              </Button>
-              <Button
-                danger
-                icon={<DeleteOutlined />}
-                onClick={handleBulkDelete}
-                aria-label={`Delete ${selectedRowKeys.length} selected payments`}
-              >
-                Delete Selected ({selectedRowKeys.length})
-              </Button>
-            </>
-          )}
-          <Button
-            icon={<TableOutlined />}
-            onClick={handleBulkAdd}
-            aria-label="Open bulk payment entry"
-          >
-            Record Bulk Payments
-          </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={handleAdd}
-            style={{ fontWeight: 600 }}
-            aria-label="Record new payment"
-          >
-            Record Payment
-          </Button>
-        </Space>
       </div>
 
-      <Card>
+      <Card className="page-toolbar-card page-table-card">
         <Collapse 
           defaultActiveKey={['basic']}
           items={[
@@ -878,7 +884,7 @@ const Payments: React.FC = () => {
                 </Space>
               ),
               children: (
-                <Space wrap size="middle">
+                <Space wrap size="middle" className="responsive-filters">
                   <Search
                     placeholder="Search receipt, unit, owner, or project..."
                     allowClear
@@ -938,7 +944,7 @@ const Payments: React.FC = () => {
 
         {/* Filter Summary Chips */}
         {hasActiveFilters && (
-          <div style={{ marginTop: 16 }}>
+          <div className="page-chip-bar" style={{ marginTop: 16 }}>
             <Space wrap>
               <Text type="secondary" style={{ fontSize: '12px' }}>
                 Active filters:
@@ -1076,10 +1082,11 @@ const Payments: React.FC = () => {
           <Divider orientation={'left' as DividerProps['orientation']} style={{ marginTop: 0 }}>
             Unit Details
           </Divider>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="responsive-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             {/* Step 1: Pick project to narrow the unit list */}
             <Form.Item
               label="Filter by Project"
+              className="span-2"
               style={{ gridColumn: 'span 2', marginBottom: 4 }}
             >
               <Select
@@ -1275,7 +1282,7 @@ const Payments: React.FC = () => {
           </div>
 
           <Divider orientation={'left' as DividerProps['orientation']}>Payment Details</Divider>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="responsive-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
             <Form.Item
               name="payment_date"
               label="Payment Date"
@@ -1431,6 +1438,7 @@ const Payments: React.FC = () => {
           {bulkProject && (
             <>
               <div
+                className="responsive-stack-row"
                 style={{
                   marginBottom: 16,
                   display: 'flex',
@@ -1495,12 +1503,13 @@ const Payments: React.FC = () => {
                 />
               )}
 
-              <Table
-                dataSource={displayBulkPayments}
-                pagination={false}
-                scroll={{ y: 400 }}
-                rowKey="unit_id"
-                columns={[
+              <div className="table-scroll-wrapper">
+                <Table
+                  dataSource={displayBulkPayments}
+                  pagination={false}
+                  scroll={{ x: 'max-content', y: 400 }}
+                  rowKey="unit_id"
+                  columns={[
                   {
                     title: 'Unit #',
                     dataIndex: 'unit_number',
@@ -1561,8 +1570,9 @@ const Payments: React.FC = () => {
                       )
                     }
                   }
-                ]}
-              />
+                  ]}
+                />
+              </div>
 
               {showAllUnits && bulkPayments.length > 10 && (
                 <div style={{ marginTop: 8, textAlign: 'center' }}>
@@ -1575,6 +1585,7 @@ const Payments: React.FC = () => {
               {/* Bulk Payment Summary */}
               {bulkPayments.length > 0 && (
                 <div
+                  className="responsive-summary-row"
                   style={{
                     marginTop: 16,
                     padding: '12px 16px',
@@ -1583,7 +1594,7 @@ const Payments: React.FC = () => {
                     border: '1px solid #b7eb8f'
                   }}
                 >
-                  <Space size="large">
+                  <Space size="large" wrap>
                     <Text strong>
                       Units with amount: {bulkPaymentSummary.unitsWithAmount} /{' '}
                       {bulkPaymentSummary.totalUnits}
@@ -1598,7 +1609,7 @@ const Payments: React.FC = () => {
                 </div>
               )}
 
-              <div style={{ marginTop: '16px', display: 'flex', gap: '16px' }}>
+              <div className="responsive-stack-row" style={{ marginTop: '16px', display: 'flex', gap: '16px' }}>
                 <Form.Item
                   name="reference_number"
                   label="Common Reference # (Optional)"

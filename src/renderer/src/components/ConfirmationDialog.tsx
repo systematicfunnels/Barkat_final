@@ -61,6 +61,8 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
       okButtonProps={defaultOkButtonProps}
       cancelButtonProps={cancelButtonProps}
       centered
+      width={480}
+      style={{ maxWidth: '95vw' }}
     >
       <div style={{ textAlign: 'center', padding: '20px 0' }}>{getIcon()}</div>
 

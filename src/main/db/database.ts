@@ -414,6 +414,11 @@ class DatabaseService {
         this.db.exec('ALTER TABLE projects ADD COLUMN contact_phone TEXT')
         console.log('[DATABASE] contact_phone column added to projects')
       }
+      // Add registration_no if missing (used on PDF letterhead for society registration number)
+      if (!columns.some((c) => c.name === 'registration_no')) {
+        this.db.exec('ALTER TABLE projects ADD COLUMN registration_no TEXT')
+        console.log('[DATABASE] registration_no column added to projects')
+      }
 
       // Migrate sector_payment_configs — add full bank detail columns if missing
       const sectorCols = this.db.prepare('PRAGMA table_info(project_sector_payment_configs)').all() as { name: string }[]

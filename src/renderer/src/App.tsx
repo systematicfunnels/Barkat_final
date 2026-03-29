@@ -17,25 +17,31 @@ const App: React.FC = () => {
       theme={{
         token: {
           colorPrimary: '#2D7A5E',
-          borderRadius: 4, // Admin-optimized: tighter corners
+          borderRadius: 16,
           fontSize: 14,
-          controlHeight: 36, // Component height 36px
-          paddingContentHorizontal: 16
+          controlHeight: 40,
+          paddingContentHorizontal: 16,
+          colorBgLayout: '#f3f6f7',
+          colorBgContainer: 'rgba(255,255,255,0.88)'
         },
         components: {
           Table: {
             headerBg: '#fafafa',
-            headerBorderRadius: 0,
-            cellPaddingBlock: 12 // Achieve ~44px row height
+            headerBorderRadius: 12,
+            cellPaddingBlock: 12
           },
           Button: {
-            controlHeight: 32 // Compact buttons for admin
+            controlHeight: 40,
+            borderRadius: 12
           },
           Input: {
-            controlHeight: 36
+            controlHeight: 40
           },
           Select: {
-            controlHeight: 36
+            controlHeight: 40
+          },
+          Card: {
+            borderRadiusLG: 20
           }
         }
       }}

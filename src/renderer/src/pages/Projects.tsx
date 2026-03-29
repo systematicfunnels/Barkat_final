@@ -726,45 +726,52 @@ const Projects: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div className="page-screen" style={{ padding: '24px' }}>
       {/* Header */}
-      <div
-        className="responsive-page-header"
-        style={{
-          marginBottom: 24,
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: 16
-        }}
-      >
-        <Typography.Title level={2} style={{ margin: 0 }}>
-          Projects
-        </Typography.Title>
-        <Space wrap className="responsive-action-bar">
-          {selectedRowKeys.length > 0 && (
-            <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
-              Delete Selected ({selectedRowKeys.length})
+      <div className="page-hero">
+        <div
+          className="responsive-page-header"
+          style={{
+            marginBottom: 24,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 16
+          }}
+        >
+          <div>
+            <Typography.Title level={2} style={{ margin: 0 }}>
+              Projects
+            </Typography.Title>
+            <Text type="secondary" className="page-hero-subtitle">
+              Manage project setup, workbook imports, and billing readiness from one place.
+            </Text>
+          </div>
+          <Space wrap className="responsive-action-bar">
+            {selectedRowKeys.length > 0 && (
+              <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
+                Delete Selected ({selectedRowKeys.length})
+              </Button>
+            )}
+            <Upload
+              beforeUpload={(file) => {
+                handleStandardWorkbookImport(file)
+                return false
+              }}
+              showUploadList={false}
+              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+            >
+              <Button icon={<UploadOutlined />}>Import Standard Workbook</Button>
+            </Upload>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+              Add Project
             </Button>
-          )}
-          <Upload
-            beforeUpload={(file) => {
-              handleStandardWorkbookImport(file)
-              return false
-            }}
-            showUploadList={false}
-            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-          >
-            <Button icon={<UploadOutlined />}>Import Standard Workbook</Button>
-          </Upload>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-            Add Project
-          </Button>
-        </Space>
+          </Space>
+        </div>
       </div>
 
-      <Card style={{ marginBottom: 16 }}>
+      <Card style={{ marginBottom: 0 }} className="page-toolbar-card">
         <Space wrap className="responsive-filters" style={{ marginBottom: 8 }}>
           <Input
             placeholder="Search Project Code, Name, Address, or City..."
@@ -801,7 +808,7 @@ const Projects: React.FC = () => {
 
         {/* Filter Summary Chips */}
         {hasActiveFilters && (
-          <div style={{ marginTop: 16 }}>
+          <div className="page-chip-bar" style={{ marginTop: 16 }}>
             <Space wrap>
               <Text type="secondary" style={{ fontSize: '12px' }}>
                 Active filters:
@@ -943,6 +950,8 @@ const Projects: React.FC = () => {
         onOk={handleModalOk}
         onCancel={() => setIsModalOpen(false)}
         width={700}
+        style={{ maxWidth: '95vw', maxHeight: '90vh', top: 20 }}
+        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
         className="mobile-fullscreen-modal mobile-single-column"
       >
         <Form 
@@ -1010,6 +1019,7 @@ const Projects: React.FC = () => {
                 label: 'Basic Information',
                 children: (
                   <div
+                    className="responsive-form-grid"
                     style={{
                       display: 'grid',
                       gridTemplateColumns: '1fr 1fr',
@@ -1028,12 +1038,13 @@ const Projects: React.FC = () => {
                       name="name"
                       label="Project Name"
                       rules={[{ required: true, message: 'Please enter project name' }]}
+                      className="span-2"
                       style={{ gridColumn: 'span 2' }}
                     >
                       <Input />
                     </Form.Item>
 
-                    <Form.Item name="address" label="Address" style={{ gridColumn: 'span 2' }}>
+                    <Form.Item name="address" label="Address" className="span-2" style={{ gridColumn: 'span 2' }}>
                       <Input.TextArea rows={2} />
                     </Form.Item>
 
@@ -1140,6 +1151,7 @@ const Projects: React.FC = () => {
                             }
                           >
                             <div
+                              className="responsive-form-grid tight"
                               style={{
                                 display: 'grid',
                                 gridTemplateColumns: '1fr 1fr',
@@ -1194,7 +1206,7 @@ const Projects: React.FC = () => {
                                 placeholder="Branch"
                                 addonBefore="Branch"
                               />
-                              <div style={{ gridColumn: 'span 2' }}>
+                              <div className="span-2" style={{ gridColumn: 'span 2' }}>
                                 <Input
                                   value={String(config.qr_code_path || '')}
                                   onChange={(e) =>
@@ -1280,6 +1292,8 @@ const Projects: React.FC = () => {
           </Button>
         ]}
         width={600}
+        style={{ maxWidth: '95vw', maxHeight: '90vh' }}
+        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
       >
         <div style={{ maxHeight: '400px', overflow: 'auto' }}>
           <List
@@ -1322,6 +1336,8 @@ const Projects: React.FC = () => {
         }}
         confirmLoading={isWorkbookImporting}
         width={860}
+        style={{ maxWidth: '95vw', maxHeight: '90vh' }}
+        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
         className="mobile-fullscreen-modal"
       >
         {standardWorkbookPreview && (
@@ -1448,6 +1464,8 @@ const Projects: React.FC = () => {
           </Button>
         ]}
         width={600}
+        style={{ maxWidth: '95vw', maxHeight: '90vh' }}
+        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
       >
         <div style={{ maxHeight: '400px', overflow: 'auto' }}>
           <List

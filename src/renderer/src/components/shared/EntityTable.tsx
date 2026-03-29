@@ -1,12 +1,15 @@
 import React from 'react'
-import { Table, Space, Button, Tooltip, Tag } from 'antd'
+import { Table, Space, Button, Tooltip, Tag, Grid } from 'antd'
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table'
 import { EditOutlined, DeleteOutlined, FilePdfOutlined } from '@ant-design/icons'
 import { IndianRupee } from 'lucide-react'
 
+const { useBreakpoint } = Grid
+
 export interface ActionConfig<T> {
   key: string
   icon?: React.ReactNode
+  label?: string
   tooltip?: string
   danger?: boolean
   type?: 'primary' | 'default' | 'text' | 'link' | 'dashed'
@@ -49,12 +52,17 @@ export function EntityTable<T extends object>({
   scroll = { x: 'max-content' },
   size = 'middle'
 }: EntityTableProps<T>) {
+  const screens = useBreakpoint()
+  const isMobile = !screens.md
+  const isTouch = !screens.lg
+  
   const defaultActions: ActionConfig<T>[] = []
 
   if (onGenerateLetter) {
     defaultActions.push({
       key: 'generate-letter',
       icon: <FilePdfOutlined />,
+      label: isMobile ? 'PDF' : undefined,
       tooltip: 'Generate Maintenance Letter',
       onClick: onGenerateLetter
     })
@@ -63,7 +71,8 @@ export function EntityTable<T extends object>({
   if (onRecordPayment) {
     defaultActions.push({
       key: 'record-payment',
-      icon: <IndianRupee size={16} />,
+      icon: <IndianRupee size={isTouch ? 18 : 16} />,
+      label: isMobile ? 'Pay' : undefined,
       tooltip: 'Record Payment',
       onClick: onRecordPayment
     })
@@ -73,6 +82,7 @@ export function EntityTable<T extends object>({
     defaultActions.push({
       key: 'edit',
       icon: <EditOutlined />,
+      label: isMobile ? 'Edit' : undefined,
       tooltip: 'Edit',
       onClick: onEdit
     })
@@ -82,6 +92,7 @@ export function EntityTable<T extends object>({
     defaultActions.push({
       key: 'delete',
       icon: <DeleteOutlined />,
+      label: isMobile ? 'Del' : undefined,
       tooltip: 'Delete',
       danger: true,
       onClick: onDelete
@@ -90,15 +101,23 @@ export function EntityTable<T extends object>({
 
   const allActions = showDefaultActions ? [...defaultActions, ...(actions || [])] : actions || []
 
+  // Responsive action column width
+  const getActionColumnWidth = () => {
+    if (isMobile) {
+      return Math.max(160, allActions.length * 70 + 16)
+    }
+    return Math.max(120, allActions.length * 48 + 16)
+  }
+
   const actionColumn: ColumnsType<T>[number] = {
     title: 'Actions',
     key: 'actions',
     align: 'right',
     fixed: 'right',
-    width: Math.max(120, allActions.length * 48 + 16),
-    minWidth: 100,
+    width: getActionColumnWidth(),
+    minWidth: isMobile ? 140 : 100,
     render: (_: unknown, record: T) => (
-      <Space>
+      <Space size={isMobile ? 'small' : 'middle'}>
         {allActions.map((action) => {
           if (action.condition && !action.condition(record)) {
             return null
@@ -107,7 +126,7 @@ export function EntityTable<T extends object>({
           const button = (
             <Button
               key={action.key}
-              size="small"
+              size={isMobile ? 'middle' : 'small'}
               type={action.type || 'default'}
               danger={action.danger}
               icon={action.icon}
@@ -115,10 +134,13 @@ export function EntityTable<T extends object>({
                 e.stopPropagation()
                 action.onClick(record)
               }}
-            />
+              style={{ minWidth: isMobile ? 44 : 32 }}
+            >
+              {action.label}
+            </Button>
           )
 
-          if (action.tooltip) {
+          if (action.tooltip && !isMobile) {
             return (
               <Tooltip key={action.key} title={action.tooltip}>
                 {button}
@@ -142,16 +164,25 @@ export function EntityTable<T extends object>({
     : undefined
 
   return (
-    <Table<T>
-      rowSelection={rowSelection}
-      columns={finalColumns}
-      dataSource={data}
-      rowKey={rowKey}
-      loading={loading}
-      pagination={pagination}
-      scroll={scroll}
-      size={size}
-    />
+    <div className="table-scroll-wrapper">
+      <Table<T>
+        rowSelection={rowSelection}
+        columns={finalColumns}
+        dataSource={data}
+        rowKey={rowKey}
+        loading={loading}
+        pagination={pagination === false ? false : {
+          showSizeChanger: true,
+          showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} items`,
+          pageSizeOptions: ['10', '20', '50', '100'],
+          defaultPageSize: 10,
+          ...(typeof pagination === 'object' ? pagination : {})
+        }}
+        scroll={isMobile ? { x: 'max-content', y: 'calc(100vh - 300px)' } : { ...scroll, y: data.length > 50 ? 'calc(100vh - 300px)' : undefined }}
+        size={size}
+        virtual={data.length > 100}
+      />
+    </div>
   )
 }
 

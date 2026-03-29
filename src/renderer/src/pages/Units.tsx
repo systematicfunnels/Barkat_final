@@ -1134,18 +1134,24 @@ const Units: React.FC = () => {
   ]
 
   return (
-    <div style={{ padding: '24px' }}>
+    <div className="page-screen" style={{ padding: '24px' }}>
       {/* Enhanced header with selection feedback */}
-      <div
-        className="responsive-page-header"
-        style={{
-          marginBottom: 24
-        }}
-      >
-        <Title level={2} style={{ margin: 0 }}>
-          Units
-        </Title>
-        <Space wrap className="responsive-action-bar" align="center">
+      <div className="page-hero">
+        <div
+          className="responsive-page-header"
+          style={{
+            marginBottom: 24
+          }}
+        >
+          <div>
+            <Title level={2} style={{ margin: 0 }}>
+              Units
+            </Title>
+            <Text type="secondary" className="page-hero-subtitle">
+              Review owners, import spreadsheets, and prepare units for billing in a faster workflow.
+            </Text>
+          </div>
+          <Space wrap className="responsive-action-bar" align="center">
           {canUndo && (
             <Button 
               icon={<UndoOutlined />} 
@@ -1186,10 +1192,11 @@ const Units: React.FC = () => {
           <Button icon={<FileAddOutlined />} onClick={() => handleAdd(true)}>
             Quick Add
           </Button>
-        </Space>
+          </Space>
+        </div>
       </div>
 
-      <Card>
+      <Card className="page-toolbar-card page-table-card">
         <div style={{ marginBottom: 24 }}>
           <Space wrap className="responsive-filters" size="middle">
             <Search
@@ -1274,7 +1281,7 @@ const Units: React.FC = () => {
 
           {/* Filter summary chips */}
           {hasActiveFilters && (
-            <div style={{ marginTop: 16 }}>
+            <div className="page-chip-bar" style={{ marginTop: 16 }}>
               <Space wrap>
                 <Text type="secondary" style={{ fontSize: '12px' }}>
                   Applied filters:

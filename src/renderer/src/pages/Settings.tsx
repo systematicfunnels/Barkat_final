@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
-import { Card, Button, Typography, Space, Divider, message, Alert, Modal, List } from 'antd'
-import { DownloadOutlined, UploadOutlined, ToolOutlined } from '@ant-design/icons'
+import { Card, Button, Typography, Space, Divider, message, Alert, Modal, List, Tag } from 'antd'
+import { DownloadOutlined, UploadOutlined, ToolOutlined, DatabaseOutlined } from '@ant-design/icons'
 
 const { Title, Paragraph, Text } = Typography
 
@@ -86,67 +86,65 @@ const Settings: React.FC = () => {
   }
 
   return (
-    <div style={{ maxWidth: 800 }}>
-      <Title level={2}>System Settings</Title>
-
-      <Card title="Data Management" style={{ marginBottom: 24 }}>
-        <Paragraph>
-          Manage your local database. All data is stored locally on your machine.
-        </Paragraph>
-
-        <Space direction="vertical" style={{ width: '100%' }}>
+    <div className="page-screen" style={{ maxWidth: 1100 }}>
+      <div className="page-hero">
+        <div className="responsive-page-header">
           <div>
-            <Title level={5}>Export Database</Title>
-            <Text type="secondary">
-              Download a copy of your database for backup or moving to another machine.
+            <Title level={2} style={{ margin: 0 }}>System Settings</Title>
+            <Text type="secondary" className="page-hero-subtitle">
+              Manage backups, recovery, and database health for this desktop workspace.
             </Text>
-            <div style={{ marginTop: 8 }}>
-              <Button icon={<DownloadOutlined />} onClick={handleExport}>
-                Backup Database
-              </Button>
-            </div>
           </div>
+          <Space className="responsive-action-bar">
+            <Tag color="green" icon={<DatabaseOutlined />}>Local SQLite</Tag>
+            <Tag color="blue">Desktop App</Tag>
+          </Space>
+        </div>
+      </div>
 
-          <Divider />
+      <div className="page-info-grid">
+        <Card title="Export Database" className="page-action-card">
+          <Paragraph>
+            Download a backup copy before migrations, system changes, or moving to another machine.
+          </Paragraph>
+          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={loading}>
+            Backup Database
+          </Button>
+        </Card>
 
-          <div>
-            <Title level={5}>Import Data</Title>
-            <Text type="secondary">Restore data from a previously exported backup file.</Text>
-            <div style={{ marginTop: 8 }}>
-              <Button icon={<UploadOutlined />} onClick={handleImport} loading={loading}>
-                Restore from Backup
-              </Button>
-            </div>
-          </div>
+        <Card title="Restore Backup" className="page-action-card">
+          <Paragraph>
+            Restore a previously exported backup file to recover or move your workspace data.
+          </Paragraph>
+          <Button icon={<UploadOutlined />} onClick={handleImport} loading={loading}>
+            Restore from Backup
+          </Button>
+        </Card>
 
-          <Divider />
+        <Card title="Repair Database" className="page-action-card">
+          <Paragraph>
+            Run integrity checks and repair common foreign-key or relational consistency issues.
+          </Paragraph>
+          <Button icon={<ToolOutlined />} onClick={handleDatabaseRepair} loading={loading}>
+            Check & Repair
+          </Button>
+        </Card>
+      </div>
 
-          <div>
-            <Title level={5}>Database Tools</Title>
-            <Text type="secondary">
-              Check for data integrity issues and repair common database errors.
-            </Text>
-            <div style={{ marginTop: 8 }}>
-              <Button icon={<ToolOutlined />} onClick={handleDatabaseRepair} loading={loading}>
-                Check & Repair Database
-              </Button>
-            </div>
-          </div>
-        </Space>
-      </Card>
-
-      <Card title="System Diagnostics" style={{ marginBottom: 24 }}>
-        <Space direction="vertical">
-          <Text>Version: 1.0.0</Text>
-          <Text>Database Type: SQLite 3 (better-sqlite3)</Text>
-          <Text>Environment: Desktop Application (Electron)</Text>
-          <Alert
-            message="Foreign Key Support"
-            description="Foreign key constraints are enabled to ensure data integrity."
-            type="success"
-            showIcon
-          />
-        </Space>
+      <Card title="System Diagnostics" className="page-toolbar-card">
+        <div className="page-soft-panel">
+          <Space direction="vertical">
+            <Text>Version: 1.0.0</Text>
+            <Text>Database Type: SQLite 3 (better-sqlite3)</Text>
+            <Text>Environment: Desktop Application (Electron)</Text>
+            <Alert
+              message="Foreign Key Support"
+              description="Foreign key constraints are enabled to ensure data integrity."
+              type="success"
+              showIcon
+            />
+          </Space>
+        </div>
       </Card>
 
       <Modal

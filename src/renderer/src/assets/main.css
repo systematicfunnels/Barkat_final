@@ -13,7 +13,8 @@ body {
   font-family:
     -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'Noto Sans',
     sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji';
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
   user-select: none;
   background: #f5f5f5;
 }
@@ -151,5 +152,170 @@ body {
   .tip,
   .actions {
     display: none;
+  }
+}
+
+/* Mobile responsive modal styles */
+@media (max-width: 768px) {
+  body {
+    overflow-y: auto;
+  }
+
+  .ant-space.responsive-filters,
+  .ant-space.responsive-action-bar,
+  .ant-space.responsive-stack {
+    width: 100%;
+  }
+
+  .ant-space.responsive-filters .ant-space-item,
+  .ant-space.responsive-action-bar .ant-space-item,
+  .ant-space.responsive-stack .ant-space-item {
+    width: 100%;
+  }
+
+  .responsive-form-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .responsive-form-grid > * {
+    min-width: 0;
+  }
+
+  .responsive-form-grid .span-2 {
+    grid-column: span 1 !important;
+  }
+
+  .responsive-stack-row {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  .responsive-stack-row > * {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .responsive-summary-row {
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    gap: 8px !important;
+  }
+
+  .mobile-fullscreen-modal {
+    width: 100vw !important;
+    max-width: 100vw !important;
+    margin: 0 !important;
+    top: 0 !important;
+    padding: 0 !important;
+  }
+  
+  .mobile-fullscreen-modal .ant-modal-content {
+    border-radius: 0;
+    min-height: 100vh;
+  }
+  
+  .mobile-fullscreen-modal .ant-modal-body {
+    padding: 16px;
+  }
+  
+  .mobile-single-column .ant-form {
+    display: flex;
+    flex-direction: column;
+  }
+  
+  .mobile-single-column .ant-form-item {
+    width: 100% !important;
+    grid-column: span 1 !important;
+  }
+  
+  /* Table wrapper for mobile horizontal scroll */
+  .table-responsive-wrapper,
+  .table-scroll-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    margin: 0 -12px;
+    padding: 0 12px;
+  }
+  
+  .table-responsive-wrapper .ant-table,
+  .table-scroll-wrapper .ant-table {
+    min-width: 800px;
+  }
+  
+  /* Force table to scroll instead of squish */
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+  
+  /* Responsive filters */
+  .responsive-filters {
+    flex-direction: column;
+    width: 100%;
+  }
+  
+  .responsive-filters .ant-input,
+  .responsive-filters .ant-select {
+    width: 100% !important;
+    max-width: 100% !important;
+    min-width: unset !important;
+  }
+  
+  /* Responsive page header */
+  .responsive-page-header {
+    flex-direction: column;
+    align-items: flex-start !important;
+  }
+  
+  .responsive-action-bar {
+    width: 100%;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .responsive-action-bar .ant-btn,
+  .responsive-action-bar .ant-select,
+  .responsive-action-bar .ant-input,
+  .responsive-action-bar .ant-picker {
+    width: 100%;
+  }
+  
+  /* Setup checklist responsive */
+  .ant-alert-description > div > div {
+    flex-direction: column !important;
+    gap: 8px !important;
+  }
+  
+  .ant-alert-description > div > div > span:first-child {
+    min-width: unset !important;
+  }
+  
+  .ant-alert-description > div > div > div:last-child {
+    margin-left: 0 !important;
+    width: 100%;
+  }
+  
+  /* Table cells - prevent text overflow */
+  .ant-table-cell {
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  
+  /* Action buttons in tables */
+  .ant-table-cell .ant-space {
+    flex-wrap: wrap;
+  }
+
+  .ant-tabs-nav-wrap {
+    overflow-x: auto;
+  }
+}
+
+/* Tablet responsive */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .table-scroll-wrapper .ant-table {
+    min-width: 900px;
   }
 }

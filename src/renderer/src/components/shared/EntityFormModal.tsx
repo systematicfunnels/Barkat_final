@@ -1,6 +1,8 @@
 import React from 'react'
-import { Modal, Form, Button, Space, Tag, FormInstance } from 'antd'
+import { Modal, Form, Button, Space, Tag, FormInstance, Grid } from 'antd'
 import { FileAddOutlined } from '@ant-design/icons'
+
+const { useBreakpoint } = Grid
 
 export interface EntityFormModalProps {
   open: boolean
@@ -33,6 +35,9 @@ export function EntityFormModal({
   isQuickMode = false,
   onSwitchMode
 }: EntityFormModalProps) {
+  const screens = useBreakpoint()
+  const isMobile = !screens.md
+  
   const modalTitle = (
     <Space>
       {title}
@@ -60,9 +65,11 @@ export function EntityFormModal({
       open={open}
       onCancel={onCancel}
       width={isQuickMode ? 480 : width}
-      style={{ maxWidth: '95vw' }}
+      style={{ maxWidth: '95vw', maxHeight: '90vh', top: isMobile ? 0 : 20 }}
+      bodyStyle={{ maxHeight: 'calc(90vh - 140px)', overflowY: 'auto' }}
       confirmLoading={confirmLoading}
       footer={modalFooter}
+      className={isMobile ? 'mobile-fullscreen-modal mobile-single-column' : undefined}
     >
       {isQuickMode && onSwitchMode && (
         <div style={{ marginBottom: 16 }}>
@@ -74,9 +81,11 @@ export function EntityFormModal({
       {subtitle && (
         <p style={{ marginBottom: 16, color: '#666' }}>{subtitle}</p>
       )}
-      <Form form={form} layout="vertical">
-        {children}
-      </Form>
+      <FormSection title={typeof title === 'string' ? title : 'Form'} columns={isMobile ? 1 : 2}>
+        <Form form={form} layout="vertical">
+          {children}
+        </Form>
+      </FormSection>
     </Modal>
   )
 }
@@ -106,6 +115,7 @@ export function FormSection({
         {title}
       </div>
       <div
+        className="responsive-form-grid"
         style={{
           display: 'grid',
           gridTemplateColumns: `repeat(${columns}, 1fr)`,
@@ -127,7 +137,7 @@ export function FormField({
   fullWidth?: boolean
 }) {
   return (
-    <div style={{ gridColumn: fullWidth ? 'span 2' : undefined }}>{children}</div>
+    <div className={fullWidth ? 'span-2' : undefined} style={{ gridColumn: fullWidth ? 'span 2' : undefined }}>{children}</div>
   )
 }
 

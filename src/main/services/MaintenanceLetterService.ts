@@ -4,6 +4,7 @@ import { BasePDFGenerator } from './BasePDFGenerator'
 import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
+import { rgb } from 'pdf-lib'
 
 export interface MaintenanceLetter {
   id?: number
@@ -27,7 +28,6 @@ export interface MaintenanceLetter {
   sector_code?: string
   unit_type?: string
   letterhead_path?: string
-  // Project-level bank details
   account_name?: string
   bank_name?: string
   account_no?: string
@@ -36,7 +36,6 @@ export interface MaintenanceLetter {
   branch_address?: string
   qr_code_path?: string
   project_qr_code?: string
-  // Sector-level bank details (override project defaults when present)
   sector_qr_code?: string
   sector_account_name?: string
   sector_bank_name?: string
@@ -58,46 +57,37 @@ export interface LetterAddOn {
 
 class MaintenanceLetterService extends BasePDFGenerator {
 
-  /**
-   * Get project-specific contact information
-   */
-  private getProjectContactInfo(projectId: number): { email: string; phone: string } {
-    const project = dbService.get<{
-      contact_email?: string
-      contact_phone?: string
-    }>(
-      'SELECT contact_email, contact_phone FROM projects WHERE id = ?',
-      [projectId]
-    )
-    return {
-      email: project?.contact_email || '',
-      phone: project?.contact_phone || ''
-    }
+  private normalizeUnitType(unitType: unknown): string {
+    const normalized = String(unitType || '')
+      .trim()
+      .toLowerCase()
+    if (!normalized || normalized === 'flat' || normalized === 'bungalow') return 'Bungalow'
+    if (normalized === 'plot') return 'Plot'
+    if (normalized === 'garden') return 'Garden'
+    if (normalized === 'bmf') return 'Bungalow' // BMF = Bungalow Maintenace Fee
+    if (normalized === 'all' || normalized === 'all units') return 'All'
+    return String(unitType || '').trim() || 'Bungalow'
   }
 
-  /**
-   * Resolve QR code path with multiple fallback locations
-   */
   private resolveQrCodePath(qrCodePath: string): string | null {
     if (!qrCodePath) return null
     
-    // Try multiple possible locations
+    // Security: Prevent path traversal attacks by normalizing and checking for parent directory references
+    const normalizedPath = path.normalize(qrCodePath)
+    if (normalizedPath.includes('..')) {
+      return null
+    }
+    
     const possiblePaths = [
-      // Original path (absolute)
       qrCodePath,
-      // Resolved path (relative to current working directory)
       path.resolve(qrCodePath),
-      // Relative to app directory
       path.join(process.cwd(), qrCodePath),
-      // Relative to user data directory
       path.join(app.getPath('userData'), qrCodePath),
-      // Relative to user data directory assets folder
       path.join(app.getPath('userData'), 'assets', qrCodePath),
-      // If path is already relative to user data directory
       qrCodePath.startsWith('assets/') 
         ? path.join(app.getPath('userData'), qrCodePath)
         : null
-    ].filter((path): path is string => Boolean(path))
+    ].filter((p): p is string => Boolean(p))
     
     const foundPath = possiblePaths.find((p) => fs.existsSync(p))
     
@@ -145,35 +135,147 @@ class MaintenanceLetterService extends BasePDFGenerator {
              p.name as project_name,
              p.account_name, p.bank_name, p.branch, p.branch_address, p.account_no, p.ifsc_code,
              p.qr_code_path as project_qr_code,
-             pspc.qr_code_path as sector_qr_code,
-             pspc.account_name as sector_account_name,
-             pspc.bank_name as sector_bank_name,
-             pspc.account_no as sector_account_no,
-             pspc.ifsc_code as sector_ifsc_code,
-             pspc.branch as sector_branch,
-             p.template_type,
-             COALESCE((SELECT SUM(addon_amount) FROM add_ons WHERE letter_id = l.id), 0) as add_ons_total
+             COALESCE((SELECT SUM(addon_amount) FROM add_ons WHERE letter_id = l.id), 0) as add_ons_total,
+             ps.account_name as sector_account_name,
+             ps.bank_name as sector_bank_name,
+             ps.account_no as sector_account_no,
+             ps.ifsc_code as sector_ifsc_code,
+             ps.branch as sector_branch,
+             ps.qr_code_path as sector_qr_code
       FROM maintenance_letters l
       JOIN units u ON l.unit_id = u.id
       JOIN projects p ON l.project_id = p.id
-      LEFT JOIN project_sector_payment_configs pspc
-        ON p.id = pspc.project_id AND UPPER(TRIM(u.sector_code)) = UPPER(TRIM(pspc.sector_code))
+      LEFT JOIN project_sector_payment_configs ps ON p.id = ps.project_id AND UPPER(TRIM(ps.sector_code)) = UPPER(TRIM(u.sector_code))
       WHERE l.id = ?
     `,
       [id]
     )
   }
 
-  public getLetterIdByProjectUnitAndYear(
-    projectId: number,
-    unitId: number,
-    financialYear: string
-  ): number | null {
-    const result = dbService.get<{ id: number }>(
-      'SELECT id FROM maintenance_letters WHERE project_id = ? AND unit_id = ? AND financial_year = ?',
-      [projectId, unitId, financialYear]
-    )
-    return result?.id || null
+  public async generatePdf(id: number): Promise<string> {
+    const letter = this.getById(id)
+    if (!letter) throw new Error('Maintenance letter not found')
+
+    const hasSectorBank = !!(letter.sector_account_name || letter.sector_account_no || letter.sector_bank_name)
+    const effectiveAccountName = hasSectorBank ? letter.sector_account_name : letter.account_name
+    const effectiveAccountNo = hasSectorBank ? letter.sector_account_no : letter.account_no
+    const effectiveBankName = hasSectorBank ? letter.sector_bank_name : letter.bank_name
+    const effectiveIfsc = hasSectorBank ? letter.sector_ifsc_code : letter.ifsc_code
+
+    const missingBankDetails: string[] = []
+    if (!effectiveAccountName || String(effectiveAccountName).trim() === '') {
+      missingBankDetails.push('Account Name')
+    }
+    if (!effectiveAccountNo || String(effectiveAccountNo).trim() === '') {
+      missingBankDetails.push('Account Number')
+    }
+    if (!effectiveBankName || String(effectiveBankName).trim() === '') {
+      missingBankDetails.push('Bank Name')
+    }
+    if (!effectiveIfsc || String(effectiveIfsc).trim() === '') {
+      missingBankDetails.push('IFSC Code')
+    }
+
+    if (missingBankDetails.length > 0) {
+      throw new Error(
+        `Cannot generate PDF: Missing required bank details: ${missingBankDetails.join(', ')}. ` +
+        `Please configure bank details in Project Settings first.`
+      )
+    }
+
+    const addOns = this.getAddOns(id)
+
+    await this.initializePDF()
+
+    this.drawLetterheadLetter(letter)
+    this.drawRecipientSection(letter)
+    this.drawCenteredUnderlinedTitle(letter.financial_year)
+    this.drawAmountTable(letter, addOns)
+    await this.drawBankDetails(letter)
+    this.drawFooter('Authorized Signature')
+
+    const pdfBytes = await this.pdfDoc.save()
+    const pdfDir = path.join(app.getPath('userData'), 'maintenance-letters')
+    
+    try {
+      if (!fs.existsSync(pdfDir)) {
+        fs.mkdirSync(pdfDir, { recursive: true })
+      }
+    } catch (error) {
+      throw new Error('Unable to create PDF output directory')
+    }
+
+    const fileName = `MaintenanceLetter_${letter.id}.pdf`
+    const filePath = path.join(pdfDir, fileName)
+    
+    try {
+      fs.writeFileSync(filePath, pdfBytes)
+    } catch (error) {
+      throw new Error('Unable to save PDF file')
+    }
+
+    dbService.run('UPDATE maintenance_letters SET pdf_path = ? WHERE id = ?', [filePath, id])
+
+    return filePath
+  }
+
+  public getAddOns(letterId: number): LetterAddOn[] {
+    return dbService.query<LetterAddOn>('SELECT * FROM add_ons WHERE letter_id = ?', [letterId])
+  }
+
+  public getAllAddOns(): LetterAddOn[] {
+    return dbService.query<LetterAddOn>('SELECT * FROM add_ons')
+  }
+
+  public addAddOn(params: {
+    unit_id: number
+    financial_year: string
+    addon_name: string
+    addon_amount: number
+    remarks?: string
+  }): boolean {
+    return dbService.transaction(() => {
+      const letter = dbService.get<{ id: number; final_amount: number }>(
+        'SELECT id, final_amount FROM maintenance_letters WHERE unit_id = ? AND financial_year = ?',
+        [params.unit_id, params.financial_year]
+      )
+      if (!letter) return false
+      
+      dbService.run(
+        'INSERT INTO add_ons (letter_id, addon_name, addon_amount, remarks) VALUES (?, ?, ?, ?)',
+        [letter.id, params.addon_name, params.addon_amount, params.remarks]
+      )
+      
+      const newFinalAmount = letter.final_amount + params.addon_amount
+      dbService.run('UPDATE maintenance_letters SET final_amount = ? WHERE id = ?', [newFinalAmount, letter.id])
+      
+      return true
+    })
+  }
+
+  public deleteAddOn(id: number): boolean {
+    return dbService.transaction(() => {
+      const addon = dbService.get<{ letter_id: number; addon_amount: number }>(
+        'SELECT letter_id, addon_amount FROM add_ons WHERE id = ?',
+        [id]
+      )
+      if (!addon) return false
+      
+      const result = dbService.run('DELETE FROM add_ons WHERE id = ?', [id])
+      
+      if (result.changes > 0) {
+        const letter = dbService.get<{ final_amount: number }>(
+          'SELECT final_amount FROM maintenance_letters WHERE id = ?',
+          [addon.letter_id]
+        )
+        if (letter) {
+          const newFinalAmount = letter.final_amount - addon.addon_amount
+          dbService.run('UPDATE maintenance_letters SET final_amount = ? WHERE id = ?', [newFinalAmount, addon.letter_id])
+        }
+        return true
+      }
+      return false
+    })
   }
 
   public createBatch(
@@ -199,7 +301,6 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
           if (existingLetter) {
             skippedUnits.push(unitId)
-            console.warn(`Skipping unit ${unitId}: Maintenance letter already exists for financial year ${financialYear}`)
             continue
           }
 
@@ -237,14 +338,14 @@ class MaintenanceLetterService extends BasePDFGenerator {
           // 1. Current Year Maintenance (Base)
           const baseAmount = unit.area_sqft * rate.rate_per_sqft
 
-          // 2. GST on base maintenance (from rate config — e.g. 18% for Banjara Hills from 2021-22)
+          // 2. GST on base maintenance (from rate config)
           const gstPercent = rate.gst_percent || 0
           const gstAmount = gstPercent > 0 ? Math.round(baseAmount * gstPercent) / 100 : 0
 
           // 3. Manual Add-ons from the UI (unit-specific)
           const addOnsTotal = addOns?.reduce((sum, addon) => sum + addon.addon_amount, 0) || 0
 
-          // 4. Arrears — sum of genuinely unpaid prior-year letters (payments minus letter final)
+          // 4. Arrears — sum of genuinely unpaid prior-year letters
           const previousLetters = dbService.query<{ final_amount: number; id: number }>(
             `SELECT id, final_amount FROM maintenance_letters
              WHERE unit_id = ? AND financial_year < ? ORDER BY financial_year ASC`,
@@ -261,14 +362,12 @@ class MaintenanceLetterService extends BasePDFGenerator {
               )?.total || 0
             const outstanding = Math.max(0, prev.final_amount - paid)
             if (outstanding > 0.01) {
-              // Penalty only if configured > 0
               const penaltyPct = chargesConfig.penalty_percentage || 0
               totalArrears += outstanding + outstanding * (penaltyPct / 100)
             }
           }
 
           // 5. Determine early-payment discount from slabs (if any)
-          // Use the slab whose due_date matches or is nearest to the billing due date
           let discountAmount = 0
           const slabs = dbService.query<{
             due_date: string
@@ -281,19 +380,18 @@ class MaintenanceLetterService extends BasePDFGenerator {
           )
           const earlySlabs = slabs.filter((s) => s.is_early_payment && s.discount_percentage > 0)
           if (earlySlabs.length > 0) {
-            // Store as letter.discount_amount — the best early-payment discount
             const bestSlab = earlySlabs[0]
             discountAmount = baseAmount * (bestSlab.discount_percentage / 100)
           }
 
-          // Final amount = sum of all charges — discount is stored separately, not subtracted yet
-          const finalAmount = baseAmount + gstAmount + addOnsTotal + totalArrears
+          // Final amount = sum of all charges minus discount
+          const finalAmount = baseAmount + gstAmount + addOnsTotal + totalArrears - discountAmount
 
           const result = dbService.run(
             `INSERT INTO maintenance_letters (
               project_id, unit_id, financial_year, base_amount,
-              arrears, discount_amount, final_amount, due_date, status, generated_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+              arrears, discount_amount, final_amount, due_date, status, generated_date, is_paid, is_sent
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               projectId,
               unitId,
@@ -304,7 +402,9 @@ class MaintenanceLetterService extends BasePDFGenerator {
               finalAmount,
               dueDate,
               'Generated',
-              letterDate
+              letterDate,
+              false,
+              false
             ]
           )
 
@@ -328,384 +428,127 @@ class MaintenanceLetterService extends BasePDFGenerator {
               )
             }
           }
-
-          // Add-ons are stored as individual rows above
-          // so each line item appears transparently in the PDF
         }
 
-        // Log summary
         if (skippedUnits.length > 0) {
-          console.log(`Created ${createdLetters.length} letters, skipped ${skippedUnits.length} units (already exist)`)
+          return createdLetters.length > 0
         } else {
-          console.log(`Successfully created ${createdLetters.length} maintenance letters`)
+          return createdLetters.length > 0
         }
-
-        return createdLetters.length > 0
       } catch (error) {
-        console.error('Error creating maintenance letters:', error)
         throw error
       }
     })
   }
 
   public update(id: number, updates: Partial<MaintenanceLetter>): boolean {
-    console.log('[UPDATE LETTER] Called with:', { id, updates })
+    const allowedFields = ['base_amount', 'arrears', 'discount_amount', 'final_amount', 'due_date', 'status', 'is_paid', 'is_sent']
+    const fields: string[] = []
+    const values: unknown[] = []
     
-    const allowedColumns = [
-      'due_date',
-      'status',
-      'generated_date',
-      'pdf_path'
-    ]
-    
-    const keys = Object.keys(updates).filter(
-      (key) => allowedColumns.includes(key) && key !== 'id'
-    )
-
-    console.log('[UPDATE LETTER] Filtered keys:', keys)
-
-    if (keys.length === 0) {
-      console.log('[UPDATE LETTER] No valid keys to update')
-      return false
+    for (const [key, value] of Object.entries(updates)) {
+      if (allowedFields.includes(key) && value !== undefined) {
+        fields.push(`${key} = ?`)
+        values.push(value)
+      }
     }
-
-    const fields = keys.map((key) => `${key} = ?`).join(', ')
-    // Fix: Properly extract values from updates object
-    const values = keys.map((key) => {
-      const value = (updates as any)[key]
-      console.log(`[UPDATE LETTER] Key ${key}:`, value)
-      return value
-    })
-
-    console.log('[UPDATE LETTER] SQL:', `UPDATE maintenance_letters SET ${fields} WHERE id = ?`)
-    console.log('[UPDATE LETTER] Values:', [...values, id])
-
-    const result = dbService.run(`UPDATE maintenance_letters SET ${fields} WHERE id = ?`, [
-      ...values,
-      id
-    ])
     
-    console.log('[UPDATE LETTER] Result:', { changes: result.changes, success: result.changes > 0 })
+    if (fields.length === 0) return false
+    
+    values.push(id)
+    const result = dbService.run(
+      `UPDATE maintenance_letters SET ${fields.join(', ')} WHERE id = ?`,
+      values
+    )
     return result.changes > 0
   }
 
   public delete(id: number): boolean {
-    return dbService.transaction(() => {
-      try {
-        const result = dbService.run('DELETE FROM maintenance_letters WHERE id = ?', [id])
-        return result.changes > 0
-      } catch (error) {
-        console.error(`Error deleting maintenance letter ${id}:`, error)
-        throw error
-      }
-    })
+    const result = dbService.run('DELETE FROM maintenance_letters WHERE id = ?', [id])
+    return result.changes > 0
   }
 
   public bulkDelete(ids: number[]): boolean {
-    return dbService.transaction(() => {
-      let allDeleted = true
-      for (const id of ids) {
-        if (!this.delete(id)) {
-          allDeleted = false
-        }
-      }
-      return allDeleted
-    })
+    const placeholders = ids.map(() => '?').join(',')
+    const result = dbService.run(`DELETE FROM maintenance_letters WHERE id IN (${placeholders})`, ids)
+    return result.changes > 0
   }
 
-  public async generatePdf(id: number): Promise<string> {
-    const letter = this.getById(id)
-    if (!letter) throw new Error('Maintenance letter not found')
-
-    // Validate required bank details before generation
-    // Prefer sector-specific bank details when present, fall back to project defaults
-    const hasSectorBank = !!(letter.sector_account_name || letter.sector_account_no || letter.sector_bank_name)
-    const effectiveAccountName = hasSectorBank ? letter.sector_account_name : letter.account_name
-    const effectiveAccountNo = hasSectorBank ? letter.sector_account_no : letter.account_no
-    const effectiveBankName = hasSectorBank ? letter.sector_bank_name : letter.bank_name
-    const effectiveIfsc = hasSectorBank ? letter.sector_ifsc_code : letter.ifsc_code
-
-    // Check required bank details (QR is optional)
-    const missingBankDetails: string[] = []
-    if (!effectiveAccountName || String(effectiveAccountName).trim() === '') {
-      missingBankDetails.push('Account Name')
-    }
-    if (!effectiveAccountNo || String(effectiveAccountNo).trim() === '') {
-      missingBankDetails.push('Account Number')
-    }
-    if (!effectiveBankName || String(effectiveBankName).trim() === '') {
-      missingBankDetails.push('Bank Name')
-    }
-    if (!effectiveIfsc || String(effectiveIfsc).trim() === '') {
-      missingBankDetails.push('IFSC Code')
-    }
-
-    if (missingBankDetails.length > 0) {
-      throw new Error(
-        `Cannot generate PDF: Missing required bank details: ${missingBankDetails.join(', ')}. ` +
-        `Please configure bank details in Project Settings first.`
-      )
-    }
-
-    // Get add-ons for this letter
-    const addOns = this.getAddOns(id)
-
-    await this.initializePDF()
-
-    // Letterhead
-    this.drawLetterheadLetter(letter)
-
-    // Letter details
-    this.layout.currentY -= 20
-    this.page.drawText(`Financial Year: ${letter.financial_year}`, {
-      x: this.MARGIN,
-      y: this.layout.currentY,
-      size: 10,
-      font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
-    })
-    this.page.drawText(`Due Date: ${this.formatDate(letter.due_date || '')}`, {
-      x: this.layout.width - this.MARGIN - 120,
-      y: this.layout.currentY,
-      size: 10,
-      font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
-    })
-
-    // Recipient section
-    this.layout.currentY -= 40
-    this.drawRecipientSection(letter)
-
-    // Subject line
-    this.layout.currentY -= 30
-    this.drawSectionHeader('Maintenance Demand Notice')
-
-    // Amount details table
-    this.layout.currentY -= 20
-    this.drawAmountTable(letter, addOns)
-
-    // Payment details
-    this.layout.currentY -= 40
-    this.drawPaymentDetails(letter)
-
-    // Bank details
-    this.layout.currentY -= 40
-    await this.drawBankDetails(letter)
-
-    // Footer
-    this.drawFooter('Authorized Signature')
-
-    const pdfBytes = await this.pdfDoc.save()
-    const pdfDir = path.join(app.getPath('userData'), 'maintenance-letters')
-    
-    try {
-      if (!fs.existsSync(pdfDir)) {
-        fs.mkdirSync(pdfDir, { recursive: true })
-      }
-    } catch (error) {
-      console.error('Failed to create PDF directory:', error)
-      throw new Error('Unable to create PDF output directory')
-    }
-
-    const fileName = `MaintenanceLetter_${letter.id}.pdf`
-    const filePath = path.join(pdfDir, fileName)
-    
-    try {
-      fs.writeFileSync(filePath, pdfBytes)
-    } catch (error) {
-      console.error('Failed to write PDF file:', error)
-      throw new Error('Unable to save PDF file')
-    }
-
-    // Update PDF path in database
-    dbService.run('UPDATE maintenance_letters SET pdf_path = ? WHERE id = ?', [filePath, id])
-
-    return filePath
-  }
-
-  public getAddOns(letterId: number): LetterAddOn[] {
-    return dbService.query<LetterAddOn>('SELECT * FROM add_ons WHERE letter_id = ?', [letterId])
-  }
-
-  public getAllAddOns(): LetterAddOn[] {
-    return dbService.query<LetterAddOn>('SELECT * FROM add_ons')
-  }
-
-  public addAddOn(params: {
-    unit_id: number
-    financial_year: string
-    addon_name: string
-    addon_amount: number
-    remarks?: string
-  }): boolean {
-    return dbService.transaction(() => {
-      // Find the letter for this unit and financial year
-      const letter = dbService.get<{ id: number; final_amount: number }>(
-        'SELECT id, final_amount FROM maintenance_letters WHERE unit_id = ? AND financial_year = ?',
-        [params.unit_id, params.financial_year]
-      )
-
-      if (!letter) {
-        throw new Error('Maintenance letter not found for the specified unit and financial year')
-      }
-
-      // Add the add-on
-      dbService.run(
-        `
-        INSERT INTO add_ons (letter_id, addon_name, addon_amount, remarks)
-        VALUES (?, ?, ?, ?)
-      `,
-        [letter.id, params.addon_name, params.addon_amount, params.remarks]
-      )
-
-      // Update the final amount
-      const newFinalAmount = letter.final_amount + params.addon_amount
-      dbService.run('UPDATE maintenance_letters SET final_amount = ? WHERE id = ?', [
-        newFinalAmount,
-        letter.id
-      ])
-
-      return true
-    })
-  }
-
-  public deleteAddOn(id: number): boolean {
-    return dbService.transaction(() => {
-      // Get the add-on details before deletion
-      const addon = dbService.get<{ letter_id: number; addon_amount: number }>(
-        'SELECT letter_id, addon_amount FROM add_ons WHERE id = ?',
-        [id]
-      )
-
-      if (!addon) {
-        throw new Error('Add-on not found')
-      }
-
-      // Delete the add-on
-      const result = dbService.run('DELETE FROM add_ons WHERE id = ?', [id])
-
-      if (result.changes > 0) {
-        // Update the letter's final amount
-        dbService.run(
-          `
-          UPDATE maintenance_letters 
-          SET final_amount = final_amount - ? 
-          WHERE id = ?
-        `,
-          [addon.addon_amount, addon.letter_id]
-        )
-      }
-
-      return result.changes > 0
-    })
-  }
-
-  /**
-   * Wrap text to fit within specified line length
-   */
-  private wrapText(text: string, maxLength: number): string[] {
-    if (text.length <= maxLength) {
-      return [text]
-    }
-
-    const words = text.split(' ')
-    const lines: string[] = []
-    let currentLine = ''
-
-    for (const word of words) {
-      if ((currentLine + ' ' + word).length <= maxLength) {
-        currentLine = currentLine ? currentLine + ' ' + word : word
-      } else {
-        if (currentLine) {
-          lines.push(currentLine)
-          currentLine = word
-        } else {
-          // Word is longer than max length, split it
-          for (let i = 0; i < word.length; i += maxLength) {
-            lines.push(word.substring(i, i + maxLength))
-          }
-        }
-      }
-    }
-
-    if (currentLine) {
-      lines.push(currentLine)
-    }
-
-    return lines
+  public getLetterIdByProjectUnitAndYear(
+    projectId: number,
+    unitId: number,
+    financialYear: string
+  ): number | undefined {
+    const result = dbService.get<{ id: number }>(
+      'SELECT id FROM maintenance_letters WHERE project_id = ? AND unit_id = ? AND financial_year = ?',
+      [projectId, unitId, financialYear]
+    )
+    return result?.id
   }
 
   protected drawLetterheadLetter(letter: MaintenanceLetter): void {
-    // Get project details for dynamic heading
     const project = dbService.get<{ 
       name: string; 
       address?: string; 
       city?: string; 
       state?: string;
+      registration_no?: string;
     }>(
-      'SELECT name, address, city, state FROM projects WHERE id = ?',
+      'SELECT name, address, city, state, registration_no FROM projects WHERE id = ?',
       [letter.project_id]
     )
 
-    // Society name with period and sectors (like your sample)
     const societyName = project?.name || 'Society'
-    const financialYear = letter.financial_year
-    const [startYear, endYear] = financialYear.split('-')
-    const period = `${this.getMonthName(startYear)} ${startYear} – ${this.getMonthName(endYear)} ${endYear}`
     
-    this.page.drawText(societyName.toUpperCase(), {
-      x: this.MARGIN,
+    this.page.drawText(societyName, {
+      x: this.MARGIN + 50,
       y: this.layout.currentY,
-      size: 18,
+      size: 28,
       font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
+      color: rgb(0.2, 0.5, 0.3)
     })
 
-    this.layout.currentY -= 20
+    this.layout.currentY -= 35
     
-    // Period information (like your sample)
-    this.page.drawText(`This is a Maintenance Letter for the period of ${period}`, {
+    const sectorCode = letter.sector_code ? `Sector "${letter.sector_code}"` : 'Sector "A"'
+    this.page.drawText(`${sectorCode} Plot Owners Co-operative Housing Society Ltd.`, {
       x: this.MARGIN,
       y: this.layout.currentY,
-      size: 12,
-      font: this.fonts.regular,
+      size: 11,
+      font: this.fonts.bold,
       color: this.COLORS.TEXT
     })
 
-    this.layout.currentY -= 20
+    this.layout.currentY -= 15
     
-    // Site address
+    const regNo = project?.registration_no || ''
+    if (regNo) {
+      this.page.drawText(`Regd No: ${regNo}`, {
+        x: this.MARGIN,
+        y: this.layout.currentY,
+        size: 9,
+        font: this.fonts.regular,
+        color: this.COLORS.TEXT
+      })
+
+      this.layout.currentY -= 12
+    }
+    
+    this.page.drawText('(Registered under The Maharashtra Co-operative Societies Act 1960)', {
+      x: this.MARGIN,
+      y: this.layout.currentY,
+      size: 8,
+      font: this.fonts.italic,
+      color: this.COLORS.GRAY
+    })
+
+    this.layout.currentY -= 15
+    
     if (project?.address) {
       const cityState = [project.city, project.state].filter(Boolean).join(', ')
       const fullAddress = cityState ? `${project.address}, ${cityState}` : project.address
       
-      // Split long address into multiple lines
-      const maxLineLength = 60
-      const addressLines = this.wrapText(fullAddress, maxLineLength)
-      
-      addressLines.forEach((line) => {
-        this.page.drawText(line, {
-          x: this.MARGIN,
-          y: this.layout.currentY,
-          size: 10,
-          font: this.fonts.regular,
-          color: this.COLORS.TEXT
-        })
-        this.layout.currentY -= 12
-      })
-    } else {
-      // no address — skip fallback subtitle, just move down
-      this.layout.currentY -= 12
-    }
-
-    this.layout.currentY -= 10
-    const contactInfo = this.getProjectContactInfo(letter.project_id)
-    const contactParts = [
-      contactInfo.email ? `Email: ${contactInfo.email}` : null,
-      contactInfo.phone ? `Phone: ${contactInfo.phone}` : null
-    ].filter(Boolean)
-    if (contactParts.length > 0) {
-      this.page.drawText(contactParts.join(' | '), {
+      this.page.drawText(fullAddress, {
         x: this.MARGIN,
         y: this.layout.currentY,
         size: 9,
@@ -714,41 +557,90 @@ class MaintenanceLetterService extends BasePDFGenerator {
       })
     }
 
-    this.drawDivider()
+    this.layout.currentY -= 15
+    this.page.drawLine({
+      start: { x: this.MARGIN, y: this.layout.currentY },
+      end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY },
+      thickness: 1,
+      color: this.COLORS.BORDER
+    })
+
+    this.layout.currentY -= 25
   }
 
-  /**
-   * Get month name from financial year month
-   */
-  private getMonthName(month: string): string {
-    const months: { [key: string]: string } = {
-      '01': 'January', '02': 'February', '03': 'March', '04': 'April',
-      '05': 'May', '06': 'June', '07': 'July', '08': 'August',
-      '09': 'September', '10': 'October', '11': 'November', '12': 'December'
+  private drawCenteredUnderlinedTitle(financialYear: string): void {
+    if (!financialYear || !financialYear.includes('-')) {
+      this.layout.currentY -= 25
+      return
     }
-    return months[month] || 'April'
+    
+    const [startYear, endYearShort] = financialYear.split('-')
+    if (!startYear || !endYearShort) {
+      this.layout.currentY -= 25
+      return
+    }
+    
+    const endYear = endYearShort.length === 2 ? startYear.slice(0, 2) + endYearShort : startYear
+    const titleText = `MAINTENANCE LETTER FOR APRIL ${startYear} – MARCH ${endYear}`
+    
+    const titleWidth = this.fonts.bold.widthOfTextAtSize(titleText, 12)
+    const titleX = (this.layout.width - titleWidth) / 2
+    
+    this.page.drawText(titleText, {
+      x: titleX,
+      y: this.layout.currentY,
+      size: 12,
+      font: this.fonts.bold,
+      color: this.COLORS.TEXT
+    })
+    
+    this.page.drawLine({
+      start: { x: titleX, y: this.layout.currentY - 3 },
+      end: { x: titleX + titleWidth, y: this.layout.currentY - 3 },
+      thickness: 1,
+      color: this.COLORS.TEXT
+    })
+    
+    this.layout.currentY -= 25
   }
 
   protected drawRecipientSection(letter: MaintenanceLetter): void {
-    // Get unit details with more information
     const unit = dbService.get<{
       unit_number: string;
       owner_name: string;
-      contact_number?: string;
-      email?: string;
       area_sqft?: number;
       sector_code?: string;
+      unit_type?: string;
     }>(
-      'SELECT unit_number, owner_name, contact_number, email, area_sqft, sector_code FROM units WHERE id = ?',
+      'SELECT unit_number, owner_name, area_sqft, sector_code, unit_type FROM units WHERE id = ?',
       [letter.unit_id]
     )
 
-    // Format like your sample: "The letter is addressed to [Owners] for plot [Unit]"
     const owners = letter.owner_name || unit?.owner_name || 'N/A'
-    const plotNumber = letter.unit_number || unit?.unit_number || 'N/A'
-    const sector = unit?.sector_code ? `Sector "${unit.sector_code}"` : ''
+    const plotNumber = letter.unit_number || unit?.unit_number || '01'
+    const sector = unit?.sector_code || 'A'
+    const unitType = unit?.unit_type || 'Plot'
+
+    const unitDisplay = unitType === 'BMF' 
+      ? `BMF-${plotNumber}` 
+      : unitType === 'Bungalow' 
+        ? `B-${plotNumber}` 
+        : `${unitType.substring(0, 1)}-${plotNumber}`
+
+    const today = new Date()
+    const dateStr = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    const dateWidth = this.fonts.regular.widthOfTextAtSize(dateStr, 11)
+    this.page.drawText(dateStr, {
+      x: this.layout.width - this.MARGIN - dateWidth,
+      y: this.layout.currentY,
+      size: 11,
+      font: this.fonts.regular,
+      color: this.COLORS.TEXT
+    })
+
+    this.layout.currentY -= 40
     
-    this.page.drawText(`The letter is addressed to ${owners} for plot ${plotNumber}${sector ? ` from ${sector}` : ''}.`, {
+    this.page.drawText('To,', {
       x: this.MARGIN,
       y: this.layout.currentY,
       size: 11,
@@ -756,95 +648,234 @@ class MaintenanceLetterService extends BasePDFGenerator {
       color: this.COLORS.TEXT
     })
 
-    this.layout.currentY -= 25
+    this.layout.currentY -= 20
     
-    // Add plot area information
-    const plotArea = unit?.area_sqft || 0
-    this.page.drawText(`Payment Breakdown`, {
+    this.page.drawText(owners, {
       x: this.MARGIN,
       y: this.layout.currentY,
-      size: 12,
+      size: 11,
       font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
+      color: this.COLORS.TEXT
     })
 
-    this.layout.currentY -= 20
-    this.page.drawText(`The maintenance fees are calculated based on a plot area of ${plotArea.toLocaleString()} Sqft.`, {
+    const sectorBoxWidth = 35
+    const unitBoxWidth = 55  // Wider box for longer unit identifiers like "BMF-011"
+    const boxHeight = 25
+    const boxGap = 5
+    const boxY = this.layout.currentY - 5
+    const startX = this.layout.width - this.MARGIN - (sectorBoxWidth + unitBoxWidth + boxGap)
+    
+    // Sector box
+    this.page.drawRectangle({
+      x: startX,
+      y: boxY,
+      width: sectorBoxWidth,
+      height: boxHeight,
+      borderColor: this.COLORS.BORDER,
+      borderWidth: 1
+    })
+    const sectorTextWidth = this.fonts.bold.widthOfTextAtSize(sector, 12)
+    // Truncate sector if too long
+    let displaySector = sector
+    if (sectorTextWidth > sectorBoxWidth - 6) {
+      displaySector = sector.substring(0, 2)
+    }
+    const finalSectorWidth = this.fonts.bold.widthOfTextAtSize(displaySector, 12)
+    this.page.drawText(displaySector, {
+      x: startX + (sectorBoxWidth - finalSectorWidth) / 2,
+      y: boxY + 8,
+      size: 12,
+      font: this.fonts.bold,
+      color: this.COLORS.TEXT
+    })
+    
+    // Unit display box
+    this.page.drawRectangle({
+      x: startX + sectorBoxWidth + boxGap,
+      y: boxY,
+      width: unitBoxWidth,
+      height: boxHeight,
+      borderColor: this.COLORS.BORDER,
+      borderWidth: 1
+    })
+    
+    // Handle text that might be too wide for the box
+    let displayUnitText = unitDisplay
+    let unitTextWidth = this.fonts.bold.widthOfTextAtSize(displayUnitText, 12)
+    
+    // If text is too wide, try smaller font or truncate
+    let unitFontSize = 12
+    if (unitTextWidth > unitBoxWidth - 8) {
+      // Try smaller font first
+      unitFontSize = 10
+      unitTextWidth = this.fonts.bold.widthOfTextAtSize(displayUnitText, unitFontSize)
+      
+      // If still too wide, truncate with ellipsis
+      if (unitTextWidth > unitBoxWidth - 8) {
+        const avgCharWidth = unitFontSize * 0.6
+        const maxChars = Math.floor((unitBoxWidth - 8) / avgCharWidth)
+        if (displayUnitText.length > maxChars) {
+          displayUnitText = displayUnitText.substring(0, maxChars - 2) + '..'
+          unitTextWidth = this.fonts.bold.widthOfTextAtSize(displayUnitText, unitFontSize)
+        }
+      }
+    }
+    
+    this.page.drawText(displayUnitText, {
+      x: startX + sectorBoxWidth + boxGap + (unitBoxWidth - unitTextWidth) / 2,
+      y: boxY + 8 + (12 - unitFontSize) / 2,  // Adjust Y for smaller font
+      size: unitFontSize,
+      font: this.fonts.bold,
+      color: this.COLORS.TEXT
+    })
+
+    this.layout.currentY -= 45
+    
+    this.page.drawText('Respected Sir / Madam,', {
       x: this.MARGIN,
       y: this.layout.currentY,
-      size: 10,
+      size: 11,
       font: this.fonts.regular,
       color: this.COLORS.TEXT
     })
 
-    this.layout.currentY -= 35
+    this.layout.currentY -= 50
   }
 
   private drawAmountTable(letter: MaintenanceLetter, addOns: LetterAddOn[]): void {
-    // Get maintenance rate with penalty_percentage — respect unit_type
-    const rate =
-      dbService.get<{ rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
+    // Get unit details first
+    const unit = dbService.get<{ area_sqft: number; unit_type: string }>(
+      'SELECT area_sqft, unit_type FROM units WHERE id = ?',
+      [letter.unit_id]
+    )
+    
+    // Validate plot area
+    if (!unit?.area_sqft || unit.area_sqft <= 0) {
+      throw new Error(`Invalid plot area (${unit?.area_sqft || 0}) for unit. Please check unit configuration.`)
+    }
+    
+    const plotArea = unit.area_sqft
+    const rawUnitType = unit.unit_type || 'Plot'
+    const normalizedUnitType = this.normalizeUnitType(rawUnitType)
+
+    // Validate financial year format
+    const financialYearRegex = /^\d{4}-\d{2,4}$/
+    if (!letter.financial_year || !financialYearRegex.test(letter.financial_year)) {
+      throw new Error(`Invalid financial year format: ${letter.financial_year}. Expected format: YYYY-YY or YYYY-YYYY`)
+    }
+
+    // Try to find rate - first with normalized unit type (e.g., "Plot")
+    let rate = dbService.get<{ rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
+      `SELECT rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent, penalty_percentage
+       FROM maintenance_rates
+       WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
+      [letter.project_id, letter.financial_year, normalizedUnitType]
+    )
+
+    // If not found, try with raw unit type from database (as-is)
+    if (!rate && rawUnitType !== normalizedUnitType) {
+      rate = dbService.get<{ rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
         `SELECT rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent, penalty_percentage
          FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND unit_type = (
-           SELECT unit_type FROM units WHERE id = ?
-         )`,
-        [letter.project_id, letter.financial_year, letter.unit_id]
-      ) ||
-      dbService.get<{ rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
+         WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
+        [letter.project_id, letter.financial_year, rawUnitType]
+      )
+    }
+
+    // Fallback to 'All' or NULL unit_type
+    if (!rate) {
+      rate = dbService.get<{ rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
         `SELECT rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent, penalty_percentage
          FROM maintenance_rates
          WHERE project_id = ? AND financial_year = ?
-           AND (unit_type = 'All' OR unit_type IS NULL)`,
+           AND (unit_type = 'All' OR unit_type IS NULL)
+         LIMIT 1`,
         [letter.project_id, letter.financial_year]
       )
+    }
 
-    const ratePerSqft = rate?.rate_per_sqft || 0
+    // LAST RESORT: Calculate rate from stored letter base_amount if available
+    let calculatedRatePerSqft = 0
+    if (!rate && letter.base_amount && letter.base_amount > 0 && plotArea > 0) {
+      calculatedRatePerSqft = letter.base_amount / plotArea
+    }
 
-    // Get unit area
-    const unit = dbService.get<{ area_sqft: number }>(
-      'SELECT area_sqft FROM units WHERE id = ?',
-      [letter.unit_id]
-    )
-    const plotArea = unit?.area_sqft || 0
+    // STRICT VALIDATION: Must have a valid rate or calculated fallback
+    const effectiveRatePerSqft = rate?.rate_per_sqft || calculatedRatePerSqft
+    if (!effectiveRatePerSqft || effectiveRatePerSqft <= 0) {
+      throw new Error(
+        `No valid maintenance rate found for project ${letter.project_id}, ` +
+        `financial year ${letter.financial_year}, unit type ${normalizedUnitType}. ` +
+        `Please configure maintenance rates in Project Settings.`
+      )
+    }
 
-    // Calculate base maintenance amount
-    const baseAmount = plotArea * ratePerSqft
+    const ratePerSqft = effectiveRatePerSqft
 
-    // Get effective penalty and discount percentages
-    // Priority: 1. maintenance_rates.penalty_percentage, 2. project_charges_config.penalty_percentage, 3. default 21%
+    // Base amount calculation (uses stored value if available)
+    const calculatedBaseAmount = plotArea * ratePerSqft
+    const baseAmount = letter.base_amount && letter.base_amount > 0 
+      ? letter.base_amount 
+      : calculatedBaseAmount
+
     const chargesConfig = projectService.getChargesConfig(letter.project_id)
     const penaltyPercentage = rate?.penalty_percentage ?? chargesConfig?.penalty_percentage ?? 21
     const discountPercentage = chargesConfig?.early_payment_discount_percentage ?? 10
 
-    // Calculate penalty and discount amounts (applied only to base maintenance)
+    const naTaxRate = chargesConfig?.na_tax_rate_per_sqft ?? 0.09
+    const naTaxAmount = plotArea * naTaxRate
+
+    const solarContribution = chargesConfig?.solar_contribution ?? 0
+    const cableCharges = chargesConfig?.cable_charges ?? 0
+    
+    // Calculate GST from rate for display
+    const gstPercent = rate?.gst_percent ?? 0
+    const gstAmount = gstPercent > 0 ? Math.round(baseAmount * gstPercent) / 100 : 0
+
     const penaltyAmount = baseAmount * (penaltyPercentage / 100)
     const discountAmount = baseAmount * (discountPercentage / 100)
 
-    // Calculate Before and After amounts for base maintenance
     const beforeAmount = baseAmount - discountAmount
     const afterAmount = baseAmount + penaltyAmount
 
-    // Due date for column headers
-    const dueDateFormatted = letter.due_date ? this.formatDate(letter.due_date) : 'Due Date'
+    const dueDate = letter.due_date ? new Date(letter.due_date) : new Date()
+    const day = dueDate.getDate()
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                       'July', 'August', 'September', 'October', 'November', 'December']
+    const monthName = monthNames[dueDate.getMonth()]
+    const year = dueDate.getFullYear()
+    
+    const getDaySuffix = (d: number): string => {
+      if (d % 100 >= 11 && d % 100 <= 13) return 'th'
+      switch (d % 10) {
+        case 1: return 'st'
+        case 2: return 'nd'
+        case 3: return 'rd'
+        default: return 'th'
+      }
+    }
+    const dueDateFormatted = `${day}${getDaySuffix(day)} ${monthName} ${year}`
 
-    // 8-column headers with dynamic penalty/discount percentages
+    const finYear = letter.financial_year || ''
+    const yearMatch = finYear.match(/(\d{4})/g)
+    const finYearDisplay = yearMatch ? yearMatch.join('-') : finYear
+
     const headers = [
       'Particulars',
-      'Plot Area (Sqft)',
-      'Rate per year / per sqft',
-      'Amount (Rs.)',
-      `${penaltyPercentage}% Penalty`,
-      `Discount ${discountPercentage}%`,
-      `Before ${dueDateFormatted}`,
-      `After ${dueDateFormatted}`
+      'Plot Area\nSqft',
+      'Rate per year\n/ persqft',
+      'Amount',
+      `${penaltyPercentage}%\nPenalty`,
+      `Discount\n${discountPercentage}%`,
+      `Before ${finYearDisplay}`,
+      `After ${finYearDisplay}`
     ]
 
     const rows: string[][] = []
+    const rowTypes: Array<'normal' | 'yellow' | 'orange'> = []
 
-    // Base maintenance row (all 8 columns populated)
     rows.push([
-      `Current Maintenance\n@ Rs. ${ratePerSqft.toFixed(2)} / sqft`,
+      `Current ${letter.financial_year}`,
       plotArea.toLocaleString('en-IN'),
       `Rs. ${ratePerSqft.toFixed(2)}`,
       this.formatCurrency(baseAmount),
@@ -853,137 +884,361 @@ class MaintenanceLetterService extends BasePDFGenerator {
       this.formatCurrency(beforeAmount),
       this.formatCurrency(afterAmount)
     ])
+    rowTypes.push('normal')
 
-    // All add-ons (penalty/discount columns blank, Before/After same as Amount)
+    // Add GST row if applicable
+    if (gstAmount > 0) {
+      rows.push([
+        `GST (${gstPercent}%)`,
+        '',
+        '',
+        this.formatCurrency(gstAmount),
+        '',
+        '',
+        this.formatCurrency(gstAmount),
+        this.formatCurrency(gstAmount)
+      ])
+      rowTypes.push('normal')
+    }
+
+    if (naTaxAmount > 0) {
+      rows.push([
+        `N.A Tax ${letter.financial_year}`,
+        '',
+        `Rs. ${naTaxRate.toFixed(2)}`,
+        this.formatCurrency(naTaxAmount),
+        '',
+        '',
+        this.formatCurrency(naTaxAmount),
+        this.formatCurrency(naTaxAmount)
+      ])
+      rowTypes.push('normal')
+    }
+
+    if (solarContribution > 0) {
+      rows.push([
+        'Solar Contribution as per AGM',
+        '',
+        '',
+        this.formatCurrency(solarContribution),
+        '',
+        '',
+        this.formatCurrency(solarContribution),
+        this.formatCurrency(solarContribution)
+      ])
+      rowTypes.push('normal')
+    }
+
+    if (cableCharges > 0) {
+      rows.push([
+        'Cable laying for motor Pump',
+        '',
+        '',
+        this.formatCurrency(cableCharges),
+        '',
+        '',
+        this.formatCurrency(cableCharges),
+        this.formatCurrency(cableCharges)
+      ])
+      rowTypes.push('normal')
+    }
+
     for (const addon of addOns) {
       if (addon.addon_amount > 0) {
         rows.push([
           addon.addon_name,
-          '',  // Blank for add-ons
-          '',  // Blank for add-ons
+          '',
+          '',
           this.formatCurrency(addon.addon_amount),
-          '',  // Blank - no penalty on add-ons
-          '',  // Blank - no discount on add-ons
-          this.formatCurrency(addon.addon_amount),  // Same as amount
-          this.formatCurrency(addon.addon_amount)   // Same as amount
+          '',
+          '',
+          this.formatCurrency(addon.addon_amount),
+          this.formatCurrency(addon.addon_amount)
         ])
+        rowTypes.push('normal')
       }
     }
 
-    // Arrears (penalty/discount columns blank, Before/After same as Amount)
-    if (letter.arrears && letter.arrears > 0) {
-      rows.push([
-        'Arrears (Previous Outstanding)',
-        '',  // Blank for arrears
-        '',  // Blank for arrears
-        this.formatCurrency(letter.arrears),
-        '',  // Blank - no penalty on arrears
-        '',  // Blank - no discount on arrears
-        this.formatCurrency(letter.arrears),  // Same as amount
-        this.formatCurrency(letter.arrears)   // Same as amount
-      ])
-    }
-
-    // Calculate totals for Before and After columns
     const addOnsTotal = addOns.reduce((s, a) => s + a.addon_amount, 0)
+    // letter.arrears from createBatch already includes penalty on prior year outstanding
+    // Do NOT apply penalty again - just display the stored value
     const arrearsAmount = letter.arrears || 0
 
-    const totalBefore = beforeAmount + addOnsTotal + arrearsAmount
-    const totalAfter = afterAmount + addOnsTotal + arrearsAmount
+    if (arrearsAmount > 0) {
+      rows.push([
+        'Arrears (Previous Outstanding)',
+        '',
+        '',
+        this.formatCurrency(arrearsAmount),
+        '',
+        '',
+        this.formatCurrency(arrearsAmount),
+        this.formatCurrency(arrearsAmount)
+      ])
+      rowTypes.push('normal')
+    }
 
-    // Total row
+    // Correct total calculations
+    const totalBefore = beforeAmount + gstAmount + naTaxAmount + solarContribution + cableCharges + addOnsTotal + arrearsAmount
+    const totalAfter = afterAmount + gstAmount + naTaxAmount + solarContribution + cableCharges + addOnsTotal + arrearsAmount
+    
     rows.push([
-      'Total Amount Payable',
+      `Amount Payable before ${dueDateFormatted}`,
       '',
       '',
       '',
       '',
       '',
       this.formatCurrency(totalBefore),
+      ''
+    ])
+    rowTypes.push('yellow')
+
+    rows.push([
+      `Amount payable after ${dueDateFormatted}`,
+      '',
+      '',
+      '',
+      '',
+      '',
+      '',
       this.formatCurrency(totalAfter)
     ])
+    rowTypes.push('orange')
 
-    this.drawTable(headers, rows)
+    this.drawStyledTable(headers, rows, rowTypes)
   }
 
-  private drawPaymentDetails(letter: MaintenanceLetter): void {
-    // Get unit-specific penalty first, then fallback to project charges
-    const unit = dbService.get<{ penalty_percentage: number }>(
-      'SELECT penalty_percentage FROM units WHERE id = ?',
-      [letter.unit_id]
-    )
+  private drawStyledTable(
+    headers: string[], 
+    rows: string[][], 
+    rowTypes: Array<'normal' | 'yellow' | 'orange'>
+  ): void {
+    if (headers.length === 0 || rows.length === 0) return
     
-    const chargesConfig = projectService.getChargesConfig(letter.project_id)
+    const { contentWidth } = this.layout
+    const borderWidth = 1.5
     
-    // Penalty inheritance: Unit → Project → Default (21%)
-    let penaltyPercentage = 21 // Default fallback
-    if (unit?.penalty_percentage != null) { // Using != to catch both null and undefined
-      penaltyPercentage = unit.penalty_percentage
-    } else if (chargesConfig?.penalty_percentage != null) {
-      penaltyPercentage = chargesConfig.penalty_percentage
-    }
-    
-    this.page.drawText('Payment Details:', {
-      x: this.MARGIN,
-      y: this.layout.currentY,
-      size: 10,
-      font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
-    })
-
-    this.layout.currentY -= 20
-
-    // Get payment modes from project settings (dynamic)
-    const paymentModes = this.getPaymentModes(letter.project_id)
-    const paymentInfo = [
-      `Due Date: ${this.formatDate(letter.due_date || '')}`,
-      `Payment Mode: ${paymentModes}`,
-      `Late Payment Charges: ${penaltyPercentage}% per annum`
+    // Adjusted column widths - better distribution for currency values
+    const columnWidths = [
+      contentWidth * 0.23, // Particulars (descriptions)
+      contentWidth * 0.09, // Plot Area
+      contentWidth * 0.10, // Rate per year
+      contentWidth * 0.115, // Amount
+      contentWidth * 0.115, // Penalty
+      contentWidth * 0.11, // Discount
+      contentWidth * 0.12, // Before (totals need more space)
+      contentWidth * 0.12  // After (totals need more space)
     ]
+    
+    const calculateRowHeight = (row: string[]): number => {
+      const hasLongText = row.some((cell, i) => cell.length > 40 && i === 0)
+      return hasLongText ? 36 : 30  // Slightly taller rows for better spacing
+    }
+    
+    const headerHeight = 45
+    const totalRowsHeight = rows.reduce((sum, row) => sum + calculateRowHeight(row), 0)
+    const totalTableHeight = headerHeight + totalRowsHeight
+    
+    const tableX = this.MARGIN
+    const tableY = this.layout.currentY - totalTableHeight
+    const tableWidth = contentWidth
 
-    paymentInfo.forEach((info, index) => {
-      this.page.drawText(info, {
-        x: this.MARGIN,
-        y: this.layout.currentY - index * 15,
-        size: 9,
-        font: this.fonts.regular,
-        color: this.COLORS.TEXT
-      })
+    this.page.drawRectangle({
+      x: tableX,
+      y: tableY,
+      width: tableWidth,
+      height: totalTableHeight,
+      borderColor: this.COLORS.BORDER,
+      borderWidth: borderWidth,
+      color: undefined
     })
 
-    this.layout.currentY -= (paymentInfo.length * 15) + 25
-  }
+    this.page.drawRectangle({
+      x: tableX + borderWidth,
+      y: tableY + totalTableHeight - headerHeight,
+      width: tableWidth - (borderWidth * 2),
+      height: headerHeight - borderWidth,
+      color: rgb(0.95, 0.95, 0.95),
+      borderWidth: 0
+    })
 
-  /**
-   * Get payment modes from project settings (dynamic from database)
-   */
-  private getPaymentModes(projectId: number): string {
-    // Try to get payment modes from project settings
-    const projectSettings = dbService.get<{ value: string }>(
-      'SELECT value FROM settings WHERE key = ?',
-      [`project_${projectId}_payment_modes`]
-    )
-
-    if (projectSettings && projectSettings.value) {
-      return projectSettings.value
+    let colX = tableX + borderWidth
+    const colPositions: number[] = [colX]
+    for (let i = 0; i < columnWidths.length; i++) {
+      colX += columnWidths[i]
+      colPositions.push(colX)
     }
 
-    // Try to get from project table if available
-    const project = dbService.get<{ payment_modes?: string }>(
-      'SELECT payment_modes FROM projects WHERE id = ?',
-      [projectId]
-    )
-
-    if (project?.payment_modes) {
-      return project.payment_modes
+    for (let i = 1; i < colPositions.length - 1; i++) {
+      const x = colPositions[i]
+      this.page.drawLine({
+        start: { x: x, y: tableY + totalTableHeight - borderWidth },
+        end: { x: x, y: tableY + borderWidth },
+        thickness: 1,
+        color: this.COLORS.BORDER
+      })
     }
 
-    // Fallback to default modes (but still dynamic - not hardcoded in PDF generation)
-    return 'Cheque/Cash/Online Transfer'
+    for (let i = 0; i < headers.length; i++) {
+      const header = headers[i]
+      const x = colPositions[i]
+      const colWidth = columnWidths[i]
+      const lines = header.split('\n')
+      
+      lines.forEach((line, lineIndex) => {
+        // FIX: Truncate header text if too wide
+        let displayLine = line
+        const lineWidth = this.fonts.bold.widthOfTextAtSize(line, 9)
+        if (lineWidth > colWidth - 8) {
+          // Truncate with ellipsis
+          let left = 0
+          let right = line.length
+          let result = ''
+          while (left <= right) {
+            const mid = Math.floor((left + right) / 2)
+            const testStr = line.substring(0, mid) + '...'
+            const testWidth = this.fonts.bold.widthOfTextAtSize(testStr, 9)
+            if (testWidth <= colWidth - 8) {
+              result = testStr
+              left = mid + 1
+            } else {
+              right = mid - 1
+            }
+          }
+          displayLine = result || line.substring(0, 3) + '...'
+        }
+        
+        const displayWidth = this.fonts.bold.widthOfTextAtSize(displayLine, 9)
+        const textX = x + (colWidth - displayWidth) / 2
+        const textY = tableY + totalTableHeight - headerHeight + 28 - (lineIndex * 12)
+        
+        this.page.drawText(displayLine, {
+          x: textX,
+          y: textY,
+          size: 9,
+          font: this.fonts.bold,
+          color: this.COLORS.TEXT
+        })
+      })
+    }
+
+    this.page.drawLine({
+      start: { x: tableX + borderWidth, y: tableY + totalTableHeight - headerHeight },
+      end: { x: tableX + tableWidth - borderWidth, y: tableY + totalTableHeight - headerHeight },
+      thickness: 1,
+      color: this.COLORS.BORDER
+    })
+
+    let currentRowY = tableY + totalTableHeight - headerHeight
+    
+    // Helper function to truncate text to fit column width
+    const truncateText = (text: string, maxWidth: number, font: typeof this.fonts.regular, size: number): string => {
+      const textWidth = font.widthOfTextAtSize(text, size)
+      if (textWidth <= maxWidth) return text
+      
+      // Binary search for max chars that fit
+      let left = 0
+      let right = text.length
+      let result = ''
+      
+      while (left <= right) {
+        const mid = Math.floor((left + right) / 2)
+        const testStr = text.substring(0, mid) + '...'
+        const testWidth = font.widthOfTextAtSize(testStr, size)
+        
+        if (testWidth <= maxWidth) {
+          result = testStr
+          left = mid + 1
+        } else {
+          right = mid - 1
+        }
+      }
+      
+      return result || text.substring(0, 3) + '...'
+    }
+    
+    rows.forEach((row, rowIndex) => {
+      const rowHeight = calculateRowHeight(row)
+      currentRowY -= rowHeight
+      
+      const rowType = rowTypes[rowIndex]
+      
+      if (rowType === 'yellow') {
+        this.page.drawRectangle({
+          x: tableX + borderWidth,
+          y: currentRowY,
+          width: tableWidth - (borderWidth * 2),
+          height: rowHeight,
+          color: rgb(1, 1, 0.6),
+          borderWidth: 0
+        })
+      } else if (rowType === 'orange') {
+        this.page.drawRectangle({
+          x: tableX + borderWidth,
+          y: currentRowY,
+          width: tableWidth - (borderWidth * 2),
+          height: rowHeight,
+          color: rgb(1, 0.85, 0.7),
+          borderWidth: 0
+        })
+      }
+      
+      for (let colIndex = 0; colIndex < row.length; colIndex++) {
+        let cell = row[colIndex]
+        const x = colPositions[colIndex]
+        const colWidth = columnWidths[colIndex]
+        // Proper vertical centering: currentRowY is at bottom of row, add half row height + font offset
+        const fontSize = 9
+        const cellY = currentRowY + (rowHeight / 2) - (fontSize / 3)
+        
+        const isHighlightRow = rowType === 'yellow' || rowType === 'orange'
+        const font = isHighlightRow ? this.fonts.bold : this.fonts.regular
+        
+        // FIX: Truncate text if too wide for column - with safety margin
+        const padding = colIndex === 0 ? 8 : 10 // Left=8, Right-aligned needs 10
+        const safetyMargin = 2 // Extra safety margin to prevent touching borders
+        const availableWidth = colWidth - padding - safetyMargin
+        
+        let textWidth = font.widthOfTextAtSize(cell, 9)
+        
+        // Truncate text if too wide for column
+        if (textWidth > availableWidth && availableWidth > 10) {
+          cell = truncateText(cell, availableWidth, font, 9)
+          textWidth = font.widthOfTextAtSize(cell, 9)
+        }
+        
+        let textX
+        
+        if (colIndex === 0) {
+          textX = x + 4 // Left padding
+        } else {
+          textX = x + colWidth - textWidth - 5 // Right padding
+        }
+        
+        this.page.drawText(cell, {
+          x: textX,
+          y: cellY,
+          size: 9,
+          font: font,
+          color: this.COLORS.TEXT
+        })
+      }
+      
+      if (rowIndex < rows.length - 1) {
+        this.page.drawLine({
+          start: { x: tableX + borderWidth, y: currentRowY },
+          end: { x: tableX + tableWidth - borderWidth, y: currentRowY },
+          thickness: 0.5,
+          color: this.COLORS.BORDER
+        })
+      }
+    })
+
+    this.layout.currentY = tableY - 20
   }
 
   protected async drawBankDetails(letter: MaintenanceLetter): Promise<void> {
-    // Prefer sector-specific bank details when present, fall back to project defaults
     const hasSectorBank = !!(letter.sector_account_name || letter.sector_account_no || letter.sector_bank_name)
 
     const effectiveAccountName = hasSectorBank ? letter.sector_account_name : letter.account_name
@@ -993,33 +1248,32 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const effectiveBranch      = hasSectorBank ? letter.sector_branch       : letter.branch
     const effectiveBranchAddr  = hasSectorBank ? undefined                  : letter.branch_address
 
-    // Add extra space before bank details to prevent bottom cutoff
     this.layout.currentY -= 15
 
-    this.page.drawText('Bank Details for Payment', {
-      x: this.MARGIN,
+    const headerText = 'PLEASE NOTE NEW BANK DETAILS'
+    const headerWidth = this.fonts.bold.widthOfTextAtSize(headerText, 11)
+    const headerX = (this.layout.width - headerWidth) / 2
+    
+    this.page.drawText(headerText, {
+      x: headerX,
       y: this.layout.currentY,
-      size: 12,
+      size: 11,
       font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
+      color: rgb(0.9, 0, 0)
     })
 
-    this.layout.currentY -= 35
+    this.layout.currentY -= 25
 
-    const bankFields: [string, string | undefined][] = [
-      ['Account Name', effectiveAccountName],
-      ['Account No',   effectiveAccountNo],
-      ['Bank Name',    effectiveBankName],
-      ['IFSC Code',    effectiveIfsc],
-      ['Branch',       effectiveBranch],
-      ['Branch Address', effectiveBranchAddr]
-    ]
+    const bankData: [string, string][] = [
+      ['Name', effectiveAccountName || ''],
+      ['Account No.', effectiveAccountNo || ''],
+      ['IFSC Code', effectiveIfsc || ''],
+      ['Bank Name', effectiveBankName || ''],
+      ['Branch', effectiveBranch || ''],
+      ['Branch Address', effectiveBranchAddr || '']
+    ].filter(([, value]) => value && value.trim() !== '') as [string, string][]
 
-    const bankInfo = bankFields
-      .filter(([, v]) => v && String(v).trim() !== '')
-      .map(([label, v]) => `${label}: ${v}`)
-
-    if (bankInfo.length === 0) {
+    if (bankData.length === 0) {
       this.page.drawText('Bank details not configured. Please update project settings.', {
         x: this.MARGIN,
         y: this.layout.currentY,
@@ -1028,20 +1282,95 @@ class MaintenanceLetterService extends BasePDFGenerator {
         color: this.COLORS.GRAY
       })
       this.layout.currentY -= 20
-    } else {
-      bankInfo.forEach((info, index) => {
-        this.page.drawText(info, {
-          x: this.MARGIN,
-          y: this.layout.currentY - index * 18,
-          size: 10,
-          font: this.fonts.regular,
-          color: this.COLORS.TEXT
-        })
-      })
-      this.layout.currentY -= bankInfo.length * 18 + 20
+      return
     }
 
-    // QR code — prefer sector QR, fall back to project QR
+    const tableWidth = this.layout.width - (this.MARGIN * 2)
+    const labelWidth = tableWidth * 0.25
+    const rowHeight = 22
+    const tableHeight = bankData.length * rowHeight
+    const tableX = this.MARGIN
+    const tableY = this.layout.currentY - tableHeight
+
+    this.page.drawRectangle({
+      x: tableX,
+      y: tableY,
+      width: tableWidth,
+      height: tableHeight,
+      borderColor: this.COLORS.BORDER,
+      borderWidth: 1
+    })
+
+    bankData.forEach(([label, value], index) => {
+      const rowY = tableY + tableHeight - ((index + 1) * rowHeight)
+      
+      if (index > 0) {
+        this.page.drawLine({
+          start: { x: tableX, y: rowY + rowHeight },
+          end: { x: tableX + tableWidth, y: rowY + rowHeight },
+          thickness: 0.5,
+          color: this.COLORS.BORDER
+        })
+      }
+      
+      this.page.drawLine({
+        start: { x: tableX + labelWidth, y: rowY },
+        end: { x: tableX + labelWidth, y: rowY + rowHeight },
+        thickness: 0.5,
+        color: this.COLORS.BORDER
+      })
+      
+      // FIX: Truncate label and value if too long
+      const maxLabelWidth = labelWidth - 16
+      const maxValueWidth = tableWidth - labelWidth - 16
+      
+      let displayLabel = label
+      let labelW = this.fonts.bold.widthOfTextAtSize(label, 9)
+      if (labelW > maxLabelWidth) {
+        let left = 0, right = label.length, result = ''
+        while (left <= right) {
+          const mid = Math.floor((left + right) / 2)
+          const testStr = label.substring(0, mid) + '...'
+          const testW = this.fonts.bold.widthOfTextAtSize(testStr, 9)
+          if (testW <= maxLabelWidth) { result = testStr; left = mid + 1 }
+          else { right = mid - 1 }
+        }
+        displayLabel = result || label.substring(0, 3) + '...'
+      }
+      
+      let displayValue = value
+      let valueW = this.fonts.regular.widthOfTextAtSize(value, 9)
+      if (valueW > maxValueWidth) {
+        let left = 0, right = value.length, result = ''
+        while (left <= right) {
+          const mid = Math.floor((left + right) / 2)
+          const testStr = value.substring(0, mid) + '...'
+          const testW = this.fonts.regular.widthOfTextAtSize(testStr, 9)
+          if (testW <= maxValueWidth) { result = testStr; left = mid + 1 }
+          else { right = mid - 1 }
+        }
+        displayValue = result || value.substring(0, 3) + '...'
+      }
+      
+      this.page.drawText(displayLabel, {
+        x: tableX + 8,
+        y: rowY + 7,
+        size: 9,
+        font: this.fonts.bold,
+        color: this.COLORS.TEXT
+      })
+      
+      this.page.drawText(displayValue, {
+        x: tableX + labelWidth + 8,
+        y: rowY + 7,
+        size: 9,
+        font: this.fonts.regular,
+        color: this.COLORS.TEXT
+      })
+    })
+
+    this.layout.currentY = tableY - 20
+
     const qrCodePath = letter.sector_qr_code || letter.project_qr_code
 
     if (qrCodePath) {
@@ -1051,7 +1380,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
       const qrSize = 90
       const qrX = this.layout.width - this.MARGIN - qrSize - 15
-      const qrY = this.layout.currentY + bankInfo.length * 18 + 20
+      const qrY = this.layout.currentY + 40
 
       this.page.drawText(qrLabel, {
         x: qrX,
@@ -1093,7 +1422,6 @@ class MaintenanceLetterService extends BasePDFGenerator {
                 : await this.pdfDoc.embedJpg(qrImageBytes)
           }
 
-          // Draw the QR code image
           if (qrImage) {
             this.page.drawImage(qrImage, {
               x: qrX,
@@ -1104,7 +1432,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
           }
         }
       } catch (error) {
-        console.warn('Failed to embed QR code:', error)
+        // QR code embedding failed - continue without it
       }
     }
   }
