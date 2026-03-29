@@ -92,17 +92,17 @@ const IMPORT_PROFILE_OPTIONS = [
   {
     value: 'standard_normalized',
     label: 'Standard Platform Sheet',
-    description: 'Normalized workbook for future platform-led operations.'
+    description: 'Use this for new projects. Columns: Unit No, Owner, Type, Area, Status, Contact, Email.'
   },
   {
     value: 'beverly_abc_v1',
     label: 'Beverly A/B/C Legacy',
-    description: 'Wide-format workbook with A/B/C plot blocks and year columns.'
+    description: 'For Beverly-style sheets with sectors (A/B/C) and yearly columns. Has wide layout with FY columns spread across.'
   },
   {
     value: 'banjara_numeric_v1',
     label: 'Banjara Sector Ledger',
-    description: 'Sector + plot workbook with GST and pipe replacement columns.'
+    description: 'For ledger-style sheets with numeric sectors (1, 2, 3). Includes GST and penalty columns. Vertical layout.'
   }
 ]
 
@@ -726,39 +726,45 @@ const Projects: React.FC = () => {
   ]
 
   return (
-    <div>
-      <Card style={{ marginBottom: 16 }}>
-        <div
-          className="responsive-page-header"
-          style={{
-            marginBottom: 16
-          }}
-        >
-          <Typography.Title level={2} style={{ margin: 0 }}>
-            Projects
-          </Typography.Title>
-          <Space wrap className="responsive-action-bar">
-            {selectedRowKeys.length > 0 && (
-              <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
-                Delete Selected ({selectedRowKeys.length})
-              </Button>
-            )}
-            <Upload
-              beforeUpload={(file) => {
-                handleStandardWorkbookImport(file)
-                return false
-              }}
-              showUploadList={false}
-              accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
-            >
-              <Button icon={<UploadOutlined />}>Import Standard Workbook</Button>
-            </Upload>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-              Add Project
+    <div style={{ padding: '24px' }}>
+      {/* Header */}
+      <div
+        className="responsive-page-header"
+        style={{
+          marginBottom: 24,
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          flexWrap: 'wrap',
+          gap: 16
+        }}
+      >
+        <Typography.Title level={2} style={{ margin: 0 }}>
+          Projects
+        </Typography.Title>
+        <Space wrap className="responsive-action-bar">
+          {selectedRowKeys.length > 0 && (
+            <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
+              Delete Selected ({selectedRowKeys.length})
             </Button>
-          </Space>
-        </div>
+          )}
+          <Upload
+            beforeUpload={(file) => {
+              handleStandardWorkbookImport(file)
+              return false
+            }}
+            showUploadList={false}
+            accept=".xlsx,.xls,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel"
+          >
+            <Button icon={<UploadOutlined />}>Import Standard Workbook</Button>
+          </Upload>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+            Add Project
+          </Button>
+        </Space>
+      </div>
 
+      <Card style={{ marginBottom: 16 }}>
         <Space wrap className="responsive-filters" style={{ marginBottom: 8 }}>
           <Input
             placeholder="Search Project Code, Name, Address, or City..."
@@ -915,7 +921,7 @@ const Projects: React.FC = () => {
         )
       })()}
 
-      <div className="table-scroll-wrapper">
+      <div className="table-scroll-wrapper mobile-card-table">
         <Table
           rowSelection={{
             selectedRowKeys,
@@ -937,8 +943,14 @@ const Projects: React.FC = () => {
         onOk={handleModalOk}
         onCancel={() => setIsModalOpen(false)}
         width={700}
+        className="mobile-fullscreen-modal mobile-single-column"
       >
-        <Form form={form} layout="vertical" initialValues={DEFAULT_PROJECT_FORM_VALUES}>
+        <Form 
+          form={form} 
+          layout="vertical" 
+          initialValues={DEFAULT_PROJECT_FORM_VALUES}
+          validateTrigger={['onBlur', 'onChange']}
+        >
           {editingProjectSummary && (
             <Alert
               type={
@@ -1310,6 +1322,7 @@ const Projects: React.FC = () => {
         }}
         confirmLoading={isWorkbookImporting}
         width={860}
+        className="mobile-fullscreen-modal"
       >
         {standardWorkbookPreview && (
           <Space direction="vertical" style={{ width: '100%' }} size="middle">

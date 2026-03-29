@@ -1090,63 +1090,65 @@ const Reports: React.FC = () => {
           showIcon
           style={{ margin: '16px', marginBottom: 0 }}
         />
-        <Table
-          columns={columns as TableProps<PivotData>['columns']}
-          dataSource={pivotData}
-          loading={loading}
-          pagination={{ pageSize: 20 }}
-          scroll={{ x: 'max-content', y: 'calc(100vh - 600px)' }}
-          size="small"
-          bordered
-          summary={() => (
-            <Table.Summary fixed>
-              <Table.Summary.Row>
-                <Table.Summary.Cell index={0} colSpan={5}>
-                  <Text strong>
-                    {hasActiveFilters ? 'APPLIED TOTAL' : 'GRAND TOTAL'}
-                    {pivotData.length < allPivotData.length &&
-                      ` (${pivotData.length} of ${allPivotData.length} units)`}
-                  </Text>
-                </Table.Summary.Cell>
-                {years.map((year, index) => {
-                  const yearlyTotal = yearlyTotals.find((t) => t.year === year)
-                  return (
-                    <React.Fragment key={year}>
-                      <Table.Summary.Cell index={index * 3 + 5} align="right">
-                        <Text>₹{yearlyTotal?.billed.toLocaleString() || '0'}</Text>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={index * 3 + 6} align="right">
-                        <Text type="success">₹{yearlyTotal?.paid.toLocaleString() || '0'}</Text>
-                      </Table.Summary.Cell>
-                      <Table.Summary.Cell index={index * 3 + 7} align="right">
-                        <Text
-                          type={
-                            yearlyTotal?.balance && yearlyTotal.balance > 0 ? 'danger' : 'success'
-                          }
-                        >
-                          ₹{yearlyTotal?.balance.toLocaleString() || '0'}
-                        </Text>
-                      </Table.Summary.Cell>
-                    </React.Fragment>
-                  )
-                })}
-                <Table.Summary.Cell index={years.length * 3 + 5} align="right">
-                  <Text strong>₹{stats.totalBilled.toLocaleString()}</Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={years.length * 3 + 6} align="right">
-                  <Text strong type="success">
-                    ₹{stats.totalCollected.toLocaleString()}
-                  </Text>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={years.length * 3 + 7} align="right">
-                  <Text strong type={stats.outstanding > 0 ? 'danger' : 'success'}>
-                    ₹{stats.outstanding.toLocaleString()}
-                  </Text>
-                </Table.Summary.Cell>
-              </Table.Summary.Row>
-            </Table.Summary>
-          )}
-        />
+        <div className="table-scroll-wrapper mobile-card-table">
+          <Table
+            columns={columns as TableProps<PivotData>['columns']}
+            dataSource={pivotData}
+            loading={loading}
+            pagination={{ pageSize: 20 }}
+            scroll={{ x: 'max-content', y: 'calc(100vh - 600px)' }}
+            size="small"
+            bordered
+            summary={() => (
+              <Table.Summary fixed>
+                <Table.Summary.Row>
+                  <Table.Summary.Cell index={0} colSpan={5}>
+                    <Text strong>
+                      {hasActiveFilters ? 'APPLIED TOTAL' : 'GRAND TOTAL'}
+                      {pivotData.length < allPivotData.length &&
+                        ` (${pivotData.length} of ${allPivotData.length} units)`}
+                    </Text>
+                  </Table.Summary.Cell>
+                  {years.map((year, index) => {
+                    const yearlyTotal = yearlyTotals.find((t) => t.year === year)
+                    return (
+                      <React.Fragment key={year}>
+                        <Table.Summary.Cell index={index * 3 + 5} align="right">
+                          <Text>₹{yearlyTotal?.billed.toLocaleString() || '0'}</Text>
+                        </Table.Summary.Cell>
+                        <Table.Summary.Cell index={index * 3 + 6} align="right">
+                          <Text type="success">₹{yearlyTotal?.paid.toLocaleString() || '0'}</Text>
+                        </Table.Summary.Cell>
+                        <Table.Summary.Cell index={index * 3 + 7} align="right">
+                          <Text
+                            type={
+                              yearlyTotal?.balance && yearlyTotal.balance > 0 ? 'danger' : 'success'
+                            }
+                          >
+                            ₹{yearlyTotal?.balance.toLocaleString() || '0'}
+                          </Text>
+                        </Table.Summary.Cell>
+                      </React.Fragment>
+                    )
+                  })}
+                  <Table.Summary.Cell index={years.length * 3 + 5} align="right">
+                    <Text strong>₹{stats.totalBilled.toLocaleString()}</Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={years.length * 3 + 6} align="right">
+                    <Text strong type="success">
+                      ₹{stats.totalCollected.toLocaleString()}
+                    </Text>
+                  </Table.Summary.Cell>
+                  <Table.Summary.Cell index={years.length * 3 + 7} align="right">
+                    <Text strong type={stats.outstanding > 0 ? 'danger' : 'success'}>
+                      ₹{stats.outstanding.toLocaleString()}
+                    </Text>
+                  </Table.Summary.Cell>
+                </Table.Summary.Row>
+              </Table.Summary>
+            )}
+          />
+        </div>
       </Card>
     </div>
   )

@@ -31,13 +31,15 @@ import {
   FileAddOutlined,
   EditOutlined,
   DeleteOutlined,
-  PlusOutlined
+  PlusOutlined,
+  UndoOutlined
 } from '@ant-design/icons'
 import { IndianRupee } from 'lucide-react'
 import { Unit, Project } from '@preload/types'
 import { readExcelFile } from '../utils/excelReader'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import { UNIT_TYPES, UNIT_TYPE_COLORS } from '../constants/unitTypes'
+import { useOperationHistory } from '../hooks/useOperationHistory'
 
 const { Title, Text, Paragraph } = Typography
 const { Option } = Select
@@ -183,6 +185,7 @@ const Units: React.FC = () => {
   const [form] = Form.useForm()
   const navigate = useNavigate()
   const location = useLocation()
+  const { canUndo, addOperation, undo } = useOperationHistory<Unit>({ maxHistory: 5 })
 
   // Memoized filter status for performance
   const hasActiveFilters = useMemo(() => {
@@ -601,9 +604,14 @@ const Units: React.FC = () => {
   }
 
   const handleBulkDelete = async (): Promise<void> => {
+    // Get the units that will be deleted for undo functionality
+    const unitsToDelete = units.filter(u => selectedRowKeys.includes(u.id!))
+    
     Modal.confirm({
       title: `Are you sure you want to delete ${selectedRowKeys.length} units?`,
-      content: 'This action cannot be undone.',
+      content: canUndo 
+        ? 'You can undo this action immediately after deletion.' 
+        : 'This action cannot be undone.',
       okText: 'Yes, Delete',
       okType: 'danger',
       cancelText: 'No',
@@ -611,6 +619,21 @@ const Units: React.FC = () => {
         setLoading(true)
         try {
           await window.api.units.bulkDelete(selectedRowKeys as number[])
+          
+          // Add to operation history for undo
+          addOperation({
+            type: 'delete',
+            description: `Deleted ${unitsToDelete.length} unit(s)`,
+            data: unitsToDelete,
+            restoreFn: async (deletedUnits) => {
+              // Restore each deleted unit by recreating it
+              for (const unit of deletedUnits) {
+                const { id, ...unitData } = unit
+                await window.api.units.create(unitData)
+              }
+            }
+          })
+          
           message.success(`Successfully deleted ${selectedRowKeys.length} units`)
           fetchData()
         } catch {
@@ -620,6 +643,13 @@ const Units: React.FC = () => {
         }
       }
     })
+  }
+
+  const handleUndoDelete = async (): Promise<void> => {
+    const success = await undo()
+    if (success) {
+      fetchData()
+    }
   }
 
   const handleModalOk = async (): Promise<void> => {
@@ -1069,6 +1099,7 @@ const Units: React.FC = () => {
             size="small"
             icon={<FilePdfOutlined />}
             onClick={() => navigate('/billing', { state: { unitId: record.id } })}
+            aria-label={`Generate maintenance letter for unit ${record.unit_number}`}
           >
             Letter
           </Button>
@@ -1076,6 +1107,7 @@ const Units: React.FC = () => {
             size="small"
             icon={<IndianRupee size={14} />}
             onClick={() => navigate('/payments', { state: { unitId: record.id } })}
+            aria-label={`Record payment for unit ${record.unit_number}`}
           >
             Payment
           </Button>
@@ -1083,6 +1115,7 @@ const Units: React.FC = () => {
             size="small" 
             icon={<EditOutlined />} 
             onClick={() => handleEdit(record)}
+            aria-label={`Edit unit ${record.unit_number}`}
           >
             Edit
           </Button>
@@ -1091,6 +1124,7 @@ const Units: React.FC = () => {
             icon={<DeleteOutlined />}
             danger
             onClick={() => handleDelete(record.id!)}
+            aria-label={`Delete unit ${record.unit_number}`}
           >
             Delete
           </Button>
@@ -1112,6 +1146,16 @@ const Units: React.FC = () => {
           Units
         </Title>
         <Space wrap className="responsive-action-bar" align="center">
+          {canUndo && (
+            <Button 
+              icon={<UndoOutlined />} 
+              onClick={handleUndoDelete}
+              title="Undo last deletion"
+              aria-label="Undo last deletion"
+            >
+              Undo Delete
+            </Button>
+          )}
           <div style={{ minWidth: selectedRowKeys.length > 0 ? 'auto' : 0, transition: 'all 0.2s' }}>
             {selectedRowKeys.length > 0 && (
               <Space>
@@ -1156,6 +1200,7 @@ const Units: React.FC = () => {
               style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
               enterButton
               suffix={null}
+              aria-label="Search units by unit number or owner name"
             />
             <Select
               placeholder="Project"
@@ -1163,6 +1208,7 @@ const Units: React.FC = () => {
               allowClear
               onChange={setSelectedProject}
               value={selectedProject}
+              aria-label="Filter by project"
             >
               {projects.map((s) => (
                 <Option key={s.id} value={s.id}>
@@ -1176,6 +1222,7 @@ const Units: React.FC = () => {
               allowClear
               onChange={setStatusFilter}
               value={statusFilter}
+              aria-label="Filter by unit status"
             >
               <Option value="Sold">Sold</Option>
               <Option value="Unsold">Unsold</Option>
@@ -1186,6 +1233,7 @@ const Units: React.FC = () => {
               allowClear
               onChange={setSelectedUnitType}
               value={selectedUnitType}
+              aria-label="Filter by unit type"
             >
               {UNIT_TYPES.map((unitType) => (
                 <Option key={unitType} value={unitType}>
@@ -1206,6 +1254,7 @@ const Units: React.FC = () => {
                     message.warning('Minimum area cannot be greater than maximum')
                   }
                 }}
+                aria-label="Minimum area in square feet"
               />
               <span style={{ padding: '0 8px', lineHeight: '32px' }}>to</span>
               <InputNumber
@@ -1218,6 +1267,7 @@ const Units: React.FC = () => {
                     message.warning('Maximum area cannot be less than minimum')
                   }
                 }}
+                aria-label="Maximum area in square feet"
               />
             </Input.Group>
           </Space>
@@ -1280,18 +1330,25 @@ const Units: React.FC = () => {
           )}
         </div>
 
-        <Table
-          rowSelection={{
-            selectedRowKeys,
-            onChange: (keys) => setSelectedRowKeys(keys)
-          }}
-          columns={columns}
-          dataSource={filteredUnits}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 'max-content' }}
-        />
+        {/* Mobile scroll hint */}
+        <div className="table-scroll-hint">
+          <span>Swipe horizontally to see more columns</span>
+        </div>
+
+        <div className="table-scroll-wrapper mobile-card-table">
+          <Table
+            rowSelection={{
+              selectedRowKeys,
+              onChange: (keys) => setSelectedRowKeys(keys)
+            }}
+            columns={columns}
+            dataSource={filteredUnits}
+            rowKey="id"
+            loading={loading}
+            pagination={{ pageSize: 10 }}
+            scroll={{ x: 'max-content' }}
+          />
+        </div>
       </Card>
 
       {/* Responsive Import Modal */}
@@ -1308,6 +1365,7 @@ const Units: React.FC = () => {
         confirmLoading={loading}
         style={{ maxWidth: '90vw' }}
         bodyStyle={{ maxHeight: '70vh', overflow: 'auto' }}
+        className="mobile-fullscreen-modal"
         footer={[
           <Button
             key="cancel"
@@ -1856,6 +1914,8 @@ const Units: React.FC = () => {
         }}
         width={isQuickEntryMode ? 480 : 680}
         style={{ maxWidth: '95vw' }}
+        className="mobile-fullscreen-modal mobile-single-column"
+        bodyStyle={{ padding: '16px' }}
       >
         {/* Mode toggle tabs at top - only show when adding (not editing) */}
         {!editingUnit && (

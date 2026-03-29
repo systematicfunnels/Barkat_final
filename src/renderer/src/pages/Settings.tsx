@@ -155,6 +155,7 @@ const Settings: React.FC = () => {
         onOk={() => setIsRepairModalOpen(false)}
         onCancel={() => setIsRepairModalOpen(false)}
         width={700}
+        className="mobile-fullscreen-modal"
       >
         {repairResults && (
           <div style={{ maxHeight: 400, overflow: 'auto' }}>

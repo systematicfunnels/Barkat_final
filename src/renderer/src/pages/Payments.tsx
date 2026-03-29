@@ -993,21 +993,23 @@ const Payments: React.FC = () => {
         )}
       </Card>
 
-        <Table
-          rowSelection={{
-            selectedRowKeys,
-            onChange: (keys) => setSelectedRowKeys(keys),
-            getCheckboxProps: (record: Payment) => ({
-              title: `Select payment for unit ${record.unit_number}`
-            })
-          }}
-          columns={columns}
-          dataSource={filteredPayments}
-          rowKey="id"
-          loading={loading}
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 'max-content' }}
-        />
+        <div className="table-scroll-wrapper mobile-card-table">
+          <Table
+            rowSelection={{
+              selectedRowKeys,
+              onChange: (keys) => setSelectedRowKeys(keys),
+              getCheckboxProps: (record: Payment) => ({
+                title: `Select payment for unit ${record.unit_number}`
+              })
+            }}
+            columns={columns}
+            dataSource={filteredPayments}
+            rowKey="id"
+            loading={loading}
+            pagination={{ pageSize: 10 }}
+            scroll={{ x: 'max-content' }}
+          />
+        </div>
 
       {/* Batch Receipt Generation Progress Modal */}
       <Modal
@@ -1026,6 +1028,7 @@ const Payments: React.FC = () => {
         ]}
         closable={false}
         width={500}
+        className="mobile-fullscreen-modal"
       >
         {receiptProgress && (
           <div>
@@ -1060,6 +1063,7 @@ const Payments: React.FC = () => {
         }}
         confirmLoading={loading}
         width={600}
+        className="mobile-fullscreen-modal mobile-single-column"
       >
         <Form
           form={form}
@@ -1344,6 +1348,7 @@ const Payments: React.FC = () => {
         confirmLoading={loading}
         width={1000}
         okText="Record Bulk Payments"
+        className="mobile-fullscreen-modal"
       >
         <Form form={bulkForm} layout="vertical">
           <div style={{ display: 'flex', gap: '16px', marginBottom: '16px' }}>

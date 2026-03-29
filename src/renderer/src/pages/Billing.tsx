@@ -22,6 +22,7 @@ import {
   List,
   Spin
 } from 'antd'
+import { isValidFinancialYear } from '../utils/financialYear'
 import {
   FilePdfOutlined,
   PlusOutlined,
@@ -1530,6 +1531,7 @@ const Billing: React.FC = () => {
         width={700}
         confirmLoading={loading}
         okText={batchModalStep === 'config' ? 'Next: Select Units' : 'Generate Maintenance Letters'}
+        className="mobile-fullscreen-modal mobile-single-column"
       >
         {passedUnitIds.length > 0 && (
           <Alert
@@ -1542,6 +1544,35 @@ const Billing: React.FC = () => {
             onClose={() => setPassedUnitIds([])}
           />
         )}
+
+        {/* Breadcrumb navigation for multi-step workflow */}
+        <div style={{ marginBottom: 16, padding: '12px 16px', background: '#fafafa', borderRadius: 6 }}>
+          <Space size="middle" align="center">
+            <Button
+              type={batchModalStep === 'config' ? 'primary' : 'text'}
+              size="small"
+              onClick={() => setBatchModalStep('config')}
+              style={{ fontWeight: batchModalStep === 'config' ? 600 : 'normal' }}
+            >
+              1. Configure Letter
+            </Button>
+            <span style={{ color: '#999' }}>→</span>
+            <Button
+              type={batchModalStep === 'units' ? 'primary' : 'text'}
+              size="small"
+              disabled={!batchProjectId}
+              onClick={() => batchProjectId && setBatchModalStep('units')}
+              style={{ fontWeight: batchModalStep === 'units' ? 600 : 'normal' }}
+            >
+              2. Select Units
+            </Button>
+          </Space>
+          <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
+            {batchModalStep === 'config' 
+              ? 'Step 1 of 2: Set letter details (project, FY, dates, add-ons)' 
+              : 'Step 2 of 2: Choose which units to generate letters for'}
+          </div>
+        </div>
 
         <Tabs
           activeKey={batchModalStep}
@@ -1590,7 +1621,17 @@ const Billing: React.FC = () => {
                     <Form.Item
                       name="financial_year"
                       label="Financial Year (e.g., 2024-25)"
-                      rules={[{ required: true, message: 'Please enter financial year' }]}
+                      rules={[
+                        { required: true, message: 'Please enter financial year' },
+                        {
+                          validator: (_, value) => {
+                            if (!value || isValidFinancialYear(value)) {
+                              return Promise.resolve()
+                            }
+                            return Promise.reject(new Error('Format must be YYYY-YY (e.g., 2024-25)'))
+                          }
+                        }
+                      ]}
                       style={{ gridColumn: 'span 2' }}
                     >
                       <Select
