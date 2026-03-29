@@ -17,7 +17,10 @@ import {
   Alert,
   DividerProps,
   Tag,
-  Tooltip
+  Tooltip,
+  Collapse,
+  Badge,
+  Progress
 } from 'antd'
 import {
   PlusOutlined,
@@ -25,7 +28,11 @@ import {
   DeleteOutlined,
   UploadOutlined,
   FilePdfOutlined,
-  SolutionOutlined
+  SolutionOutlined,
+  ThunderboltOutlined,
+  ExclamationCircleOutlined,
+  WarningOutlined,
+  FileAddOutlined
 } from '@ant-design/icons'
 import { IndianRupee } from 'lucide-react'
 import { Unit, Project } from '@preload/types'
@@ -36,6 +43,7 @@ import { UNIT_TYPES, UNIT_TYPE_COLORS } from '../constants/unitTypes'
 const { Title, Text, Paragraph } = Typography
 const { Option } = Select
 const { Search } = Input
+const { Panel } = Collapse
 
 interface ImportUnitPreview extends Unit {
   previewId: string
@@ -171,6 +179,7 @@ const Units: React.FC = () => {
   const [importProjectId, setImportProjectId] = useState<number | null>(null)
   const [ignoreEmptyUnits, setIgnoreEmptyUnits] = useState(true)
   const [defaultArea, setDefaultArea] = useState<number>(0)
+  const [isQuickEntryMode, setIsQuickEntryMode] = useState(false)
 
   const [form] = Form.useForm()
   const navigate = useNavigate()
@@ -239,15 +248,77 @@ const Units: React.FC = () => {
       .filter(([, count]) => count > 1)
       .map(([unit]) => unit)
 
+    // Enhanced validation with severity grouping
+    const blockers: { field: string; message: string; rowCount: number; autoFixable: boolean }[] = []
+    const warnings: { field: string; message: string; rowCount: number; autoFixable: boolean }[] = []
+
+    // Check for missing unit numbers (BLOCKER)
+    const missingUnitNumbers = mappedPreview.filter((row) => !String(row.unit_number || '').trim())
+    if (missingUnitNumbers.length > 0) {
+      blockers.push({
+        field: 'unit_number',
+        message: `${missingUnitNumbers.length} rows missing unit numbers`,
+        rowCount: missingUnitNumbers.length,
+        autoFixable: false
+      })
+    }
+
+    // Check for missing owner names (BLOCKER)
+    const missingOwners = mappedPreview.filter((row) => !String(row.owner_name || '').trim())
+    if (missingOwners.length > 0) {
+      blockers.push({
+        field: 'owner_name',
+        message: `${missingOwners.length} rows missing owner names`,
+        rowCount: missingOwners.length,
+        autoFixable: false
+      })
+    }
+
+    // Check for zero/invalid area (WARNING - auto-fixable)
+    const invalidArea = mappedPreview.filter((row) => !row.area_sqft || row.area_sqft <= 0)
+    if (invalidArea.length > 0) {
+      warnings.push({
+        field: 'area_sqft',
+        message: `${invalidArea.length} rows with invalid area (will use default: ${defaultArea})`,
+        rowCount: invalidArea.length,
+        autoFixable: true
+      })
+    }
+
+    // Check for missing unit type (WARNING - auto-fixable)
+    const missingUnitType = mappedPreview.filter((row) => !row.unit_type)
+    if (missingUnitType.length > 0) {
+      warnings.push({
+        field: 'unit_type',
+        message: `${missingUnitType.length} rows missing unit type (will default to Plot)`,
+        rowCount: missingUnitType.length,
+        autoFixable: true
+      })
+    }
+
+    // Check for duplicate unit numbers (BLOCKER)
+    if (duplicateUnits.length > 0) {
+      blockers.push({
+        field: 'duplicate_units',
+        message: `${duplicateUnits.length} duplicate unit numbers detected`,
+        rowCount: duplicateUnits.length,
+        autoFixable: false
+      })
+    }
+
     return {
       yearColumns,
       sectorCodes,
       contactCount,
       emailCount,
       ownerCount,
-      duplicateUnits
+      duplicateUnits,
+      blockers,
+      warnings,
+      totalRows: mappedPreview.length,
+      validRows: mappedPreview.length - missingUnitNumbers.length - missingOwners.length
     }
-  }, [importData, mappedPreview])
+  }, [importData, mappedPreview, defaultArea])
 
   // Clear all filters
   const clearAllFilters = useCallback(() => {
@@ -498,14 +569,16 @@ const Units: React.FC = () => {
     setFilteredUnits(filtered)
   }, [searchText, selectedProject, selectedUnitType, statusFilter, areaRange, units])
 
-  const handleAdd = (): void => {
+  const handleAdd = (quickMode = false): void => {
     setEditingUnit(null)
+    setIsQuickEntryMode(quickMode)
     form.resetFields()
     setIsModalOpen(true)
   }
 
   const handleEdit = (record: Unit): void => {
     setEditingUnit(record)
+    setIsQuickEntryMode(false)
     form.setFieldsValue(record)
     setIsModalOpen(true)
   }
@@ -514,9 +587,16 @@ const Units: React.FC = () => {
     Modal.confirm({
       title: 'Are you sure?',
       onOk: async () => {
-        await window.api.units.delete(id)
-        message.success('Unit deleted')
-        fetchData()
+        setLoading(true)
+        try {
+          await window.api.units.delete(id)
+          message.success('Unit deleted')
+          fetchData()
+        } catch {
+          message.error('Failed to delete unit')
+        } finally {
+          setLoading(false)
+        }
       }
     })
   }
@@ -544,21 +624,28 @@ const Units: React.FC = () => {
   }
 
   const handleModalOk = async (): Promise<void> => {
-    const values = await form.validateFields()
-    const payload = {
-      ...values,
-      sector_code:
-        String(values.sector_code || '')
-          .trim()
-          .toUpperCase() || undefined
+    setLoading(true)
+    try {
+      const values = await form.validateFields()
+      const payload = {
+        ...values,
+        sector_code:
+          String(values.sector_code || '')
+            .trim()
+            .toUpperCase() || undefined
+      }
+      if (editingUnit?.id) {
+        await window.api.units.update(editingUnit.id, payload)
+      } else {
+        await window.api.units.create(payload)
+      }
+      setIsModalOpen(false)
+      fetchData()
+    } catch {
+      // Validation or API errors will show via form or message
+    } finally {
+      setLoading(false)
     }
-    if (editingUnit?.id) {
-      await window.api.units.update(editingUnit.id, payload)
-    } else {
-      await window.api.units.create(payload)
-    }
-    setIsModalOpen(false)
-    fetchData()
   }
 
   const handleImport = async (file: File): Promise<boolean> => {
@@ -1041,8 +1128,11 @@ const Units: React.FC = () => {
           >
             <Button icon={<UploadOutlined />}>Import Excel</Button>
           </Upload>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => handleAdd(false)}>
             Add Unit
+          </Button>
+          <Button icon={<FileAddOutlined />} onClick={() => handleAdd(true)}>
+            Quick Add
           </Button>
         </Space>
       </div>
@@ -1298,53 +1388,178 @@ const Units: React.FC = () => {
           </div>
 
           {importData.length > 0 && (
-            <Alert
-              message={`Detected Workbook: ${detectedImportProfile.label}`}
-              description={
-                <div>
-                  <div>{detectedImportProfile.description}</div>
-                  <div style={{ marginTop: 4 }}>{detectedImportProfile.reason}</div>
-                  <div style={{ marginTop: 8 }}>
-                    FY Columns:{' '}
-                    {importAudit.yearColumns.length > 0
-                      ? importAudit.yearColumns.join(', ')
-                      : 'None'}
-                    {' | '}Sectors:{' '}
-                    {importAudit.sectorCodes.length > 0
-                      ? importAudit.sectorCodes.join(', ')
-                      : 'None'}
+            <>
+              {/* Validation Summary Panel */}
+              {(importAudit.blockers.length > 0 || importAudit.warnings.length > 0) && (
+                <Card
+                  size="small"
+                  title={
+                    <Space>
+                      <Text strong>Validation Summary</Text>
+                      {importAudit.blockers.length > 0 && (
+                        <Tag color="error" icon={<ExclamationCircleOutlined />}>
+                          {importAudit.blockers.length} Blockers
+                        </Tag>
+                      )}
+                      {importAudit.warnings.length > 0 && (
+                        <Tag color="warning" icon={<WarningOutlined />}>
+                          {importAudit.warnings.length} Warnings
+                        </Tag>
+                      )}
+                    </Space>
+                  }
+                  extra={
+                    importAudit.warnings.some(w => w.autoFixable) && (
+                      <Button
+                        size="small"
+                        type="primary"
+                        icon={<ThunderboltOutlined />}
+                        onClick={() => {
+                          // Auto-fix warnings
+                          const fixedPreview = mappedPreview.map(row => ({
+                            ...row,
+                            area_sqft: row.area_sqft || defaultArea,
+                            unit_type: row.unit_type || 'Plot'
+                          }))
+                          setMappedPreview(fixedPreview)
+                          message.success('Auto-fixed ' + importAudit.warnings.filter(w => w.autoFixable).length + ' issues')
+                        }}
+                      >
+                        Auto-Fix Issues
+                      </Button>
+                    )
+                  }
+                >
+                  <Collapse ghost defaultActiveKey={importAudit.blockers.length > 0 ? ['blockers'] : []}>
+                    {importAudit.blockers.length > 0 && (
+                      <Panel
+                        header={
+                          <Space>
+                            <Text type="danger" strong>
+                              <ExclamationCircleOutlined /> Blockers (Must Fix)
+                            </Text>
+                            <Badge count={importAudit.blockers.length} style={{ backgroundColor: '#ff4d4f' }} />
+                          </Space>
+                        }
+                        key="blockers"
+                      >
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          {importAudit.blockers.map((blocker, idx) => (
+                            <Alert
+                              key={idx}
+                              message={blocker.message}
+                              type="error"
+                              showIcon
+                              style={{ marginBottom: 8 }}
+                              action={
+                                blocker.rowCount <= 5 && (
+                                  <Button size="small" onClick={() => {
+                                    // Scroll to first row with this issue
+                                    const firstRow = mappedPreview.findIndex(
+                                      r => !String(r[blocker.field as keyof ImportUnitPreview] || '').trim()
+                                    )
+                                    if (firstRow >= 0) {
+                                      message.info(`Row ${firstRow + 1} needs attention`)
+                                    }
+                                  }}>
+                                    View
+                                  </Button>
+                                )
+                              }
+                            />
+                          ))}
+                        </Space>
+                      </Panel>
+                    )}
+                    {importAudit.warnings.length > 0 && (
+                      <Panel
+                        header={
+                          <Space>
+                            <Text type="warning" strong>
+                              <WarningOutlined /> Warnings (Auto-fixable)
+                            </Text>
+                            <Badge count={importAudit.warnings.length} style={{ backgroundColor: '#faad14' }} />
+                          </Space>
+                        }
+                        key="warnings"
+                      >
+                        <Space direction="vertical" style={{ width: '100%' }}>
+                          {importAudit.warnings.map((warning, idx) => (
+                            <Alert
+                              key={idx}
+                              message={warning.message}
+                              type="warning"
+                              showIcon
+                              style={{ marginBottom: 8 }}
+                            />
+                          ))}
+                        </Space>
+                      </Panel>
+                    )}
+                  </Collapse>
+                  
+                  {/* Progress indicator */}
+                  <div style={{ marginTop: 12 }}>
+                    <Progress
+                      percent={Math.round((importAudit.validRows / importAudit.totalRows) * 100)}
+                      size="small"
+                      status={importAudit.blockers.length > 0 ? 'exception' : 'active'}
+                      format={() => `${importAudit.validRows}/${importAudit.totalRows} rows ready`}
+                    />
                   </div>
-                  <div style={{ marginTop: 4 }}>
-                    Owner rows: {importAudit.ownerCount}/{mappedPreview.length}
-                    {' | '}Contact rows: {importAudit.contactCount}/{mappedPreview.length}
-                    {' | '}Email rows: {importAudit.emailCount}/{mappedPreview.length}
-                  </div>
-                  {selectedImportProject && (
+                </Card>
+              )}
+
+              {/* Detection Info */}
+              <Alert
+                message={`Detected Workbook: ${detectedImportProfile.label}`}
+                description={
+                  <div>
+                    <div>{detectedImportProfile.description}</div>
+                    <div style={{ marginTop: 4 }}>{detectedImportProfile.reason}</div>
+                    <div style={{ marginTop: 8 }}>
+                      FY Columns:{' '}
+                      {importAudit.yearColumns.length > 0
+                        ? importAudit.yearColumns.join(', ')
+                        : 'None'}
+                      {' | '}Sectors:{' '}
+                      {importAudit.sectorCodes.length > 0
+                        ? importAudit.sectorCodes.join(', ')
+                        : 'None'}
+                    </div>
                     <div style={{ marginTop: 4 }}>
-                      Project import profile:{' '}
-                      {selectedImportProject.import_profile_key || 'Not configured'}
+                      Owner rows: {importAudit.ownerCount}/{mappedPreview.length}
+                      {' | '}Contact rows: {importAudit.contactCount}/{mappedPreview.length}
+                      {' | '}Email rows: {importAudit.emailCount}/{mappedPreview.length}
                     </div>
-                  )}
-                  {importAudit.duplicateUnits.length > 0 && (
-                    <div style={{ marginTop: 4, color: '#d46b08' }}>
-                      Duplicate units in preview:{' '}
-                      {importAudit.duplicateUnits.slice(0, 5).join(', ')}
-                      {importAudit.duplicateUnits.length > 5
-                        ? ` and ${importAudit.duplicateUnits.length - 5} more`
-                        : ''}
-                    </div>
-                  )}
-                </div>
-              }
-              type={
-                selectedImportProject &&
-                selectedImportProject.import_profile_key &&
-                selectedImportProject.import_profile_key !== detectedImportProfile.key
-                  ? 'warning'
-                  : 'info'
-              }
-              showIcon
-            />
+                    {selectedImportProject && (
+                      <div style={{ marginTop: 4 }}>
+                        Project import profile:{' '}
+                        {selectedImportProject.import_profile_key || 'Not configured'}
+                      </div>
+                    )}
+                    {importAudit.duplicateUnits.length > 0 && (
+                      <div style={{ marginTop: 4, color: '#d46b08' }}>
+                        Duplicate units in preview:{' '}
+                        {importAudit.duplicateUnits.slice(0, 5).join(', ')}
+                        {importAudit.duplicateUnits.length > 5
+                          ? ` and ${importAudit.duplicateUnits.length - 5} more`
+                          : ''}
+                      </div>
+                    )}
+                  </div>
+                }
+                type={
+                  selectedImportProject &&
+                  selectedImportProject.import_profile_key &&
+                  selectedImportProject.import_profile_key !== detectedImportProfile.key
+                    ? 'warning'
+                    : 'info'
+                }
+                showIcon
+                style={{ marginTop: 16 }}
+              />
+            </>
           )}
 
           {mappedPreview.length > 0 && (
@@ -1626,18 +1841,52 @@ const Units: React.FC = () => {
       </Modal>
 
       <Modal
-        title={editingUnit ? 'Edit Unit' : 'Add Unit'}
+        title={
+          <Space>
+            {editingUnit ? 'Edit Unit' : isQuickEntryMode ? 'Quick Add Unit' : 'Add Unit'}
+            {isQuickEntryMode && (
+              <Tag color="blue" icon={<FileAddOutlined />}>Quick Mode</Tag>
+            )}
+          </Space>
+        }
         open={isModalOpen}
         onOk={handleModalOk}
-        onCancel={() => setIsModalOpen(false)}
-        width={680}
+        onCancel={() => {
+          setIsModalOpen(false)
+          setIsQuickEntryMode(false)
+        }}
+        width={isQuickEntryMode ? 480 : 680}
         style={{ maxWidth: '95vw' }}
       >
         <Form
           form={form}
           layout="vertical"
-          initialValues={{ unit_type: 'Bungalow', status: 'Sold', penalty: 0 }}
+          initialValues={{ 
+            unit_type: 'Bungalow', 
+            status: 'Sold', 
+            penalty: 0,
+            project_id: selectedProject || undefined
+          }}
         >
+          {/* ── Quick Entry Notice ── */}
+          {isQuickEntryMode && (
+            <Alert
+              message="Quick Entry Mode"
+              description="Only essential fields are shown. You can add more details later by editing the unit."
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+              action={
+                <Button 
+                  size="small" 
+                  onClick={() => setIsQuickEntryMode(false)}
+                >
+                  Switch to Full Form
+                </Button>
+              }
+            />
+          )}
+
           {/* ── Project & Identity ── */}
           <Divider orientation={'left' as DividerProps['orientation']} plain style={{ marginTop: 0 }}>
             Unit Information
@@ -1665,9 +1914,12 @@ const Units: React.FC = () => {
             >
               <Input placeholder="e.g. A-001" />
             </Form.Item>
-            <Form.Item name="sector_code" label="Sector / Block Code">
-              <Input placeholder="e.g. A, B, C" />
-            </Form.Item>
+            
+            {!isQuickEntryMode && (
+              <Form.Item name="sector_code" label="Sector / Block Code">
+                <Input placeholder="e.g. A, B, C" />
+              </Form.Item>
+            )}
 
             <Form.Item
               name="unit_type"
@@ -1688,80 +1940,93 @@ const Units: React.FC = () => {
               <InputNumber style={{ width: '100%' }} min={1} />
             </Form.Item>
 
-            <Form.Item
-              name="status"
-              label="Status"
-              rules={[{ required: true, message: 'Please select status' }]}
-            >
-              <Select>
-                <Option value="Sold">Sold</Option>
-                <Option value="Unsold">Unsold</Option>
-                <Option value="Vacant">Vacant</Option>
-              </Select>
-            </Form.Item>
-            <Form.Item name="penalty" label="Opening Penalty (₹)">
-              <InputNumber<number>
-                style={{ width: '100%' }}
-                min={0}
-                formatter={(value) => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                parser={(displayValue) =>
-                  displayValue?.replace(/₹\s?|(,*)/g, '') as unknown as number
-                }
-              />
-            </Form.Item>
-            <Form.Item name="penalty_percentage" label="Late Payment Charges (%)">
-              <InputNumber<number>
-                style={{ width: '100%' }}
-                min={0}
-                max={100}
-                formatter={(value) => `${value}%`}
-                parser={(displayValue) =>
-                  displayValue?.replace('%', '') as unknown as number
-                }
-                placeholder="Leave blank to use project default"
-              />
-            </Form.Item>
+            {!isQuickEntryMode && (
+              <>
+                <Form.Item
+                  name="status"
+                  label="Status"
+                  rules={[{ required: true, message: 'Please select status' }]}
+                >
+                  <Select>
+                    <Option value="Sold">Sold</Option>
+                    <Option value="Unsold">Unsold</Option>
+                    <Option value="Vacant">Vacant</Option>
+                  </Select>
+                </Form.Item>
+                <Form.Item name="penalty" label="Opening Penalty (₹)">
+                  <InputNumber<number>
+                    style={{ width: '100%' }}
+                    min={0}
+                    formatter={(value) => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                    parser={(displayValue) =>
+                      displayValue?.replace(/₹\s?|(,*)/g, '') as unknown as number
+                    }
+                  />
+                </Form.Item>
+                <Form.Item name="penalty_percentage" label="Late Payment Charges (%)">
+                  <InputNumber<number>
+                    style={{ width: '100%' }}
+                    min={0}
+                    max={100}
+                    formatter={(value) => `${value}%`}
+                    parser={(displayValue) =>
+                      displayValue?.replace('%', '') as unknown as number
+                    }
+                    placeholder="Leave blank to use project default"
+                  />
+                </Form.Item>
+              </>
+            )}
           </div>
 
           {/* ── Owner Details ── */}
           <Divider orientation={'left' as DividerProps['orientation']} plain>
             Owner Details
           </Divider>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isQuickEntryMode ? '1fr' : '1fr 1fr', gap: '16px' }}>
             <Form.Item
               name="owner_name"
               label="Owner Name"
               rules={[{ required: true, message: 'Please enter owner name' }]}
-              style={{ gridColumn: 'span 2' }}
+              style={{ gridColumn: isQuickEntryMode ? 'span 1' : 'span 2' }}
             >
               <Input placeholder="Full name of owner" />
             </Form.Item>
-            <Form.Item name="contact_number" label="Contact Number">
-              <Input placeholder="Mobile / phone number" />
-            </Form.Item>
-            <Form.Item name="email" label="Email Address">
-              <Input type="email" placeholder="owner@email.com" />
-            </Form.Item>
+            
+            {!isQuickEntryMode && (
+              <>
+                <Form.Item name="contact_number" label="Contact Number">
+                  <Input placeholder="Mobile / phone number" />
+                </Form.Item>
+                <Form.Item name="email" label="Email Address">
+                  <Input type="email" placeholder="owner@email.com" />
+                </Form.Item>
+              </>
+            )}
           </div>
 
-          {/* ── Address Details ── */}
-          <Divider orientation={'left' as DividerProps['orientation']} plain>
-            Address Details
-          </Divider>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
-            <Form.Item name="billing_address" label="Billing Address">
-              <Input.TextArea
-                rows={2}
-                placeholder="Address for maintenance letter / invoice delivery"
-              />
-            </Form.Item>
-            <Form.Item name="resident_address" label="Resident / Current Address">
-              <Input.TextArea
-                rows={2}
-                placeholder="Current residential address (if different from billing)"
-              />
-            </Form.Item>
-          </div>
+          {/* ── Address Details (Full Mode Only) ── */}
+          {!isQuickEntryMode && (
+            <>
+              <Divider orientation={'left' as DividerProps['orientation']} plain>
+                Address Details
+              </Divider>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+                <Form.Item name="billing_address" label="Billing Address">
+                  <Input.TextArea
+                    rows={2}
+                    placeholder="Address for maintenance letter / invoice delivery"
+                  />
+                </Form.Item>
+                <Form.Item name="resident_address" label="Resident / Current Address">
+                  <Input.TextArea
+                    rows={2}
+                    placeholder="Current residential address (if different from billing)"
+                  />
+                </Form.Item>
+              </div>
+            </>
+          )}
         </Form>
       </Modal>
     </div>

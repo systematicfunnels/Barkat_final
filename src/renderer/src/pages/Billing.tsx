@@ -30,7 +30,8 @@ import {
   EditOutlined,
   InfoCircleOutlined,
   CheckCircleOutlined,
-  CloseCircleOutlined
+  CloseCircleOutlined,
+  CopyOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import isSameOrAfter from 'dayjs/plugin/isSameOrAfter'
@@ -102,6 +103,64 @@ const Billing: React.FC = () => {
   const batchFinancialYear = Form.useWatch('financial_year', form)
   const [projectSetupSummary, setProjectSetupSummary] = useState<ProjectSetupSummary | null>(null)
   const [setupSummaryLoading, setSetupSummaryLoading] = useState(false)
+
+  const [copyingAddOns, setCopyingAddOns] = useState(false)
+
+  // Fetch add-ons from previous year for copy functionality
+  const handleCopyFromPreviousYear = async (): Promise<void> => {
+    const projectId = form.getFieldValue('project_id')
+    const currentFY = form.getFieldValue('financial_year')
+    
+    if (!projectId || !currentFY) {
+      message.warning('Please select project and financial year first')
+      return
+    }
+
+    // Find the most recent previous year that has letters
+    const previousYears = uniqueYears
+      .filter(year => year < currentFY)
+      .sort()
+      .reverse()
+    
+    if (previousYears.length === 0) {
+      message.info('No previous year data available to copy from')
+      return
+    }
+
+    setCopyingAddOns(true)
+    try {
+      // Try each previous year until we find one with add-ons
+      for (const prevYear of previousYears) {
+        const prevYearLetters = letters.filter(
+          l => l.project_id === projectId && l.financial_year === prevYear
+        )
+        
+        if (prevYearLetters.length > 0 && prevYearLetters[0].id) {
+          // Get add-ons from the first letter of the previous year
+          const prevAddOns = await window.api.letters.getAddOns(prevYearLetters[0].id)
+          
+          if (prevAddOns && prevAddOns.length > 0) {
+            form.setFieldsValue({
+              add_ons: prevAddOns.map((a: LetterAddOn) => ({
+                addon_name: a.addon_name,
+                addon_amount: a.addon_amount,
+                remarks: a.remarks
+              }))
+            })
+            message.success(`Copied ${prevAddOns.length} add-on(s) from ${prevYear}`)
+            return
+          }
+        }
+      }
+      
+      message.info('No add-ons found in previous years to copy')
+    } catch (error) {
+      console.error('Failed to copy add-ons from previous year:', error)
+      message.error('Failed to copy from previous year')
+    } finally {
+      setCopyingAddOns(false)
+    }
+  }
 
   const fetchData = async (): Promise<void> => {
     setLoading(true)
@@ -1629,7 +1688,18 @@ const Billing: React.FC = () => {
                     </Form.Item>
 
                     <Divider style={{ gridColumn: 'span 2', margin: '8px 0' }}>
-                      Add-ons (Optional)
+                      <Space>
+                        <span>Add-ons (Optional)</span>
+                        <Button
+                          size="small"
+                          icon={<CopyOutlined />}
+                          loading={copyingAddOns}
+                          onClick={handleCopyFromPreviousYear}
+                          disabled={!batchProjectId || !batchFinancialYear}
+                        >
+                          Copy from Previous Year
+                        </Button>
+                      </Space>
                     </Divider>
 
                     <Form.List name="add_ons">

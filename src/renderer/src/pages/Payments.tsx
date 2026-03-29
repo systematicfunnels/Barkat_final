@@ -17,7 +17,8 @@ import {
   Card,
   DividerProps,
   Progress,
-  Alert
+  Alert,
+  Collapse
 } from 'antd'
 import {
   PlusOutlined,
@@ -26,7 +27,8 @@ import {
   TableOutlined,
   CalculatorOutlined,
   ClearOutlined,
-  InfoCircleOutlined
+  InfoCircleOutlined,
+  FilterOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { Project, Unit, Payment, MaintenanceLetter } from '@preload/types'
@@ -863,117 +865,133 @@ const Payments: React.FC = () => {
       </div>
 
       <Card>
-        <div style={{ marginBottom: 24 }}>
-          <Space wrap size="middle">
-            <Search
-              placeholder="Search receipt, unit, owner, or project..."
-              allowClear
-              onChange={(e) => setSearchText(e.target.value)}
-              onSearch={setSearchText}
-              style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
-              enterButton
-              suffix={null}
-              value={searchText}
-              aria-label="Search payments by receipt, unit, owner, or project"
-            />
-            <Select
-              placeholder="Project"
-              style={{ width: '100%', minWidth: 160 }}
-              allowClear
-              onChange={setSelectedProject}
-              value={selectedProject}
-              aria-label="Filter by project"
-            >
-              {projects.map((s) => (
-                <Option key={s.id} value={s.id}>
-                  {s.name}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Financial Year"
-              style={{ width: '100%', minWidth: 140 }}
-              allowClear
-              onChange={setSelectedFY}
-              value={selectedFY}
-              aria-label="Filter by financial year"
-            >
-              {uniqueFinancialYears.map((fy) => (
-                <Option key={fy} value={fy}>
-                  {fy}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Mode"
-              style={{ width: '100%', minWidth: 160 }}
-              allowClear
-              onChange={setSelectedMode}
-              value={selectedMode}
-              aria-label="Filter by payment mode"
-            >
-              <Option value="Transfer">Bank Transfer / UPI</Option>
-              <Option value="Cheque">Cheque</Option>
-              <Option value="Cash">Cash</Option>
-            </Select>
-          </Space>
+        <Collapse 
+          defaultActiveKey={['basic']}
+          items={[
+            {
+              key: 'basic',
+              label: (
+                <Space>
+                  <FilterOutlined />
+                  <span>Basic Filters</span>
+                  {hasActiveFilters && <Tag color="blue">Active</Tag>}
+                </Space>
+              ),
+              children: (
+                <Space wrap size="middle">
+                  <Search
+                    placeholder="Search receipt, unit, owner, or project..."
+                    allowClear
+                    onChange={(e) => setSearchText(e.target.value)}
+                    onSearch={setSearchText}
+                    style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
+                    enterButton
+                    suffix={null}
+                    value={searchText}
+                    aria-label="Search payments by receipt, unit, owner, or project"
+                  />
+                  <Select
+                    placeholder="Project"
+                    style={{ width: '100%', minWidth: 160 }}
+                    allowClear
+                    onChange={setSelectedProject}
+                    value={selectedProject}
+                    aria-label="Filter by project"
+                  >
+                    {projects.map((s) => (
+                      <Option key={s.id} value={s.id}>
+                        {s.name}
+                      </Option>
+                    ))}
+                  </Select>
+                  <Select
+                    placeholder="Financial Year"
+                    style={{ width: '100%', minWidth: 140 }}
+                    allowClear
+                    onChange={setSelectedFY}
+                    value={selectedFY}
+                    aria-label="Filter by financial year"
+                  >
+                    {uniqueFinancialYears.map((fy) => (
+                      <Option key={fy} value={fy}>
+                        {fy}
+                      </Option>
+                    ))}
+                  </Select>
+                  <Select
+                    placeholder="Mode"
+                    style={{ width: '100%', minWidth: 160 }}
+                    allowClear
+                    onChange={setSelectedMode}
+                    value={selectedMode}
+                    aria-label="Filter by payment mode"
+                  >
+                    <Option value="Transfer">Bank Transfer / UPI</Option>
+                    <Option value="Cheque">Cheque</Option>
+                    <Option value="Cash">Cash</Option>
+                  </Select>
+                </Space>
+              )
+            }
+          ]}
+        />
 
-          {/* Filter Summary Chips */}
-          {hasActiveFilters && (
-            <div style={{ marginTop: 16 }}>
-              <Space wrap>
-                <Text type="secondary" style={{ fontSize: '12px' }}>
-                  Active filters:
-                </Text>
-                {searchText && (
-                  <Tag
-                    closable
-                    onClose={() => setSearchText('')}
-                    aria-label={`Search filter: ${searchText}`}
-                  >
-                    Search: &quot;{searchText}&quot;
-                  </Tag>
-                )}
-                {selectedProject !== null && (
-                  <Tag
-                    closable
-                    onClose={() => setSelectedProject(null)}
-                    aria-label={`Project filter: ${selectedProjectName}`}
-                  >
-                    Project: {selectedProjectName}
-                  </Tag>
-                )}
-                {selectedFY !== null && selectedFY !== defaultFY && (
-                  <Tag
-                    closable
-                    onClose={() => setSelectedFY(defaultFY)}
-                    aria-label={`Financial year filter: ${selectedFY}`}
-                  >
-                    FY: {selectedFY}
-                  </Tag>
-                )}
-                {selectedMode !== null && (
-                  <Tag
-                    closable
-                    onClose={() => setSelectedMode(null)}
-                    aria-label={`Payment mode filter: ${selectedMode}`}
-                  >
-                    Mode: {selectedMode}
-                  </Tag>
-                )}
-                <Button
-                  type="link"
-                  size="small"
-                  onClick={clearAllFilters}
-                  style={{ fontSize: '12px', padding: 0, height: 'auto' }}
-                  aria-label="Clear all filters"
+        {/* Filter Summary Chips */}
+        {hasActiveFilters && (
+          <div style={{ marginTop: 16 }}>
+            <Space wrap>
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                Active filters:
+              </Text>
+              {searchText && (
+                <Tag
+                  closable
+                  onClose={() => setSearchText('')}
+                  aria-label={`Search filter: ${searchText}`}
                 >
-                  Clear all
-                </Button>
-              </Space>
-            </div>
-          )}
-        </div>
+                  Search: &quot;{searchText}&quot;
+                </Tag>
+              )}
+              {selectedProject !== null && (
+                <Tag
+                  closable
+                  onClose={() => setSelectedProject(null)}
+                  aria-label={`Project filter: ${selectedProjectName}`}
+                >
+                  Project: {selectedProjectName}
+                </Tag>
+              )}
+              {selectedFY !== null && selectedFY !== defaultFY && (
+                <Tag
+                  closable
+                  onClose={() => setSelectedFY(defaultFY)}
+                  aria-label={`Financial year filter: ${selectedFY}`}
+                >
+                  FY: {selectedFY}
+                </Tag>
+              )}
+              {selectedMode !== null && (
+                <Tag
+                  closable
+                  onClose={() => setSelectedMode(null)}
+                  aria-label={`Payment mode filter: ${selectedMode}`}
+                >
+                  Mode: {selectedMode}
+                </Tag>
+              )}
+              <Button
+                type="link"
+                size="small"
+                onClick={clearAllFilters}
+                style={{ fontSize: '12px', padding: 0, height: 'auto' }}
+                aria-label="Clear all filters"
+              >
+                Clear all
+              </Button>
+            </Space>
+          </div>
+        )}
+      </Card>
 
         <Table
           rowSelection={{
@@ -990,7 +1008,6 @@ const Payments: React.FC = () => {
           pagination={{ pageSize: 10 }}
           scroll={{ x: 'max-content' }}
         />
-      </Card>
 
       {/* Batch Receipt Generation Progress Modal */}
       <Modal
