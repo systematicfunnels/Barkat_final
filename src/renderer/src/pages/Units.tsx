@@ -15,24 +15,23 @@ import {
   Typography,
   Card,
   Alert,
-  DividerProps,
-  Tag,
-  Tooltip,
-  Collapse,
   Badge,
-  Progress
+  Progress,
+  Collapse,
+  Tag
 } from 'antd'
+import type { DividerProps } from 'antd'
 import {
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
   UploadOutlined,
   FilePdfOutlined,
   SolutionOutlined,
   ThunderboltOutlined,
   ExclamationCircleOutlined,
   WarningOutlined,
-  FileAddOutlined
+  FileAddOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  PlusOutlined
 } from '@ant-design/icons'
 import { IndianRupee } from 'lucide-react'
 import { Unit, Project } from '@preload/types'
@@ -1063,29 +1062,38 @@ const Units: React.FC = () => {
       title: 'Actions',
       key: 'actions',
       align: 'right' as const,
+      width: 280,
       render: (_: unknown, record: Unit) => (
-        <Space>
-          <Tooltip title="Generate Maintenance Letter">
-            <Button
-              size="small"
-              icon={<FilePdfOutlined />}
-              onClick={() => navigate('/billing', { state: { unitId: record.id } })}
-            />
-          </Tooltip>
-          <Tooltip title="Record Payment">
-            <Button
-              size="small"
-              icon={<IndianRupee size={16} />}
-              onClick={() => navigate('/payments', { state: { unitId: record.id } })}
-            />
-          </Tooltip>
-          <Button size="small" icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+        <Space size="small">
+          <Button
+            size="small"
+            icon={<FilePdfOutlined />}
+            onClick={() => navigate('/billing', { state: { unitId: record.id } })}
+          >
+            Letter
+          </Button>
+          <Button
+            size="small"
+            icon={<IndianRupee size={14} />}
+            onClick={() => navigate('/payments', { state: { unitId: record.id } })}
+          >
+            Payment
+          </Button>
+          <Button 
+            size="small" 
+            icon={<EditOutlined />} 
+            onClick={() => handleEdit(record)}
+          >
+            Edit
+          </Button>
           <Button
             size="small"
             icon={<DeleteOutlined />}
             danger
             onClick={() => handleDelete(record.id!)}
-          />
+          >
+            Delete
+          </Button>
         </Space>
       )
     }
@@ -1103,24 +1111,24 @@ const Units: React.FC = () => {
         <Title level={2} style={{ margin: 0 }}>
           Units
         </Title>
-        <Space wrap className="responsive-action-bar">
-          {selectedRowKeys.length > 0 && (
-            <>
-              <Text type="secondary" style={{ fontSize: '14px' }}>
-                ({selectedRowKeys.length} selected)
-              </Text>
-              <Button
-                type="primary"
-                icon={<SolutionOutlined />}
-                onClick={() => navigate('/billing', { state: { unitIds: selectedRowKeys } })}
-              >
-                Generate Maintenance Letters ({selectedRowKeys.length})
-              </Button>
-              <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
-                Delete ({selectedRowKeys.length})
-              </Button>
-            </>
-          )}
+        <Space wrap className="responsive-action-bar" align="center">
+          <div style={{ minWidth: selectedRowKeys.length > 0 ? 'auto' : 0, transition: 'all 0.2s' }}>
+            {selectedRowKeys.length > 0 && (
+              <Space>
+                <Text type="secondary">({selectedRowKeys.length} selected)</Text>
+                <Button
+                  type="primary"
+                  icon={<SolutionOutlined />}
+                  onClick={() => navigate('/billing', { state: { unitIds: selectedRowKeys } })}
+                >
+                  Generate Letters ({selectedRowKeys.length})
+                </Button>
+                <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
+                  Delete ({selectedRowKeys.length})
+                </Button>
+              </Space>
+            )}
+          </div>
           <Upload
             beforeUpload={handleImport}
             showUploadList={false}
@@ -1186,18 +1194,17 @@ const Units: React.FC = () => {
               ))}
             </Select>
 
-            {/* Area range with validation */}
+            {/* Area range with validation - fixed to validate onBlur */}
             <Input.Group compact style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
               <InputNumber
                 placeholder="Min Area"
                 style={{ width: 100, flex: '1 1 90px' }}
                 value={areaRange[0]}
-                onChange={(min) => {
-                  if (areaRange[1] && min && min > areaRange[1]) {
+                onChange={(min) => setAreaRange([min, areaRange[1]])}
+                onBlur={() => {
+                  if (areaRange[1] && areaRange[0] && areaRange[0] > areaRange[1]) {
                     message.warning('Minimum area cannot be greater than maximum')
-                    return
                   }
-                  setAreaRange([min, areaRange[1]])
                 }}
               />
               <span style={{ padding: '0 8px', lineHeight: '32px' }}>to</span>
@@ -1205,12 +1212,11 @@ const Units: React.FC = () => {
                 placeholder="Max Area"
                 style={{ width: 100, flex: '1 1 90px' }}
                 value={areaRange[1]}
-                onChange={(max) => {
-                  if (areaRange[0] && max && max < areaRange[0]) {
+                onChange={(max) => setAreaRange([areaRange[0], max])}
+                onBlur={() => {
+                  if (areaRange[0] && areaRange[1] && areaRange[1] < areaRange[0]) {
                     message.warning('Maximum area cannot be less than minimum')
-                    return
                   }
-                  setAreaRange([areaRange[0], max])
                 }}
               />
             </Input.Group>
@@ -1841,14 +1847,7 @@ const Units: React.FC = () => {
       </Modal>
 
       <Modal
-        title={
-          <Space>
-            {editingUnit ? 'Edit Unit' : isQuickEntryMode ? 'Quick Add Unit' : 'Add Unit'}
-            {isQuickEntryMode && (
-              <Tag color="blue" icon={<FileAddOutlined />}>Quick Mode</Tag>
-            )}
-          </Space>
-        }
+        title={editingUnit ? 'Edit Unit' : 'Add Unit'}
         open={isModalOpen}
         onOk={handleModalOk}
         onCancel={() => {
@@ -1858,6 +1857,28 @@ const Units: React.FC = () => {
         width={isQuickEntryMode ? 480 : 680}
         style={{ maxWidth: '95vw' }}
       >
+        {/* Mode toggle tabs at top - only show when adding (not editing) */}
+        {!editingUnit && (
+          <div style={{ marginBottom: 16, borderBottom: '1px solid #f0f0f0' }}>
+            <Space size="large">
+              <Button
+                type={isQuickEntryMode ? 'link' : 'primary'}
+                onClick={() => setIsQuickEntryMode(false)}
+                style={{ padding: '8px 0', fontWeight: isQuickEntryMode ? 'normal' : 600 }}
+              >
+                Full Form
+              </Button>
+              <Button
+                type={isQuickEntryMode ? 'primary' : 'link'}
+                onClick={() => setIsQuickEntryMode(true)}
+                style={{ padding: '8px 0', fontWeight: isQuickEntryMode ? 600 : 'normal' }}
+              >
+                Quick Add
+              </Button>
+            </Space>
+          </div>
+        )}
+
         <Form
           form={form}
           layout="vertical"
@@ -1868,25 +1889,6 @@ const Units: React.FC = () => {
             project_id: selectedProject || undefined
           }}
         >
-          {/* ── Quick Entry Notice ── */}
-          {isQuickEntryMode && (
-            <Alert
-              message="Quick Entry Mode"
-              description="Only essential fields are shown. You can add more details later by editing the unit."
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-              action={
-                <Button 
-                  size="small" 
-                  onClick={() => setIsQuickEntryMode(false)}
-                >
-                  Switch to Full Form
-                </Button>
-              }
-            />
-          )}
-
           {/* ── Project & Identity ── */}
           <Divider orientation={'left' as DividerProps['orientation']} plain style={{ marginTop: 0 }}>
             Unit Information

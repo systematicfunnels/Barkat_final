@@ -12,7 +12,6 @@ import {
   Upload,
   Typography,
   Card,
-  Alert,
   Tag
 } from 'antd'
 import {
@@ -30,12 +29,14 @@ import {
   FilterPanel,
   EntityFormModal,
   FormSection,
+  ImportWizard,
   createColumn,
   createTagColumn,
   createSelectFilter,
   createSearchFilter,
   createRangeFilter
 } from '../components/shared'
+import type { ValidationError, ImportPreview } from '../components/shared'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -59,6 +60,7 @@ const Units: React.FC = () => {
 
   // Import states
   const [isImportModalOpen, setIsImportModalOpen] = useState(false)
+  const [_importData, setImportData] = useState<Record<string, unknown>[]>([])
 
   const [form] = Form.useForm()
   const navigate = useNavigate()
@@ -321,6 +323,84 @@ const Units: React.FC = () => {
     }
   }
 
+  // Import Wizard handlers
+  const handleImportWizardUpload = async (file: File): Promise<Record<string, unknown>[]> => {
+    const data = await readExcelFile(file)
+    setImportData(data)
+    return data
+  }
+
+  const handleImportWizardValidate = async (data: Record<string, unknown>[]): Promise<ValidationError[]> => {
+    const errors: ValidationError[] = []
+    data.forEach((row, idx) => {
+      if (!row['unit_number'] && !row['Unit No'] && !row['unitno']) {
+        errors.push({
+          row: idx + 2,
+          column: 'unit_number',
+          message: 'Unit Number is required',
+          severity: 'error'
+        })
+      }
+      if (!row['owner_name'] && !row['Owner'] && !row['owner']) {
+        errors.push({
+          row: idx + 2,
+          column: 'owner_name',
+          message: 'Owner Name is required',
+          severity: 'error'
+        })
+      }
+    })
+    return errors
+  }
+
+  const handleImportWizardMap = async (data: Record<string, unknown>[]): Promise<ImportPreview[]> => {
+    return data.map((row, idx) => ({
+      id: `row-${idx}`,
+      rowNumber: idx + 2,
+      data: row,
+      mappedData: {
+        unit_number: String(row['unit_number'] || row['Unit No'] || row['unitno'] || ''),
+        owner_name: String(row['owner_name'] || row['Owner'] || row['owner'] || ''),
+        area_sqft: Number(row['area_sqft'] || row['Area'] || row['area'] || 0),
+        unit_type: String(row['unit_type'] || row['Type'] || row['type'] || 'Plot'),
+        status: String(row['status'] || row['Status'] || 'Sold'),
+        sector_code: String(row['sector_code'] || row['Sector'] || row['sector'] || ''),
+        contact_number: String(row['contact_number'] || row['Contact'] || row['contact'] || ''),
+        email: String(row['email'] || row['Email'] || ''),
+        project_id: selectedProject
+      },
+      errors: [],
+      warnings: [],
+      status: 'valid' as const
+    }))
+  }
+
+  const handleImportWizardImport = async (previewData: ImportPreview[]): Promise<void> => {
+    const unitsToImport: Unit[] = previewData.map(p => ({
+      unit_number: String(p.mappedData.unit_number || ''),
+      owner_name: String(p.mappedData.owner_name || ''),
+      area_sqft: Number(p.mappedData.area_sqft) || 0,
+      unit_type: String(p.mappedData.unit_type || 'Plot'),
+      status: String(p.mappedData.status || 'Sold'),
+      sector_code: p.mappedData.sector_code ? String(p.mappedData.sector_code) : undefined,
+      contact_number: p.mappedData.contact_number ? String(p.mappedData.contact_number) : undefined,
+      email: p.mappedData.email ? String(p.mappedData.email) : undefined,
+      project_id: selectedProject || Number(p.mappedData.project_id)
+    }))
+    
+    try {
+      await window.api.units.bulkCreate(unitsToImport)
+      message.success(`Imported ${unitsToImport.length} units`)
+    } catch {
+      message.error('Failed to import units')
+    }
+    
+    dataCache.invalidateAll()
+    fetchData()
+    setIsImportModalOpen(false)
+    setImportData([])
+  }
+
   return (
     <div style={{ padding: '24px' }}>
       {/* Header */}
@@ -496,24 +576,28 @@ const Units: React.FC = () => {
         )}
       </EntityFormModal>
 
-      {/* Import Modal */}
-      <Modal
-        title="Import Units from Excel"
+      <ImportWizard
         open={isImportModalOpen}
-        onOk={() => {}}
-        onCancel={() => {
+        onClose={() => {
           setIsImportModalOpen(false)
+          setImportData([])
         }}
-        width={800}
-        footer={null}
-      >
-        <Alert
-          message="Import functionality preserved"
-          description="The import wizard remains the same as it has complex custom logic for Excel parsing."
-          type="info"
-          showIcon
-        />
-      </Modal>
+        onImport={handleImportWizardImport}
+        columns={[
+          { key: 'unit_number', label: 'Unit Number', required: true, type: 'string' },
+          { key: 'owner_name', label: 'Owner Name', required: true, type: 'string' },
+          { key: 'area_sqft', label: 'Area (sqft)', type: 'number' },
+          { key: 'unit_type', label: 'Unit Type', type: 'select', options: UNIT_TYPES.map(t => ({ value: t, label: t })) },
+          { key: 'status', label: 'Status', type: 'select', options: [{ value: 'Sold', label: 'Sold' }, { value: 'Unsold', label: 'Unsold' }] },
+          { key: 'sector_code', label: 'Sector', type: 'string' },
+          { key: 'contact_number', label: 'Contact', type: 'string' },
+          { key: 'email', label: 'Email', type: 'string' }
+        ]}
+        title="Import Units from Excel"
+        onUpload={handleImportWizardUpload}
+        onValidate={handleImportWizardValidate}
+        onMap={handleImportWizardMap}
+      />
     </div>
   )
 }

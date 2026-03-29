@@ -648,42 +648,31 @@ const Billing: React.FC = () => {
     if (!record.id) return
     try {
       message.loading({ content: 'Loading letter...', key: 'letter_edit' })
-      // Don't reset fields as it conflicts with initialValues
+      
+      const addOns = await window.api.letters.getAddOns(record.id)
+      
+      // Prepare form values before opening modal
+      const formValues = {
+        project_id: record.project_id,
+        financial_year: record.financial_year,
+        letter_date: record.generated_date ? dayjs(record.generated_date) : dayjs(),
+        due_date: record.due_date ? dayjs(record.due_date) : dayjs().add(15, 'day'),
+        add_ons: (addOns || []).map((a: LetterAddOn) => ({
+          addon_name: a.addon_name,
+          addon_amount: a.addon_amount,
+          remarks: a.remarks
+        }))
+      }
+
+      // Set state first
       setPassedUnitIds([record.unit_id])
       setSelectedUnitIds([])
       setBatchModalStep('config')
+      setCurrentLetter(record)
+      
+      // Open modal with form values ready
+      form.setFieldsValue(formValues)
       setIsModalOpen(true)
-      setCurrentLetter(record) // Set the current letter for editing
-
-      const addOns = await window.api.letters.getAddOns(record.id)
-
-      // Set form values after a small delay to ensure initialValues are applied
-      setTimeout(() => {
-        console.log('[EDIT LETTER] Setting form values:', {
-          project_id: record.project_id,
-          financial_year: record.financial_year,
-          letter_date: record.generated_date ? dayjs(record.generated_date).format('YYYY-MM-DD') : 'today',
-          due_date: record.due_date ? dayjs(record.due_date).format('YYYY-MM-DD') : 'today+15'
-        })
-        
-        form.setFieldsValue({
-          project_id: record.project_id,
-          financial_year: record.financial_year,
-          letter_date: record.generated_date ? dayjs(record.generated_date) : dayjs(),
-          due_date: record.due_date ? dayjs(record.due_date) : dayjs().add(15, 'day'),
-          add_ons: (addOns || []).map((a: LetterAddOn) => ({
-            addon_name: a.addon_name,
-            addon_amount: a.addon_amount,
-            remarks: a.remarks
-          }))
-        })
-        
-        // Check what values were actually set
-        setTimeout(() => {
-          const currentValues = form.getFieldsValue(['letter_date', 'due_date'])
-          console.log('[EDIT LETTER] Current form values after setting:', currentValues)
-        }, 50)
-      }, 100)
 
       message.success({ content: 'Letter ready to edit', key: 'letter_edit' })
     } catch {
