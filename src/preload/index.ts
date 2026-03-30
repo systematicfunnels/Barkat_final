@@ -132,7 +132,9 @@ const api = {
   },
   dialog: {
     selectLocalFile: (options: { title?: string; filters?: { name: string; extensions: string[] }[] }) =>
-      ipcRenderer.invoke('select-local-file', options) as Promise<string | null>
+      ipcRenderer.invoke('select-local-file', options) as Promise<string | null>,
+    saveFile: (options: { title?: string; defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) =>
+      ipcRenderer.invoke('save-file', options) as Promise<string | null>
   },
   database: {
     repair: () => ipcRenderer.invoke('database-repair')

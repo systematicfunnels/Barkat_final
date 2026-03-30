@@ -63,6 +63,7 @@ export function FilterPanel({
   const screens = useBreakpoint()
   const isMobile = !screens.md
   const isTablet = screens.md && !screens.lg
+  const responsiveLabelSize = isMobile ? '14px' : '12px'
 
   const activeFilters = useMemo(() => {
     const derivedActiveFilters: FilterOption[] = []
@@ -183,12 +184,7 @@ export function FilterPanel({
           const rangeValue = Array.isArray(values[field.key]) ? values[field.key] as [unknown, unknown] : undefined
           const rangeStyle = isMobile ? { width: '100%' } : { width: 200 }
           return (
-            <Input.Group
-              compact
-              key={field.key}
-              className="app-filter-range"
-              style={{ display: 'flex', gap: 4, ...rangeStyle }}
-            >
+            <Space.Compact key={field.key} className="app-filter-range" style={{ display: 'flex', gap: 4, ...rangeStyle }}>
               <InputNumber
                 className="app-filter-number"
                 placeholder={field.minPlaceholder || 'Min'}
@@ -199,7 +195,7 @@ export function FilterPanel({
                 }}
                 style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
-              <span style={{ padding: '0 8px', lineHeight: '32px' }}>to</span>
+              <span className="app-filter-range-separator">to</span>
               <InputNumber
                 className="app-filter-number"
                 placeholder={field.maxPlaceholder || 'Max'}
@@ -210,7 +206,7 @@ export function FilterPanel({
                 }}
                 style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
-            </Input.Group>
+          </Space.Compact>
           )
         }
 
@@ -222,10 +218,14 @@ export function FilterPanel({
   const content = (
     <Space orientation="vertical" style={{ width: '100%' }} size="middle">
       {showFields && (
-        <div>
+        <div className="app-filter-panel-fields">
+          <div className="app-filter-panel-label">
+            <FilterOutlined />
+            <span>Refine results</span>
+          </div>
           <Space
             wrap
-            className="responsive-filters"
+            className="responsive-filters app-filter-row"
             size="middle"
             orientation={isMobile ? 'vertical' : 'horizontal'}
             style={{ width: '100%' }}
@@ -239,7 +239,7 @@ export function FilterPanel({
       {showActiveFilters && hasActiveFilters && (
         <div className="page-chip-bar" style={{ marginTop: 8 }}>
           <Space wrap align="center" size="small">
-            <Text type="secondary" style={{ fontSize: isMobile ? '14px' : '12px' }}>
+            <Text type="secondary" className="app-filter-summary-label" style={{ fontSize: responsiveLabelSize }}>
               <FilterOutlined /> Active filters:
             </Text>
             {activeFilters.map((filter) => (
@@ -247,22 +247,20 @@ export function FilterPanel({
                 key={filter.key}
                 closable
                 onClose={filter.onRemove}
-                style={{ fontSize: isMobile ? '14px' : '12px' }}
+                className="app-filter-chip"
+                style={{ fontSize: responsiveLabelSize }}
               >
                 {filter.label}
               </Tag>
             ))}
             {showClearButton && (
               <Button
-                type="link"
+                type="default"
                 size={isMobile ? 'middle' : 'small'}
+                className="app-filter-clear-button"
                 icon={<ClearOutlined />}
                 onClick={onClear}
-                style={{
-                  fontSize: isMobile ? '14px' : '12px',
-                  padding: isMobile ? '4px 8px' : 0,
-                  height: isMobile ? 32 : 'auto'
-                }}
+                style={{ fontSize: responsiveLabelSize }}
               >
                 Clear all
               </Button>

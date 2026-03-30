@@ -8,6 +8,7 @@ import {
   BarChartOutlined,
   SettingOutlined,
   MenuOutlined,
+  CloseOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined
 } from '@ant-design/icons'
@@ -62,34 +63,27 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   } = theme.useToken()
 
   const routeMeta = useMemo(() => {
-    const routes: Record<string, { title: string; description: string }> = {
+    const routes: Record<string, { title: string }> = {
       '/': {
-        title: 'Dashboard',
-        description: 'Track collections, outstanding balances, and operational activity.'
+        title: 'Dashboard'
       },
       '/projects': {
-        title: 'Projects',
-        description: 'Manage project records, setup status, and import workflows.'
+        title: 'Projects'
       },
       '/units': {
-        title: 'Units',
-        description: 'Review owners, unit status, imports, and billing readiness.'
+        title: 'Units'
       },
       '/billing': {
-        title: 'Maintenance Letters',
-        description: 'Generate, review, and manage annual maintenance letters.'
+        title: 'Maintenance Letters'
       },
       '/payments': {
-        title: 'Payments & Receipts',
-        description: 'Record payments, process bulk entries, and issue receipts.'
+        title: 'Payments & Receipts'
       },
       '/reports': {
-        title: 'Reports',
-        description: 'Explore year-wise performance and outstanding collections.'
+        title: 'Reports'
       },
       '/settings': {
-        title: 'Settings',
-        description: 'Manage backups, diagnostics, and system maintenance tools.'
+        title: 'Settings'
       }
     }
 
@@ -184,24 +178,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   const renderMenu = () => (
     <>
-      <div
-        className="app-shell-brand"
-        style={{
-          minHeight: 88,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: isMobile || collapsed ? 'center' : 'flex-start',
-          padding: isMobile ? '20px 18px 18px' : '20px 18px',
-          borderBottom: '1px solid rgba(255, 255, 255, 0.08)',
-          marginBottom: 12,
-          gap: 12
-        }}
-      >
+      <div className="app-shell-brand">
         <div className="app-shell-brand-mark">
-          <HomeOutlined style={{ fontSize: 22, color: '#9de4c9' }} />
+          <HomeOutlined style={{ color: '#9de4c9' }} />
         </div>
         {!isMobile && !collapsed && (
-          <div style={{ display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
+          <div className="app-shell-brand-text">
             <span className="app-shell-eyebrow">Workspace</span>
             <span className="app-shell-brand-title">Barkat</span>
             <span className="app-shell-brand-subtitle">Management dashboard</span>
@@ -214,6 +196,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         mode="inline"
         inlineCollapsed={!isMobile && collapsed}
         items={menuItems}
+        aria-label="Primary navigation"
         onClick={({ key }) => handleMenuClick(key)}
       />
     </>
@@ -256,6 +239,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         width={mobileSidebarWidth}
         title={<span className="app-shell-drawer-title">Navigation</span>}
         className="mobile-sidebar-drawer"
+        closeIcon={<CloseOutlined />}
         styles={{
           body: {
             padding: 0,
@@ -297,14 +281,16 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           <div style={{ display: 'flex', alignItems: 'center', gap: 16, minWidth: 0, flex: 1 }}>
             {isMobile ? (
               <Button
+                className="app-shell-header-toggle"
                 type="text"
                 icon={<MenuOutlined />}
                 onClick={() => setMobileDrawerOpen(true)}
-                aria-label="Open sidebar"
+                aria-label="Open navigation"
                 aria-expanded={mobileDrawerOpen}
               />
             ) : (
               <Button
+                className="app-shell-header-toggle"
                 type="text"
                 icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                 onClick={() => setCollapsed((prev) => !prev)}
@@ -314,34 +300,17 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             )}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
               <span className="app-shell-header-title">{routeMeta.title}</span>
-              {!isMobile && (
-                <span className="app-shell-header-subtitle">{routeMeta.description}</span>
-              )}
             </div>
           </div>
-          <div className="app-shell-header-status">
-            <span className="app-shell-status-dot" />
-            <span className="app-shell-status-text">Desktop workspace</span>
-            <div
-              className="app-shell-avatar"
-              style={{
-                width: 32,
-                height: 32,
-                background: '#e8f2ee',
-                borderRadius: '50%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center'
-              }}
-            >
-              <UserOutlined style={{ color: '#2D7A5E' }} />
+          {!isMobile && (
+            <div className="app-shell-header-status" aria-label="Workspace active" title="Workspace active">
+              <span className="app-shell-status-dot" />
             </div>
-          </div>
+          )}
         </Header>
         <Content
           className="app-shell-content"
           style={{
-            padding: isMobile ? '16px 12px' : (isTablet ? '20px 16px' : '32px'),
             minHeight: 'calc(100vh - 64px)',
             overflowY: 'auto',
             overflowX: 'hidden',
@@ -349,7 +318,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               'radial-gradient(circle at top, rgba(116, 198, 157, 0.15), transparent 28%), linear-gradient(180deg, #f6fbf8 0%, #f3f6f7 100%)'
           }}
         >
-          <div className="app-shell-content-inner responsive-page-container" style={{ maxWidth: isMobile || isTablet ? '100%' : 1600, margin: '0 auto', width: '100%' }}>
+          <div className="app-shell-content-inner responsive-page-container">
             <BreadcrumbNavigation items={[]} />
             {children}
           </div>

@@ -17,10 +17,11 @@ import {
   Divider,
   InputNumber,
   Alert,
-  Tabs,
   Progress,
   List,
-  Spin
+  Spin,
+  Row,
+  Col
 } from 'antd'
 import { isValidFinancialYear } from '../utils/financialYear'
 import {
@@ -36,20 +37,13 @@ import {
   SearchOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
-import isSameOrAfter from 'dayjs/plugin/isSameOrAfter'
-import isSameOrBefore from 'dayjs/plugin/isSameOrBefore'
-
-dayjs.extend(isSameOrAfter)
-dayjs.extend(isSameOrBefore)
 
 import { MaintenanceLetter, Project, LetterAddOn, Unit, ProjectSetupSummary } from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import { UNIT_TYPE_FILTER_OPTIONS } from '../constants/unitTypes'
 import FilterPanel, {
-  createRangeFilter,
   createSearchFilter,
-  createSelectFilter,
-  FilterOption
+  createSelectFilter
 } from '../components/shared/FilterPanel'
 
 const { Title, Text } = Typography
@@ -82,11 +76,6 @@ const Billing: React.FC = () => {
   const [selectedYear, setSelectedYear] = useState<string | null>(defaultFY)
 
   const [selectedUnitType, setSelectedUnitType] = useState<string | null>('All')
-  const [amountRange, setAmountRange] = useState<[number | null, number | null]>([null, null])
-  const [dueDateRange, setDueDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([
-    null,
-    null
-  ])
 
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [searchText, setSearchText] = useState('')
@@ -99,6 +88,8 @@ const Billing: React.FC = () => {
   const [passedUnitIds, setPassedUnitIds] = useState<number[]>([])
 
   // PDF generation state
+  const [pageSize, setPageSize] = useState(10)
+
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [pdfProgress, setPdfProgress] = useState<PdfProgress | null>(null)
   const [selectedUnitIds, setSelectedUnitIds] = useState<number[]>([])
@@ -306,17 +297,8 @@ const Billing: React.FC = () => {
         letter.owner_name?.toLowerCase().includes(searchText.toLowerCase())
       const matchUnitType =
         !selectedUnitType || selectedUnitType === 'All' || letter.unit_type === selectedUnitType
-      const matchMinAmount = amountRange[0] === null || letter.final_amount >= amountRange[0]
-      const matchMaxAmount = amountRange[1] === null || letter.final_amount <= amountRange[1]
-      
-      const letterDueDate = letter.due_date ? dayjs(letter.due_date) : null
-      const matchMinDueDate =
-        !dueDateRange[0] || (letterDueDate && letterDueDate.isSameOrAfter(dueDateRange[0], 'day'))
-      const matchMaxDueDate =
-        !dueDateRange[1] || (letterDueDate && letterDueDate.isSameOrBefore(dueDateRange[1], 'day'))
 
-      return matchProject && matchYear && matchSearch && matchUnitType && 
-             matchMinAmount && matchMaxAmount && matchMinDueDate && matchMaxDueDate
+      return matchProject && matchYear && matchSearch && matchUnitType
     })
 
     const generated = currentlyFilteredLetters.filter((l) => getDisplayStatus(l) === 'Generated').length
@@ -326,7 +308,7 @@ const Billing: React.FC = () => {
     const overdue = currentlyFilteredLetters.filter((l) => getDisplayStatus(l) === 'Overdue').length
 
     return { generated, modified, pending, paid, overdue }
-  }, [letters, selectedProject, selectedYear, searchText, selectedUnitType, amountRange, dueDateRange, getDisplayStatus])
+  }, [letters, selectedProject, selectedYear, searchText, selectedUnitType, getDisplayStatus])
 
   // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
@@ -335,11 +317,7 @@ const Billing: React.FC = () => {
       selectedProject !== null ||
       selectedYear !== defaultFY ||
       selectedStatus !== null ||
-      (selectedUnitType !== null && selectedUnitType !== 'All') ||
-      amountRange[0] !== null ||
-      amountRange[1] !== null ||
-      dueDateRange[0] !== null ||
-      dueDateRange[1] !== null
+      (selectedUnitType !== null && selectedUnitType !== 'All')
     )
   }, [
     searchText,
@@ -347,8 +325,6 @@ const Billing: React.FC = () => {
     selectedYear,
     selectedStatus,
     selectedUnitType,
-    amountRange,
-    dueDateRange,
     defaultFY
   ])
 
@@ -359,8 +335,6 @@ const Billing: React.FC = () => {
     setSelectedYear(defaultFY)
     setSelectedStatus(null)
     setSelectedUnitType('All')
-    setAmountRange([null, null])
-    setDueDateRange([null, null])
     setSelectedRowKeys([])
   }, [defaultFY])
 
@@ -857,7 +831,6 @@ const Billing: React.FC = () => {
       letter.unit_number?.toLowerCase().includes(searchText.toLowerCase()) ||
       letter.owner_name?.toLowerCase().includes(searchText.toLowerCase())
 
-    const letterDueDate = letter.due_date ? dayjs(letter.due_date) : null
     const displayStatus = getDisplayStatus(letter)
 
     const matchStatus =
@@ -871,24 +844,12 @@ const Billing: React.FC = () => {
     const matchUnitType =
       !selectedUnitType || selectedUnitType === 'All' || letter.unit_type === selectedUnitType
 
-    const matchMinAmount = amountRange[0] === null || letter.final_amount >= amountRange[0]
-    const matchMaxAmount = amountRange[1] === null || letter.final_amount <= amountRange[1]
-
-    const matchMinDueDate =
-      !dueDateRange[0] || (letterDueDate && letterDueDate.isSameOrAfter(dueDateRange[0], 'day'))
-    const matchMaxDueDate =
-      !dueDateRange[1] || (letterDueDate && letterDueDate.isSameOrBefore(dueDateRange[1], 'day'))
-
     return (
       matchProject &&
       matchYear &&
       matchSearch &&
       matchStatus &&
-      matchUnitType &&
-      matchMinAmount &&
-      matchMaxAmount &&
-      matchMinDueDate &&
-      matchMaxDueDate
+      matchUnitType
     )
   })
 
@@ -992,17 +953,6 @@ const Billing: React.FC = () => {
           isActive: (value) => value !== null && value !== 'All'
         }
       ),
-      createRangeFilter('amountRange', 'Amount', {
-        emptyValue: [null, null],
-        minPlaceholder: 'Min',
-        maxPlaceholder: 'Max',
-        isActive: (value) =>
-          Array.isArray(value) && (value[0] !== null || value[1] !== null),
-        formatValue: (value) => {
-          const [min, max] = Array.isArray(value) ? value : [null, null]
-          return `${min !== null ? `₹${min}` : 'Any'} - ${max !== null ? `₹${max}` : 'Any'}`
-        }
-      })
     ],
     [billingStatusOptions, defaultFY, projects, uniqueYears]
   )
@@ -1013,25 +963,9 @@ const Billing: React.FC = () => {
       selectedProject,
       selectedYear,
       selectedStatus,
-      selectedUnitType,
-      amountRange
+      selectedUnitType
     }),
-    [amountRange, searchText, selectedProject, selectedStatus, selectedUnitType, selectedYear]
-  )
-
-  const billingExtraActiveFilters = useMemo<FilterOption[]>(
-    () =>
-      dueDateRange[0] || dueDateRange[1]
-        ? [
-            {
-              key: 'dueDateRange',
-              label: `Due: ${dueDateRange[0]?.format('DD/MM/YY') || 'Any'} to ${dueDateRange[1]?.format('DD/MM/YY') || 'Any'}`,
-              value: dueDateRange,
-              onRemove: () => setDueDateRange([null, null])
-            }
-          ]
-        : [],
-    [dueDateRange]
+    [searchText, selectedProject, selectedStatus, selectedUnitType, selectedYear]
   )
 
   const handleBillingFilterChange = useCallback((key: string, value: unknown) => {
@@ -1050,23 +984,6 @@ const Billing: React.FC = () => {
         break
       case 'selectedUnitType':
         setSelectedUnitType((value as string | null | undefined) ?? 'All')
-        break
-      case 'amountRange':
-        if (Array.isArray(value)) {
-          const nextRange: [number | null, number | null] = [
-            typeof value[0] === 'number' ? value[0] : null,
-            typeof value[1] === 'number' ? value[1] : null
-          ]
-          if (
-            nextRange[0] !== null &&
-            nextRange[1] !== null &&
-            nextRange[0] > nextRange[1]
-          ) {
-            message.warning('Minimum amount cannot exceed maximum')
-            return
-          }
-          setAmountRange(nextRange)
-        }
         break
       default:
         break
@@ -1090,30 +1007,6 @@ const Billing: React.FC = () => {
       )
     },
     {
-      title: 'Owner',
-      dataIndex: 'owner_name',
-      key: 'owner_name',
-      width: 200,
-      sorter: (a: MaintenanceLetter, b: MaintenanceLetter) =>
-        (a.owner_name || '').localeCompare(b.owner_name || ''),
-      render: (ownerName: string) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>{ownerName || 'No owner assigned'}</div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
-            {ownerName ? 'Property Owner' : 'Please update owner details'}
-          </div>
-        </div>
-      )
-    },
-    {
-      title: 'Type',
-      dataIndex: 'unit_type',
-      key: 'unit_type',
-      width: 120,
-      sorter: (a: MaintenanceLetter, b: MaintenanceLetter) =>
-        (a.unit_type || '').localeCompare(b.unit_type || '')
-    },
-    {
       title: 'Financial Year',
       dataIndex: 'financial_year',
       key: 'financial_year',
@@ -1122,20 +1015,13 @@ const Billing: React.FC = () => {
         (a.financial_year || '').localeCompare(b.financial_year || '')
     },
     {
-      title: 'Amount',
-      dataIndex: 'base_amount',
-      key: 'base_amount',
-      align: 'right' as const,
-      render: (val: number) => `₹${(val || 0).toLocaleString()}`
-    },
-    {
       title: 'Add-ons',
       dataIndex: 'add_ons_total',
       key: 'add_ons_total',
       align: 'right' as const,
       render: (val: number) => (
         <Button type="link" size="small">
-          ₹{(val || 0).toLocaleString()}
+          Rs. {Math.round(val || 0).toLocaleString()}
         </Button>
       ),
       onCell: (record: MaintenanceLetter) => ({
@@ -1150,7 +1036,7 @@ const Billing: React.FC = () => {
       dataIndex: 'final_amount',
       key: 'final_amount',
       align: 'right' as const,
-      render: (val: number) => <strong>₹{(val || 0).toLocaleString()}</strong>,
+      render: (val: number) => <strong>Rs. {Math.round(val || 0).toLocaleString()}</strong>,
       sorter: (a: MaintenanceLetter, b: MaintenanceLetter) => a.final_amount - b.final_amount
     },
     {
@@ -1200,7 +1086,7 @@ const Billing: React.FC = () => {
       align: 'right' as const,
       fixed: 'right' as const,
       render: (_: unknown, record: MaintenanceLetter) => (
-        <Space size="middle">
+        <Space className="table-row-actions" size="small">
           <Button
             size="small"
             onClick={(e) => {
@@ -1262,7 +1148,7 @@ const Billing: React.FC = () => {
             <span>
               You need to create a project and add units before generating maintenance letters.{' '}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/projects')}>
-                Go to Projects →
+                Go to Projects {'->'}
               </Button>
             </span>
           }
@@ -1278,7 +1164,7 @@ const Billing: React.FC = () => {
             <span>
               Click "Generate Maintenance Letters" to create letters for your units, or check that your projects have units and rates configured.{' '}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/projects')}>
-                Check project setup →
+                Check project setup {'->'}
               </Button>
             </span>
           }
@@ -1302,6 +1188,13 @@ const Billing: React.FC = () => {
             </Title>
             <Text type="secondary" className="page-hero-subtitle">
               Configure annual letters, generate PDFs, and manage billing progress across units.
+            </Text>
+            <Text
+              type="secondary"
+              className="page-helper-text"
+              style={{ display: 'block', marginTop: 8 }}
+            >
+              Use this screen to generate letters first, then review status, PDFs, and payment readiness.
             </Text>
           </div>
           <Space>
@@ -1333,7 +1226,7 @@ const Billing: React.FC = () => {
         </div>
       )}
 
-      <Card style={{ marginBottom: 0 }} className="page-toolbar-card page-table-card">
+      <Card style={{ marginBottom: 0 }} className="page-toolbar-card page-table-card billing-filter-card">
 
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <FilterPanel
@@ -1341,62 +1234,13 @@ const Billing: React.FC = () => {
             values={billingFilterValues}
             onChange={handleBillingFilterChange}
             onClear={clearAllFilters}
-            showActiveFilters={false}
-            showClearButton={false}
+            showActiveFilters={hasActiveFilters}
+            showClearButton={true}
             variant="plain"
           />
 
-          <Text className="page-helper-text">
-            Status guide: Generated = created and unchanged, Modified = manually edited, Pending = not yet generated, Paid = settled, Overdue = past due date.
-          </Text>
-
-          <Space wrap size="middle">
-            <Space>
-              <Text type="secondary">Amount Range:</Text>
-              <InputNumber
-                className="app-filter-number"
-                placeholder="Min"
-                style={{ width: '100%', minWidth: 90 }}
-                value={amountRange[0]}
-                onChange={(min) => {
-                  if (amountRange[1] && min && min > amountRange[1]) {
-                    message.warning('Minimum amount cannot exceed maximum')
-                    return
-                  }
-                  setAmountRange([min, amountRange[1]])
-                }}
-                min={0}
-              />
-              <Text>-</Text>
-              <InputNumber
-                className="app-filter-number"
-                placeholder="Max"
-                style={{ width: '100%', minWidth: 90 }}
-                value={amountRange[1]}
-                onChange={(max) => {
-                  if (amountRange[0] && max && max < amountRange[0]) {
-                    message.warning('Maximum amount cannot be less than minimum')
-                    return
-                  }
-                  setAmountRange([amountRange[0], max])
-                }}
-                min={0}
-              />
-            </Space>
-            <Space>
-              <Text type="secondary">Due Date Range:</Text>
-              <DatePicker.RangePicker
-                className="app-filter-date-range"
-                style={{ width: '100%', minWidth: 220 }}
-                value={[dueDateRange[0], dueDateRange[1]]}
-                onChange={(dates) => setDueDateRange(dates ? [dates[0], dates[1]] : [null, null])}
-                format="DD/MM/YYYY"
-              />
-            </Space>
-          </Space>
-
-          {/* Filter Summary Chips */}
-          {false && hasActiveFilters && (
+          {/* Filter Summary Chips - showing active filter tags */}
+          {hasActiveFilters && (
             <div
               style={{
                 marginTop: 16,
@@ -1435,18 +1279,6 @@ const Billing: React.FC = () => {
                     Type: {selectedUnitType}
                   </Tag>
                 )}
-                {(amountRange[0] !== null || amountRange[1] !== null) && (
-                  <Tag closable onClose={() => setAmountRange([null, null])}>
-                    Amount: {amountRange[0] !== null ? `₹${amountRange[0]}` : 'Any'} -{' '}
-                    {amountRange[1] !== null ? `₹${amountRange[1]}` : 'Any'}
-                  </Tag>
-                )}
-                {(dueDateRange[0] || dueDateRange[1]) && (
-                  <Tag closable onClose={() => setDueDateRange([null, null])}>
-                    Due: {dueDateRange[0]?.format('DD/MM/YY') || 'Any'} to{' '}
-                    {dueDateRange[1]?.format('DD/MM/YY') || 'Any'}
-                  </Tag>
-                )}
                 <Button
                   type="link"
                   size="small"
@@ -1458,16 +1290,6 @@ const Billing: React.FC = () => {
               </Space>
             </div>
           )}
-          <FilterPanel
-            filters={billingFilterFields}
-            values={billingFilterValues}
-            onChange={handleBillingFilterChange}
-            onClear={clearAllFilters}
-            showActiveFilters={hasActiveFilters}
-            showFields={false}
-            extraActiveFilters={billingExtraActiveFilters}
-            variant="plain"
-          />
         </Space>
       </Card>
 
@@ -1504,32 +1326,22 @@ const Billing: React.FC = () => {
         ]}
         closable={pdfProgress?.current === pdfProgress?.total}
         maskClosable={pdfProgress?.current === pdfProgress?.total}
-        width={600}
+        width={560}
+        className="progress-status-modal mobile-fullscreen-modal"
       >
         {pdfProgress && (
-          <div>
+          <div className="progress-status-body progress-status-body-wide">
             {/* Progress Bar with Percentage */}
             <Progress
               percent={Math.round((pdfProgress.current / pdfProgress.total) * 100)}
               status={pdfProgress.current === pdfProgress.total ? 'success' : 'active'}
-              strokeWidth={10}
-              style={{ marginBottom: 16 }}
+              strokeWidth={8}
+              className="progress-status-bar"
               format={(percent) => <span style={{ fontWeight: 600 }}>{percent}%</span>}
             />
 
             {/* Stats Summary */}
-            <div
-              style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                marginTop: 8,
-                marginBottom: 16,
-                fontSize: '13px',
-                padding: '8px 12px',
-                background: '#f5f5f5',
-                borderRadius: 6
-              }}
-            >
+            <div className="progress-status-summary">
               <span>
                 <strong>Progress:</strong> {pdfProgress?.current || 0} / {pdfProgress?.total || 0}
               </span>
@@ -1543,27 +1355,19 @@ const Billing: React.FC = () => {
 
             {/* Currently Processing */}
             {pdfProgress.current < pdfProgress.total && pdfProgress.currentLetter && (
-              <div
-                style={{
-                  padding: '12px 16px',
-                  background: '#e6f7ff',
-                  borderRadius: 6,
-                  marginBottom: 16,
-                  border: '1px solid #91d5ff'
-                }}
-              >
-                <div style={{ fontSize: '12px', color: '#666', marginBottom: 4 }}>
+              <div className="progress-status-current">
+                <div className="progress-status-caption">
                   Currently processing...
                 </div>
-                <div style={{ fontSize: '14px', fontWeight: 600 }}>
-                  Unit {pdfProgress.currentLetter.unit_number} — {pdfProgress.currentLetter.owner_name}
+                <div className="progress-status-current-item">
+                  Unit {pdfProgress.currentLetter.unit_number} - {pdfProgress.currentLetter.owner_name}
                 </div>
               </div>
             )}
 
             {/* Completed Items List */}
             {pdfProgress.completed.length > 0 && (
-              <div style={{ maxHeight: 250, overflow: 'auto', border: '1px solid #f0f0f0', borderRadius: 6 }}>
+              <div className="progress-status-list">
                 <List
                   size="small"
                   dataSource={pdfProgress.completed}
@@ -1584,7 +1388,7 @@ const Billing: React.FC = () => {
                         }
                         title={
                           <span style={{ fontWeight: 600 }}>
-                            Unit {item.unit_number} — {item.owner_name}
+                            Unit {item.unit_number} - {item.owner_name}
                           </span>
                         }
                         description={
@@ -1611,7 +1415,15 @@ const Billing: React.FC = () => {
         dataSource={filteredLetters}
         rowKey="id"
         loading={loading}
-        pagination={{ pageSize: 10 }}
+        pagination={{ 
+          pageSize: pageSize,
+          size: 'small',
+          showSizeChanger: true,
+          pageSizeOptions: [10, 20, 50],
+          onShowSizeChange: (_, size) => setPageSize(size)
+        }}
+        scroll={{ x: 'max-content' }}
+        size="small"
         rowClassName={(record) => {
           const status = getDisplayStatus(record)
           return status === 'Overdue' ? 'overdue-row' : 
@@ -1635,7 +1447,7 @@ const Billing: React.FC = () => {
           setBatchModalStep('config')
           setProjectSetupSummary(null)
         }}
-        width={700}
+        width={720}
         confirmLoading={loading}
         okText={batchModalStep === 'config' ? 'Next: Select Units' : 'Generate Maintenance Letters'}
         className="mobile-fullscreen-modal mobile-single-column"
@@ -1653,8 +1465,8 @@ const Billing: React.FC = () => {
         )}
 
         {/* Breadcrumb navigation for multi-step workflow */}
-        <div style={{ marginBottom: 16, padding: '12px 16px', background: '#fafafa', borderRadius: 6 }}>
-          <Space size="middle" align="center">
+        <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fafafa', borderRadius: 10 }}>
+          <Space size="small" align="center">
             <Button
               type={batchModalStep === 'config' ? 'primary' : 'text'}
               size="small"
@@ -1663,7 +1475,7 @@ const Billing: React.FC = () => {
             >
               1. Configure Letter
             </Button>
-            <span style={{ color: '#999' }}>→</span>
+            <span style={{ color: '#999' }}>{'->'}</span>
             <Button
               type={batchModalStep === 'units' ? 'primary' : 'text'}
               size="small"
@@ -1674,323 +1486,285 @@ const Billing: React.FC = () => {
               2. Select Units
             </Button>
           </Space>
-          <div style={{ marginTop: 8, fontSize: '12px', color: '#666' }}>
+          <div style={{ marginTop: 6, fontSize: '11.5px', color: '#666' }}>
             {batchModalStep === 'config' 
               ? 'Step 1 of 2: Set letter details (project, FY, dates, add-ons)' 
               : 'Step 2 of 2: Choose which units to generate letters for'}
           </div>
         </div>
 
-        <Tabs
-          activeKey={batchModalStep}
-          onChange={(key) => setBatchModalStep(key as 'config' | 'units')}
-          style={{ marginBottom: 16 }}
-          items={[
-            {
-              key: 'config',
-              label: '1. Configuration',
-              children: (
-                <Form
-                  key={currentLetter ? `edit-${currentLetter.id}` : 'create'}
-                  form={form}
-                  layout="vertical"
-                  initialValues={
-                    currentLetter 
-                      ? {
-                          project_id: currentLetter.project_id,
-                          financial_year: currentLetter.financial_year,
-                          letter_date: currentLetter.generated_date ? dayjs(currentLetter.generated_date) : dayjs(),
-                          due_date: currentLetter.due_date ? dayjs(currentLetter.due_date) : dayjs().add(15, 'day')
-                        }
-                      : {
-                          letter_date: dayjs(),
-                          due_date: dayjs().add(15, 'day'),
-                          financial_year: selectedYear || defaultFY
-                        }
+        {batchModalStep === 'config' ? (
+          <Form
+            key={currentLetter ? `edit-${currentLetter.id}` : 'create'}
+            form={form}
+            layout="vertical"
+            initialValues={
+              currentLetter 
+                ? {
+                    project_id: currentLetter.project_id,
+                    financial_year: currentLetter.financial_year,
+                    letter_date: currentLetter.generated_date ? dayjs(currentLetter.generated_date) : dayjs(),
+                    due_date: currentLetter.due_date ? dayjs(currentLetter.due_date) : dayjs().add(15, 'day')
                   }
-                >
-                  <div className="responsive-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                    <Form.Item
-                      name="project_id"
-                      label="Select Project"
-                      rules={[{ required: true, message: 'Please select project' }]}
-                      className="span-2"
-                      style={{ gridColumn: 'span 2' }}
-                    >
-                      <Select placeholder="Select a project">
-                        {projects.map((p) => (
-                          <Option key={p.id} value={p.id}>
-                            {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
-                          </Option>
-                        ))}
-                      </Select>
-                    </Form.Item>
-
-                    <Form.Item
-                      name="financial_year"
-                      label="Financial Year (e.g., 2024-25)"
-                      rules={[
-                        { required: true, message: 'Please enter financial year' },
-                        {
-                          validator: (_, value) => {
-                            if (!value || isValidFinancialYear(value)) {
-                              return Promise.resolve()
-                            }
-                            return Promise.reject(new Error('Format must be YYYY-YY (e.g., 2024-25)'))
-                          }
-                        }
-                      ]}
-                      style={{ gridColumn: 'span 2' }}
-                    >
-                      <Select
-                        placeholder="Select Financial Year"
-                        showSearch
-                        optionFilterProp="children"
-                      >
-                        {uniqueYears.map((year) => (
-                          <Option key={year} value={year}>
-                            {year}
-                          </Option>
-                        ))}
-                      </Select>
-                    </Form.Item>
-
-                    {batchProjectId && batchFinancialYear && (
-                      <div style={{ gridColumn: 'span 2' }}>
-                        <Alert
-                          type={
-                            projectSetupSummary
-                              ? projectSetupSummary.ready_for_letters
-                                ? projectSetupSummary.warnings.length > 0
-                                  ? 'warning'
-                                  : 'success'
-                                : 'error'
-                              : 'info'
-                          }
-                          showIcon
-                          message={
-                            setupSummaryLoading
-                              ? 'Checking project setup...'
-                              : projectSetupSummary
-                                ? projectSetupSummary.ready_for_letters
-                                  ? projectSetupSummary.warnings.length > 0
-                                    ? 'Project setup is usable, but there are warnings.'
-                                    : 'Project setup is ready for maintenance letters.'
-                                  : 'Project setup is incomplete.'
-                                : 'Select project and financial year to validate setup.'
-                          }
-                          description={
-                            projectSetupSummary ? (
-                              <div>
-                                <div>
-                                  Units: {projectSetupSummary.unit_count} | Sectors:{' '}
-                                  {projectSetupSummary.sector_codes.length > 0
-                                    ? projectSetupSummary.sector_codes.join(', ')
-                                    : 'None'}{' '}
-                                  | Rate years:{' '}
-                                  {projectSetupSummary.rate_years.length > 0
-                                    ? projectSetupSummary.rate_years.join(', ')
-                                    : 'None'}
-                                </div>
-                                {projectSetupSummary.blockers.map((blocker) => (
-                                  <div key={blocker} style={{ color: '#cf1322', marginTop: 4 }}>
-                                    {blocker}
-                                  </div>
-                                ))}
-                                {projectSetupSummary.warnings.map((warning) => (
-                                  <div key={warning} style={{ color: '#d48806', marginTop: 4 }}>
-                                    {warning}
-                                  </div>
-                                ))}
-                              </div>
-                            ) : undefined
-                          }
-                        />
-                      </div>
-                    )}
-
-                    <Form.Item
-                      name="letter_date"
-                      label="Letter Date"
-                      rules={[{ required: true, message: 'Please select letter date' }]}
-                    >
-                      <DatePicker style={{ width: '100%' }} />
-                    </Form.Item>
-
-                    <Form.Item
-                      name="due_date"
-                      label="Due Date"
-                      rules={[{ required: true, message: 'Please select due date' }]}
-                    >
-                      <DatePicker style={{ width: '100%' }} />
-                    </Form.Item>
-
-                    <Divider style={{ gridColumn: 'span 2', margin: '8px 0' }}>
-                      <Space>
-                        <span>Add-ons (Optional)</span>
-                        <Button
-                          size="small"
-                          icon={<CopyOutlined />}
-                          loading={copyingAddOns}
-                          onClick={handleCopyFromPreviousYear}
-                          disabled={!batchProjectId || !batchFinancialYear}
-                        >
-                          Copy from Previous Year
-                        </Button>
-                      </Space>
-                    </Divider>
-
-                    <Form.List name="add_ons">
-                      {(fields, { add, remove }) => (
-                        <div style={{ gridColumn: 'span 2' }}>
-                          {fields.map(({ key, name, ...restField }) => (
-                            <Space
-                              key={key}
-                              wrap
-                              style={{
-                                display: 'flex',
-                                width: '100%',
-                                marginBottom: 8,
-                                flexWrap: 'wrap'
-                              }}
-                              align="baseline"
-                            >
-                              <Form.Item
-                                {...restField}
-                                name={[name, 'addon_name']}
-                                rules={[{ required: true, message: 'Name required' }]}
-                                style={{ flex: '1 1 220px', marginBottom: 0 }}
-                              >
-                                <Input
-                                  placeholder="Addon Name (e.g. Penalty)"
-                                  style={{ width: '100%' }}
-                                />
-                              </Form.Item>
-                              <Form.Item
-                                {...restField}
-                                name={[name, 'addon_amount']}
-                                rules={[{ required: true, message: 'Amount required' }]}
-                                style={{ width: 140, marginBottom: 0 }}
-                              >
-                                <InputNumber
-                                  placeholder="Amount"
-                                  style={{ width: '100%' }}
-                                  prefix="₹"
-                                />
-                              </Form.Item>
-                              <Form.Item
-                                {...restField}
-                                name={[name, 'remarks']}
-                                style={{ flex: '1 1 220px', marginBottom: 0 }}
-                              >
-                                <Input placeholder="Remarks" style={{ width: '100%' }} />
-                              </Form.Item>
-                              <Button
-                                type="text"
-                                danger
-                                onClick={() => remove(name)}
-                                icon={<DeleteOutlined />}
-                              />
-                            </Space>
-                          ))}
-                          <Form.Item>
-                            <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
-                              Add Item
-                            </Button>
-                          </Form.Item>
-                        </div>
-                      )}
-                    </Form.List>
-                  </div>
-                </Form>
-              )
-            },
-            {
-              key: 'units',
-              label: '2. Select Units (Optional)',
-              disabled: !batchProjectId,
-              children: (
-                <>
-                  <Alert
-                    message="Select specific units to generate letters for, or leave empty to generate for all units in the project"
-                    type="info"
-                    showIcon
-                    style={{ marginBottom: 16 }}
-                  />
-                  {alreadyBilledUnitIds.size > 0 && (
-                    <Alert
-                      message={`${alreadyBilledUnitIds.size} unit${alreadyBilledUnitIds.size !== 1 ? 's' : ''} already have a letter for FY ${batchFinancialYear} — shown as "Already billed" and disabled below.`}
-                      type="warning"
-                      showIcon
-                      style={{ marginBottom: 12 }}
-                    />
-                  )}
-                  <Space
-                    wrap
-                    style={{ width: '100%', marginBottom: 12 }}
-                    size="middle"
-                    align="center"
-                  >
-                    <Input
-                      className="app-search-field"
-                      placeholder="Search unit / owner..."
-                      prefix={<SearchOutlined />}
-                      style={{ width: 260 }}
-                      value={unitSearchText}
-                      onChange={(e) => setUnitSearchText(e.target.value)}
-                      allowClear
-                    />
-                    <Button
-                      onClick={() => setSelectedUnitIds(projectUnits.map((u) => u.id as number))}
-                      disabled={projectUnits.length === 0}
-                    >
-                      Select all
-                    </Button>
-                    <Button
-                      onClick={() => setSelectedUnitIds([])}
-                      disabled={selectedUnitIds.length === 0}
-                    >
-                      Clear
-                    </Button>
-                    <Text type="secondary">
-                      Selected: {selectedUnitIds.length} / {projectUnits.length}
-                    </Text>
-                  </Space>
-                  <Table
-                    size="small"
-                    loading={unitsLoading}
-                    dataSource={filteredProjectUnits}
-                    rowKey="id"
-                    pagination={{ pageSize: 8 }}
-                    scroll={{ y: 280 }}
-                    rowSelection={{
-                      selectedRowKeys: selectedUnitIds,
-                      onChange: (keys) => setSelectedUnitIds(keys as number[]),
-                      getCheckboxProps: (record) => ({
-                        disabled: alreadyBilledUnitIds.has(record.id as number)
-                      })
-                    }}
-                    columns={[
-                      { title: 'Unit', dataIndex: 'unit_number', key: 'unit_number', width: 120 },
-                      { title: 'Owner', dataIndex: 'owner_name', key: 'owner_name' },
-                      {
-                        title: 'Status',
-                        key: 'billed_status',
-                        width: 100,
-                        render: (_: unknown, record: Unit) =>
-                          alreadyBilledUnitIds.has(record.id as number) ? (
-                            <Tag color="green" style={{ fontSize: 11 }}>Already billed</Tag>
-                          ) : (
-                            <Tag color="default" style={{ fontSize: 11 }}>Pending</Tag>
-                          )
-                      }
-                    ]}
-                  />
-                </>
-              )
+                : {
+                    letter_date: dayjs(),
+                    due_date: dayjs().add(15, 'day'),
+                    financial_year: selectedYear || defaultFY
+                  }
             }
-          ]}
-        />
+          >
+            <Row gutter={[16, 8]}>
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="project_id"
+                  label="Select Project"
+                  rules={[{ required: true, message: 'Please select project' }]}
+                >
+                  <Select className="app-combobox" placeholder="Select a project">
+                    {projects.map((p) => (
+                      <Option key={p.id} value={p.id}>
+                        {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
+                      </Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="financial_year"
+                  label="Financial Year (e.g., 2024-25)"
+                  rules={[
+                    { required: true, message: 'Please enter financial year' },
+                    {
+                      validator: (_, value) => {
+                        if (!value || isValidFinancialYear(value)) {
+                          return Promise.resolve()
+                        }
+                        return Promise.reject(new Error('Format must be YYYY-YY (e.g., 2024-25)'))
+                      }
+                    }
+                  ]}
+                >
+                  <Select
+                    className="app-combobox"
+                    placeholder="Select Financial Year"
+                    showSearch
+                    optionFilterProp="children"
+                  >
+                    {uniqueYears.map((year) => (
+                      <Option key={year} value={year}>
+                        {year}
+                      </Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+
+              {batchProjectId && batchFinancialYear && (
+                <Col span={24}>
+                  <Alert
+                    type={projectSetupSummary?.ready_for_letters ? 'success' : projectSetupSummary?.blockers?.length ? 'error' : 'info'}
+                    showIcon
+                    message={
+                      setupSummaryLoading ? 'Checking project setup...' :
+                      !projectSetupSummary ? 'Select project and financial year to validate setup.' :
+                      projectSetupSummary.ready_for_letters ? '✓ Project setup is ready' :
+                      '✗ Project setup incomplete'
+                    }
+                    description={
+                      projectSetupSummary && !projectSetupSummary.ready_for_letters ? (
+                        <div style={{ fontSize: 12, marginTop: 4 }}>
+                          <div style={{ color: '#cf1322' }}>
+                            Missing: {projectSetupSummary.blockers.slice(0, 2).join(', ')}
+                            {projectSetupSummary.blockers.length > 2 ? ` +${projectSetupSummary.blockers.length - 2} more` : ''}
+                          </div>
+                        </div>
+                      ) : null
+                    }
+                  />
+                </Col>
+              )}
+
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="letter_date"
+                  label="Letter Date"
+                  rules={[{ required: true, message: 'Please select letter date' }]}
+                >
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+
+              <Col xs={24} md={12}>
+                <Form.Item
+                  name="due_date"
+                  label="Due Date"
+                  rules={[{ required: true, message: 'Please select due date' }]}
+                >
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+
+              <Col span={24}>
+                <Divider style={{ margin: '8px 0' }}>
+                  <Space>
+                    <span>Add-ons (Optional)</span>
+                    <Button
+                      size="small"
+                      icon={<CopyOutlined />}
+                      loading={copyingAddOns}
+                      onClick={handleCopyFromPreviousYear}
+                      disabled={!batchProjectId || !batchFinancialYear}
+                    >
+                      Copy from Previous Year
+                    </Button>
+                  </Space>
+                </Divider>
+              </Col>
+
+              <Col span={24}>
+                <Form.List name="add_ons">
+                  {(fields, { add, remove }) => (
+                    <>
+                      {fields.map(({ key, name, ...restField }) => (
+                        <Row key={key} gutter={[8, 8]} align="middle" style={{ marginBottom: 8 }}>
+                          <Col xs={24} sm={8}>
+                            <Form.Item
+                              {...restField}
+                              name={[name, 'addon_name']}
+                              rules={[{ required: true, message: 'Name required' }]}
+                              style={{ marginBottom: 0 }}
+                            >
+                              <Input
+                                placeholder="Addon Name (e.g. Penalty)"
+                                style={{ width: '100%' }}
+                              />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} sm={6}>
+                            <Form.Item
+                              {...restField}
+                              name={[name, 'addon_amount']}
+                              rules={[{ required: true, message: 'Amount required' }]}
+                              style={{ marginBottom: 0 }}
+                            >
+                              <InputNumber
+                                placeholder="Amount"
+                                style={{ width: '100%' }}
+                                prefix="Rs. "
+                              />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} sm={8}>
+                            <Form.Item
+                              {...restField}
+                              name={[name, 'remarks']}
+                              style={{ marginBottom: 0 }}
+                            >
+                              <Input placeholder="Remarks" style={{ width: '100%' }} />
+                            </Form.Item>
+                          </Col>
+                          <Col xs={24} sm={2} style={{ textAlign: 'center' }}>
+                            <Button
+                              type="text"
+                              danger
+                              onClick={() => remove(name)}
+                              icon={<DeleteOutlined />}
+                            />
+                          </Col>
+                        </Row>
+                      ))}
+                      <Form.Item style={{ marginBottom: 0 }}>
+                        <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                          Add Item
+                        </Button>
+                      </Form.Item>
+                    </>
+                  )}
+                </Form.List>
+              </Col>
+            </Row>
+          </Form>
+        ) : (
+          <>
+            <Alert
+              message="Select specific units to generate letters for, or leave empty to generate for all units in the project"
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+            {alreadyBilledUnitIds.size > 0 && (
+              <Alert
+                message={`${alreadyBilledUnitIds.size} unit${alreadyBilledUnitIds.size !== 1 ? 's' : ''} already have a letter for FY ${batchFinancialYear} - shown as "Already billed" and disabled below.`}
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+              />
+            )}
+            <Space
+              wrap
+              style={{ width: '100%', marginBottom: 12 }}
+              size="middle"
+              align="center"
+            >
+              <Input
+                className="app-search-field"
+                placeholder="Search unit / owner..."
+                prefix={<SearchOutlined />}
+                style={{ width: 260 }}
+                value={unitSearchText}
+                onChange={(e) => setUnitSearchText(e.target.value)}
+                allowClear
+              />
+              <Button
+                onClick={() => setSelectedUnitIds(projectUnits.map((u) => u.id as number))}
+                disabled={projectUnits.length === 0}
+              >
+                Select all
+              </Button>
+              <Button
+                onClick={() => setSelectedUnitIds([])}
+                disabled={selectedUnitIds.length === 0}
+              >
+                Clear
+              </Button>
+              <Text type="secondary">
+                Selected: {selectedUnitIds.length} / {projectUnits.length}
+              </Text>
+            </Space>
+            <Table
+              size="small"
+              loading={unitsLoading}
+              dataSource={filteredProjectUnits}
+              rowKey="id"
+              pagination={{ pageSize: 4, simple: true }}
+              scroll={undefined}
+              rowSelection={{
+                selectedRowKeys: selectedUnitIds,
+                onChange: (keys) => setSelectedUnitIds(keys as number[]),
+                getCheckboxProps: (record) => ({
+                  disabled: alreadyBilledUnitIds.has(record.id as number)
+                })
+              }}
+              columns={[
+                { title: 'Unit', dataIndex: 'unit_number', key: 'unit_number', width: 90 },
+                { title: 'Owner', dataIndex: 'owner_name', key: 'owner_name', ellipsis: true },
+                {
+                  title: 'Status',
+                  key: 'billed_status',
+                  width: 70,
+                  render: (_: unknown, record: Unit) =>
+                    alreadyBilledUnitIds.has(record.id as number) ? (
+                      <Tag color="green" style={{ fontSize: 9, padding: '0 2px' }}>Billed</Tag>
+                    ) : (
+                      <Tag color="default" style={{ fontSize: 9, padding: '0 2px' }}>Pending</Tag>
+                    )
+                }
+              ]}
+            />
+          </>
+        )}
       </Modal>
 
       <Modal
@@ -2003,6 +1777,7 @@ const Billing: React.FC = () => {
           </Button>
         ]}
         width={600}
+        className="mobile-fullscreen-modal"
       >
         <Table
           dataSource={currentLetterAddOns}
@@ -2015,7 +1790,7 @@ const Billing: React.FC = () => {
               dataIndex: 'addon_amount',
               key: 'addon_amount',
               align: 'right',
-              render: (val: number) => `₹${val.toLocaleString()}`
+              render: (val: number) => `Rs. ${Math.round(val).toLocaleString()}`,
             },
             { title: 'Remarks', dataIndex: 'remarks', key: 'remarks' }
           ]}
@@ -2028,7 +1803,7 @@ const Billing: React.FC = () => {
                   <strong>Total Add-ons</strong>
                 </Table.Summary.Cell>
                 <Table.Summary.Cell index={1} align="right">
-                  <strong>₹{total.toLocaleString()}</strong>
+                  <strong>Rs. {Math.round(total).toLocaleString()}</strong>
                 </Table.Summary.Cell>
                 <Table.Summary.Cell index={2} />
               </Table.Summary.Row>

@@ -139,6 +139,11 @@ declare global {
           title?: string
           filters?: { name: string; extensions: string[] }[]
         }) => Promise<string | null>
+        saveFile: (options: {
+          title?: string
+          defaultPath?: string
+          filters?: { name: string; extensions: string[] }[]
+        }) => Promise<string | null>
       }
       database: {
         repair: () => Promise<RepairResult>

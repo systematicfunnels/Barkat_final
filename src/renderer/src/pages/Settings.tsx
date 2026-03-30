@@ -23,13 +23,40 @@ const Settings: React.FC = () => {
   const handleExport = async (): Promise<void> => {
     try {
       setLoading(true)
+      
+      // Step 1: Create backup in temp location
       const result = await window.api.backup.createBackup()
-
-      if (result.success) {
-        message.success(`Database exported successfully to: ${result.backupPath}`)
-      } else {
+      if (!result.success || !result.backupPath) {
         message.error(`Export failed: ${result.error}`)
+        return
       }
+
+      // Step 2: Show save dialog to let user choose download location
+      const timestamp = new Date().toISOString().replace(/[:.-]/g, '').slice(0, 15)
+      const defaultFileName = `barkat_backup_${timestamp}.db`
+      
+      const savePath = await window.api.dialog.saveFile({
+        title: 'Save Database Backup',
+        defaultPath: defaultFileName,
+        filters: [
+          { name: 'Database Files', extensions: ['db'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      })
+
+      if (!savePath) {
+        message.info('Export cancelled')
+        return
+      }
+
+      // Step 3: Copy the backup file to user's chosen location
+      const copyResult = await window.api.files.copyAssetFile(result.backupPath, savePath)
+      if (!copyResult.success) {
+        message.error(`Failed to save file: ${copyResult.error}`)
+        return
+      }
+
+      message.success(`Database exported successfully to: ${savePath}`)
     } catch (err: unknown) {
       const error = err as Error
       message.error('Export failed: ' + error.message)
@@ -94,6 +121,13 @@ const Settings: React.FC = () => {
             <Text type="secondary" className="page-hero-subtitle">
               Manage backups, recovery, and database health for this desktop workspace.
             </Text>
+            <Text
+              type="secondary"
+              className="page-helper-text"
+              style={{ display: 'block', marginTop: 8 }}
+            >
+              Use backup first, then restore or repair only when you need recovery or integrity checks.
+            </Text>
           </div>
           <Space className="responsive-action-bar">
             <Tag color="green" icon={<DatabaseOutlined />}>Local SQLite</Tag>
@@ -137,7 +171,7 @@ const Settings: React.FC = () => {
         </Card>
       </div>
 
-      <Card title="System Diagnostics" className="page-toolbar-card">
+      <Card title="System Diagnostics" className="page-toolbar-card settings-diagnostics-card">
         <div className="page-soft-panel">
           <Space direction="vertical">
             <Text>Version: 1.0.0</Text>
@@ -199,7 +233,7 @@ const Settings: React.FC = () => {
         )}
       </Modal>
 
-      <div style={{ marginTop: 24, textAlign: 'center' }}>
+      <div className="settings-footer-note" style={{ marginTop: 24, textAlign: 'center' }}>
         <Text type="secondary">Designed for property maintenance management.</Text>
       </div>
     </div>

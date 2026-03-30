@@ -18,7 +18,8 @@ import {
   DividerProps,
   Progress,
   Alert,
-  Collapse
+  Row,
+  Col
 } from 'antd'
 import {
   PlusOutlined,
@@ -27,8 +28,7 @@ import {
   TableOutlined,
   CalculatorOutlined,
   ClearOutlined,
-  InfoCircleOutlined,
-  FilterOutlined
+  InfoCircleOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { Project, Unit, Payment, MaintenanceLetter } from '@preload/types'
@@ -64,6 +64,7 @@ const Payments: React.FC = () => {
   const [units, setUnits] = useState<Unit[]>([])
   const [letters, setLetters] = useState<MaintenanceLetter[]>([])
   const [loading, setLoading] = useState(false)
+  const [pageSize, setPageSize] = useState(10)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false)
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null)
@@ -125,7 +126,6 @@ const Payments: React.FC = () => {
   const [bulkProject, setBulkProject] = useState<number | null>(null)
   const [generatingReceipts, setGeneratingReceipts] = useState(false)
   const [receiptProgress, setReceiptProgress] = useState<ReceiptProgress | null>(null)
-  const [filterPanelOpen, setFilterPanelOpen] = useState<string[]>([])
 
   const fetchData = async (): Promise<void> => {
     setLoading(true)
@@ -314,10 +314,6 @@ const Payments: React.FC = () => {
     }).length
   }, [payments, searchText, selectedProject, selectedMode, selectedFY, projects])
 
-  useEffect(() => {
-    setFilterPanelOpen(hasActiveFilters ? ['basic'] : [])
-  }, [hasActiveFilters])
-
   const handleAdd = (): void => {
     setEditingPayment(null)
     form.resetFields()
@@ -390,7 +386,7 @@ const Payments: React.FC = () => {
       const amount = Number.parseFloat(amountStr)
       if (!Number.isNaN(amount) && amount >= 0) {
         setBulkPayments((prev) => prev.map((p) => ({ ...p, payment_amount: amount })))
-        message.success(`Applied ₹${amount.toLocaleString()} to all units`)
+        message.success(`Applied Rs. ${amount.toLocaleString()} to all units`)
       } else {
         message.warning('Please enter a valid number')
       }
@@ -547,7 +543,7 @@ const Payments: React.FC = () => {
       if (selectedLetter && values.payment_amount > selectedLetter.final_amount) {
         Modal.confirm({
           title: 'Payment Amount Exceeds Letter Amount',
-          content: `You are about to record ₹${values.payment_amount.toLocaleString()} which exceeds the maintenance letter amount of ₹${selectedLetter.final_amount.toLocaleString()}. Do you want to continue?`,
+          content: `You are about to record Rs. ${values.payment_amount.toLocaleString()} which exceeds the maintenance letter amount of Rs. ${selectedLetter.final_amount.toLocaleString()}. Do you want to continue?`,
           okText: 'Yes, Continue',
           cancelText: 'No, Edit Amount',
           onOk: async () => {
@@ -559,7 +555,7 @@ const Payments: React.FC = () => {
               'payments',
               'Payment recorded successfully',
               navigate,
-              `Payment of ₹${values.payment_amount.toLocaleString()} has been added`
+              `Payment of Rs. ${values.payment_amount.toLocaleString()} has been added`
             )
           }
         })
@@ -574,7 +570,7 @@ const Payments: React.FC = () => {
         'payments',
         'Payment recorded successfully',
         navigate,
-        `Payment of ₹${values.payment_amount.toLocaleString()} has been added`
+        `Payment of Rs. ${values.payment_amount.toLocaleString()} has been added`
       )
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -767,7 +763,7 @@ const Payments: React.FC = () => {
       dataIndex: 'payment_amount',
       key: 'payment_amount',
       align: 'right' as const,
-      render: (val: number) => <strong>₹{val.toLocaleString()}</strong>,
+      render: (val: number) => <strong>Rs. {val.toLocaleString()}</strong>,
       sorter: (a: Payment, b: Payment) => a.payment_amount - b.payment_amount
     },
     {
@@ -799,7 +795,7 @@ const Payments: React.FC = () => {
       key: 'actions',
       align: 'right' as const,
       render: (_: unknown, record: Payment) => (
-        <Space>
+        <Space className="table-row-actions" size="small">
           <Button
             size="small"
             type="primary"
@@ -883,7 +879,7 @@ const Payments: React.FC = () => {
   }, [showAllUnits, bulkPayments, unitsWithLettersDue])
 
   return (
-    <div className="page-screen" style={{ padding: '24px' }}>
+    <div className="page-screen">
       {/* Navigation guard: show setup prompt when no projects */}
       {projects.length === 0 && !loading && (
         <Alert
@@ -895,7 +891,7 @@ const Payments: React.FC = () => {
             <span>
               You need to create a project and generate maintenance letters before recording payments.{' '}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/projects')}>
-                Go to Projects →
+                Go to Projects {'->'}
               </Button>
             </span>
           }
@@ -919,6 +915,13 @@ const Payments: React.FC = () => {
             </Title>
             <Text type="secondary" className="page-hero-subtitle">
               Capture collections, issue receipts, and process bulk payment updates with fewer clicks.
+            </Text>
+            <Text
+              type="secondary"
+              className="page-helper-text"
+              style={{ display: 'block', marginTop: 8 }}
+            >
+              Record individual payments first, then use bulk and receipt actions for follow-up processing.
             </Text>
             {filteredPaymentsCount > 0 && (
               <Text type="secondary" style={{ fontSize: '14px', display: 'block', marginTop: 6 }}>
@@ -973,37 +976,7 @@ const Payments: React.FC = () => {
         </div>
       )}
 
-      <Card className="page-toolbar-card page-table-card">
-        <Collapse 
-          activeKey={filterPanelOpen}
-          onChange={(keys) =>
-            setFilterPanelOpen(Array.isArray(keys) ? keys.map(String) : keys ? [String(keys)] : [])
-          }
-          items={[
-            {
-              key: 'basic',
-              label: (
-                <Space>
-                  <FilterOutlined />
-                  <span>Basic Filters</span>
-                  {hasActiveFilters && <Tag color="blue">Active</Tag>}
-                </Space>
-              ),
-              children: (
-                <FilterPanel
-                  filters={paymentFilterFields}
-                  values={paymentFilterValues}
-                  onChange={handlePaymentFilterChange}
-                  onClear={clearAllFilters}
-                  showActiveFilters={false}
-                  showClearButton={false}
-                  variant="plain"
-                />
-              )
-            }
-          ]}
-        />
-
+      <Card className="page-toolbar-card page-table-card payments-filter-card">
         <FilterPanel
           filters={paymentFilterFields}
           values={paymentFilterValues}
@@ -1011,7 +984,6 @@ const Payments: React.FC = () => {
           onClear={clearAllFilters}
           showActiveFilters={hasActiveFilters}
           showClearButton
-          showFields={false}
           variant="plain"
         />
       </Card>
@@ -1029,7 +1001,12 @@ const Payments: React.FC = () => {
             dataSource={filteredPayments}
             rowKey="id"
             loading={loading}
-            pagination={{ pageSize: 10 }}
+            pagination={{ 
+              pageSize: pageSize,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50],
+              onShowSizeChange: (_, size) => setPageSize(size)
+            }}
             scroll={{ x: 'max-content' }}
           />
         </div>
@@ -1051,22 +1028,22 @@ const Payments: React.FC = () => {
         ]}
         closable={false}
         width={500}
-        className="mobile-fullscreen-modal"
+        className="mobile-fullscreen-modal progress-status-modal"
       >
         {receiptProgress && (
-          <div>
+          <div className="progress-status-body">
             <Progress
               percent={Math.round((receiptProgress.current / receiptProgress.total) * 100)}
               status="active"
-              style={{ marginBottom: 16 }}
+              className="progress-status-bar"
               aria-label={`Progress: ${receiptProgress.current} of ${receiptProgress.total} receipts generated`}
             />
-            <Text>
+            <Text className="progress-status-title">
               Generating {receiptProgress.current} of {receiptProgress.total} receipts
             </Text>
             {receiptProgress.current > 0 && (
-              <div style={{ marginTop: 8 }}>
-                <Text type="secondary" style={{ fontSize: '12px' }}>
+              <div className="progress-status-note">
+                <Text type="secondary">
                   {receiptProgress.current} receipt{receiptProgress.current !== 1 ? 's' : ''} saved
                 </Text>
               </div>
@@ -1085,8 +1062,14 @@ const Payments: React.FC = () => {
           setEditingPayment(null)
         }}
         confirmLoading={loading}
-        width={600}
-        className="mobile-fullscreen-modal mobile-single-column"
+        width={640}
+        style={{ 
+          maxWidth: '95vw',
+          margin: '0 auto'
+        }}
+        centered
+        className="payment-modal-responsive"
+        bodyStyle={{ padding: '12px 16px', maxHeight: '70vh', overflowY: 'auto' }}
       >
         <Form
           form={form}
@@ -1096,101 +1079,105 @@ const Payments: React.FC = () => {
           <Form.Item name="project_id" hidden>
             <Input type="hidden" />
           </Form.Item>
-          <Divider orientation={'left' as DividerProps['orientation']} style={{ marginTop: 0 }}>
+
+          {/* ── Unit Details ── */}
+          <Divider orientation={'left' as DividerProps['orientation']} plain style={{ marginTop: 0 }}>
             Unit Details
           </Divider>
-          <div className="responsive-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            {/* Step 1: Pick project to narrow the unit list */}
-            <Form.Item
-              label="Filter by Project"
-              className="span-2"
-              style={{ gridColumn: 'span 2', marginBottom: 4 }}
-            >
-              <Select
-                showSearch
-                placeholder="Select project to narrow unit list (optional)"
-                allowClear
-                value={formProjectId || undefined}
-                filterOption={(input, option) =>
-                  String(option?.children || '').toLowerCase().includes(input.toLowerCase())
-                }
-                onChange={(pid) => {
-                  form.setFieldsValue({ project_id: pid, unit_id: undefined, letter_id: undefined })
-                }}
-                aria-label="Filter units by project"
-                style={{ width: '100%' }}
+          <Row gutter={[16, 8]}>
+            <Col span={24}>
+              <Form.Item
+                label="Filter by Project"
+                style={{ marginBottom: 4 }}
               >
-                {projects.map((p) => (
-                  <Option key={p.id} value={p.id}>
-                    {p.project_code ? `${p.project_code} — ${p.name}` : p.name}
-                  </Option>
-                ))}
-              </Select>
-            </Form.Item>
-
-            <Form.Item
-              name="unit_id"
-              label="Select Unit"
-              rules={[{ required: true, message: 'Please select a unit' }]}
-              style={{ gridColumn: 'span 2' }}
-            >
-              <Select
-                showSearch
-                placeholder={
-                  formProjectId
-                    ? `Search among ${filteredUnitsForForm.length} unit${filteredUnitsForForm.length !== 1 ? 's' : ''}`
-                    : 'Select a project above to filter, or search all units'
-                }
-                filterOption={(input, option) =>
-                  String(option?.children || '').toLowerCase().includes(input.toLowerCase())
-                }
-                onChange={(unitId) => {
-                  const selectedUnit = units.find((u) => u.id === unitId)
-                  if (selectedUnit && !formProjectId) {
-                    form.setFieldsValue({
-                      project_id: selectedUnit.project_id,
-                      letter_id: undefined
-                    })
-                  } else {
-                    form.setFieldsValue({ letter_id: undefined })
+                <Select
+                  className="app-combobox"
+                  showSearch
+                  placeholder="Select project to narrow unit list (optional)"
+                  allowClear
+                  value={formProjectId || undefined}
+                  filterOption={(input, option) =>
+                    String(option?.children || '').toLowerCase().includes(input.toLowerCase())
                   }
-                }}
-                aria-label="Select unit for payment"
-                notFoundContent={formProjectId ? 'No units found for this project' : 'No units found'}
+                  onChange={(pid) => {
+                    form.setFieldsValue({ project_id: pid, unit_id: undefined, letter_id: undefined })
+                  }}
+                  aria-label="Filter units by project"
+                  style={{ width: '100%' }}
+                >
+                  {projects.map((p) => (
+                    <Option key={p.id} value={p.id}>
+                      {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+
+            <Col span={24}>
+              <Form.Item
+                name="unit_id"
+                label="Select Unit"
+                rules={[{ required: true, message: 'Please select a unit' }]}
               >
-                {filteredUnitsForForm.map((u) => (
-                  <Option key={u.id} value={u.id}>
-                    {u.unit_number} — {u.owner_name}
-                    {!formProjectId ? ` (${u.project_name})` : ''}
-                  </Option>
-                ))}
-              </Select>
-            </Form.Item>
+                <Select
+                  className="app-combobox"
+                  showSearch
+                  placeholder={
+                    formProjectId
+                      ? `Search among ${filteredUnitsForForm.length} unit${filteredUnitsForForm.length !== 1 ? 's' : ''}`
+                      : 'Select a project above to filter, or search all units'
+                  }
+                  filterOption={(input, option) =>
+                    String(option?.children || '').toLowerCase().includes(input.toLowerCase())
+                  }
+                  onChange={(unitId) => {
+                    const selectedUnit = units.find((u) => u.id === unitId)
+                    if (selectedUnit && !formProjectId) {
+                      form.setFieldsValue({
+                        project_id: selectedUnit.project_id,
+                        letter_id: undefined
+                      })
+                    } else {
+                      form.setFieldsValue({ letter_id: undefined })
+                    }
+                  }}
+                  aria-label="Select unit for payment"
+                  notFoundContent={formProjectId ? 'No units found for this project' : 'No units found'}
+                  style={{ width: '100%' }}
+                >
+                  {filteredUnitsForForm.map((u) => (
+                    <Option key={u.id} value={u.id}>
+                      {u.unit_number} - {u.owner_name}
+                      {!formProjectId ? ` (${u.project_name})` : ''}
+                    </Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
-            <Form.Item
-              noStyle
-              shouldUpdate={(prevValues, currentValues) =>
-                prevValues.unit_id !== currentValues.unit_id ||
-                prevValues.letter_id !== currentValues.letter_id
-              }
-            >
-              {({ getFieldValue }) => {
-                const unitId = getFieldValue('unit_id')
-                const letterId = getFieldValue('letter_id')
-                const unitLetters = letters.filter((l) => l.unit_id === unitId)
-                const selectedLetter = unitLetters.find((l) => l.id === letterId)
+          {/* ── Letter & Financial Year ── */}
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues.unit_id !== currentValues.unit_id ||
+              prevValues.letter_id !== currentValues.letter_id
+            }
+          >
+            {({ getFieldValue }) => {
+              const unitId = getFieldValue('unit_id')
+              const letterId = getFieldValue('letter_id')
+              const unitLetters = letters.filter((l) => l.unit_id === unitId)
+              const selectedLetter = unitLetters.find((l) => l.id === letterId)
 
-                return (
-                  <div
-                    style={{
-                      gridColumn: 'span 2',
-                      padding: '12px',
-                      backgroundColor: '#fafafa',
-                      borderRadius: '6px',
-                      border: '1px solid #d9d9d9'
-                    }}
-                  >
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              return (
+                <>
+                  <Divider orientation={'left' as DividerProps['orientation']} plain>
+                    Maintenance Letter
+                  </Divider>
+                  <Row gutter={[16, 8]}>
+                    <Col xs={24} md={12}>
                       <Form.Item
                         name="letter_id"
                         label="Against Maintenance Letter"
@@ -1203,6 +1190,7 @@ const Payments: React.FC = () => {
                         }
                       >
                         <Select
+                          className="app-combobox"
                           placeholder="Select Maintenance Letter"
                           allowClear
                           disabled={unitLetters.length === 0}
@@ -1210,10 +1198,7 @@ const Payments: React.FC = () => {
                             if (val) {
                               const letter = unitLetters.find((l) => l.id === val)
                               if (letter) {
-                                // Format the financial year from letter
                                 const formattedYear = formatFinancialYear(letter.financial_year)
-                                
-                                // Validate the formatted year
                                 if (!/^\d{4}-\d{2}$/.test(formattedYear)) {
                                   message.warning('Letter has invalid financial year format, using current year')
                                   form.setFieldsValue({
@@ -1230,15 +1215,18 @@ const Payments: React.FC = () => {
                             }
                           }}
                           aria-label="Select maintenance letter"
+                          style={{ width: '100%' }}
                         >
                           {unitLetters.map((letter) => (
                             <Option key={letter.id} value={letter.id}>
-                              FY {letter.financial_year} - ₹{letter.final_amount} ({letter.status})
+                              FY {letter.financial_year} - Rs. {letter.final_amount} ({letter.status})
                             </Option>
                           ))}
                         </Select>
                       </Form.Item>
+                    </Col>
 
+                    <Col xs={24} md={12}>
                       <Form.Item
                         name="financial_year"
                         label="For Financial Year"
@@ -1255,22 +1243,21 @@ const Payments: React.FC = () => {
                             <Text type="secondary">
                               Format: YYYY-YY (e.g., 2024-25, 2025-26)
                             </Text>
-                            <br />
-                            <Text type="secondary">
-                              Auto-formats: 2025-2026 → 2025-26, 20252026 → 2025-26
-                            </Text>
-                            <br />
                             {selectedLetter && (
-                              <Text type="warning">
-                                Pre-filled from letter - can be edited if needed
-                              </Text>
+                              <>
+                                <br />
+                                <Text type="warning">
+                                  Pre-filled from letter - can be edited if needed
+                                </Text>
+                              </>
                             )}
                           </div>
                         }
                       >
                         <Select
+                          className="app-combobox"
                           placeholder="Select Financial Year"
-                          disabled={false} // Allow manual correction even with letter selected
+                          disabled={false}
                           showSearch
                           filterOption={(input, option) => {
                             const optionText = option?.children?.toString() || ''
@@ -1279,9 +1266,10 @@ const Payments: React.FC = () => {
                                    optionText.toLowerCase().includes(input.toLowerCase())
                           }}
                           aria-label="Select financial year for payment"
+                          style={{ width: '100%' }}
                         >
                           {Array.from(new Set(letters.map((l) => l.financial_year)))
-                            .filter(fy => /^\d{4}-\d{2}$/.test(fy)) // Only show valid formats
+                            .filter(fy => /^\d{4}-\d{2}$/.test(fy))
                             .sort()
                             .reverse()
                             .map((fy) => (
@@ -1291,75 +1279,87 @@ const Payments: React.FC = () => {
                             ))}
                         </Select>
                       </Form.Item>
-                    </div>
-                  </div>
-                )
-              }}
-            </Form.Item>
-          </div>
+                    </Col>
+                  </Row>
+                </>
+              )
+            }}
+          </Form.Item>
 
-          <Divider orientation={'left' as DividerProps['orientation']}>Payment Details</Divider>
-          <div className="responsive-form-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <Form.Item
-              name="payment_date"
-              label="Payment Date"
-              rules={[{ required: true, message: 'Please select payment date' }]}
-            >
-              <DatePicker style={{ width: '100%' }} aria-label="Select payment date" />
-            </Form.Item>
-            <Form.Item
-              name="payment_amount"
-              label="Amount (₹)"
-              rules={[
-                { required: true, message: 'Please enter amount' },
-                { type: 'number', min: 1, message: 'Amount must be greater than 0' }
-              ]}
-              extra={
-                <div style={{ fontSize: '12px' }}>
-                  {(() => {
-                    const letterId = form.getFieldValue('letter_id')
-                    if (letterId) {
-                      const letter = letters.find((l) => l.id === letterId)
-                      if (letter) {
-                        return `Letter amount: ₹${letter.final_amount.toLocaleString()}`
+          {/* ── Payment Details ── */}
+          <Divider orientation={'left' as DividerProps['orientation']} plain>
+            Payment Details
+          </Divider>
+          <Row gutter={[16, 8]}>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="payment_date"
+                label="Payment Date"
+                rules={[{ required: true, message: 'Please select payment date' }]}
+              >
+                <DatePicker style={{ width: '100%' }} aria-label="Select payment date" />
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="payment_amount"
+                label="Amount (Rs.)"
+                rules={[
+                  { required: true, message: 'Please enter amount' },
+                  { type: 'number', min: 1, message: 'Amount must be greater than 0' }
+                ]}
+                extra={
+                  <div style={{ fontSize: '12px' }}>
+                    {(() => {
+                      const letterId = form.getFieldValue('letter_id')
+                      if (letterId) {
+                        const letter = letters.find((l) => l.id === letterId)
+                        if (letter) {
+                          return `Letter amount: Rs. ${letter.final_amount.toLocaleString()}`
+                        }
                       }
-                    }
-                    return null
-                  })()}
-                </div>
-              }
-            >
-              <InputNumber style={{ width: '100%' }} min={1} aria-label="Enter payment amount" />
-            </Form.Item>
+                      return null
+                    })()}
+                  </div>
+                }
+              >
+                <InputNumber style={{ width: '100%' }} min={1} aria-label="Enter payment amount" />
+              </Form.Item>
+            </Col>
 
-            <Form.Item
-              name="payment_mode"
-              label="Payment Mode"
-              rules={[{ required: true, message: 'Please select payment mode' }]}
-            >
-              <Select aria-label="Select payment mode">
-                <Option value="Transfer">Bank Transfer / UPI</Option>
-                <Option value="Cheque">Cheque</Option>
-                <Option value="Cash">Cash</Option>
-              </Select>
-            </Form.Item>
-            <Form.Item
-              name="cheque_number"
-              label="Reference # (UTR/Cheque No)"
-              aria-label="Enter reference number"
-            >
-              <Input placeholder="Enter UTR or cheque number" />
-            </Form.Item>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="payment_mode"
+                label="Payment Mode"
+                rules={[{ required: true, message: 'Please select payment mode' }]}
+              >
+                <Select aria-label="Select payment mode" style={{ width: '100%' }}>
+                  <Option value="Transfer">Bank Transfer / UPI</Option>
+                  <Option value="Cheque">Cheque</Option>
+                  <Option value="Cash">Cash</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} md={12}>
+              <Form.Item
+                name="cheque_number"
+                label="Reference # (UTR/Cheque No)"
+                aria-label="Enter reference number"
+              >
+                <Input placeholder="Enter UTR or cheque number" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
 
-            <Form.Item
-              name="remarks"
-              label="Remarks"
-              style={{ gridColumn: 'span 2' }}
-              aria-label="Enter remarks"
-            >
-              <Input.TextArea rows={2} placeholder="Enter any additional remarks" />
-            </Form.Item>
-          </div>
+            <Col span={24}>
+              <Form.Item
+                name="remarks"
+                label="Remarks"
+                aria-label="Enter remarks"
+              >
+                <Input.TextArea rows={2} placeholder="Enter any additional remarks" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+          </Row>
         </Form>
       </Modal>
 
@@ -1539,7 +1539,7 @@ const Payments: React.FC = () => {
                     key: 'owner_name'
                   },
                   {
-                    title: 'Amount (₹)',
+                    title: 'Amount (Rs. )',
                     key: 'amount',
                     width: 150,
                     render: (_: unknown, record: BulkPaymentEntry) => {
@@ -1617,10 +1617,10 @@ const Payments: React.FC = () => {
                       {bulkPaymentSummary.totalUnits}
                     </Text>
                     <Text strong type="success">
-                      Total Amount: ₹{bulkPaymentSummary.totalAmount.toLocaleString()}
+                      Total Amount: Rs. {bulkPaymentSummary.totalAmount.toLocaleString()}
                     </Text>
                     <Text type="secondary">
-                      Average: ₹{bulkPaymentSummary.averageAmount.toLocaleString()}
+                      Average: Rs. {bulkPaymentSummary.averageAmount.toLocaleString()}
                     </Text>
                   </Space>
                 </div>

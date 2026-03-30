@@ -22,6 +22,10 @@ const BreadcrumbNavigation: React.FC<BreadcrumbNavigationProps> = ({
   items, 
   homePath = '/' 
 }) => {
+  if (!items.length) {
+    return null
+  }
+
   const breadcrumbItems = [
     {
       label: 'Home',

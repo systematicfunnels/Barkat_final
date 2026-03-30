@@ -22,7 +22,6 @@ import {
   ProjectOutlined,
   QuestionCircleOutlined
 } from '@ant-design/icons'
-import { IndianRupee } from 'lucide-react'
 import { MaintenanceLetter, Project } from '@preload/types'
 import { useAsyncOperation } from '../hooks/useAsyncOperation'
 import dayjs from 'dayjs'
@@ -194,7 +193,7 @@ const Dashboard: React.FC = () => {
     {
       title: 'TOTAL OUTSTANDING',
       value: stats.totalOutstanding,
-      icon: <IndianRupee size={24} style={{ color: '#cf1322' }} />,
+      icon: <FileTextOutlined style={{ color: '#cf1322' }} />,
       color: '#cf1322',
       isCurrency: true,
       path: '/reports',
@@ -203,7 +202,7 @@ const Dashboard: React.FC = () => {
     {
       title: 'COLLECTED (FY)',
       value: stats.collectedThisYear,
-      icon: <IndianRupee size={24} style={{ color: '#3f8600' }} />,
+      icon: <FileTextOutlined style={{ color: '#3f8600' }} />,
       color: '#3f8600',
       isCurrency: true,
       path: '/payments',
@@ -214,164 +213,153 @@ const Dashboard: React.FC = () => {
   return (
     <div className="responsive-page-container page-screen" style={{ margin: '0 auto' }}>
       <div className="page-hero">
-      <div
-        className="responsive-page-header"
-        style={{
-          marginBottom: 32
-        }}
-      >
-        <div>
-          <Title level={2} style={{ margin: 0, fontWeight: 700 }}>
-            Dashboard
-          </Title>
-          <Text type="secondary" className="page-hero-subtitle" style={{ fontSize: 16 }}>
-            Welcome back! Summary for Financial Year <strong>{selectedFY}</strong>
-            {selectedFY === defaultFY && ' (Current)'}
-          </Text>
-          <Text type="secondary" className="page-helper-text" style={{ display: 'block', marginTop: 8 }}>
-            Select a summary card to open the related workspace.
-          </Text>
+        <div className="responsive-page-header">
+          <div>
+            <Title level={2}>Dashboard</Title>
+            <Text type="secondary" className="page-hero-subtitle">
+              Welcome back! Summary for Financial Year <strong>{selectedFY}</strong>
+              {selectedFY === defaultFY && ' (Current)'}
+            </Text>
+            <Text type="secondary" className="page-helper-text">
+              Select a summary card to open the related workspace.
+            </Text>
+          </div>
         </div>
-        <Space
-          size="middle"
-          wrap
-          className="responsive-filters"
-          direction="horizontal"
-          style={{
-            width: '100%',
-            justifyContent: 'flex-end',
-            opacity: loading ? 0.7 : 1,
-            pointerEvents: loading ? 'none' : 'auto'
-          }}
-        >
-          <Space orientation="vertical" align="start">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+      </div>
+
+      <Card className="page-toolbar-card dashboard-filter-card" variant="borderless">
+        <div className="app-filter-panel-fields">
+          <div className="app-filter-panel-label">
+            <ProjectOutlined />
+            <span>Refine overview</span>
+            {loading && <Spin size="small" />}
+          </div>
+          <Space
+            size="middle"
+            wrap
+            className="responsive-filters app-filter-row"
+            direction="horizontal"
+            style={{
+              width: '100%',
+              opacity: loading ? 0.7 : 1,
+              pointerEvents: loading ? 'none' : 'auto'
+            }}
+          >
+            <Space orientation="vertical" align="start">
               <Text type="secondary" strong style={{ fontSize: 12 }}>
                 Project
               </Text>
-              {loading && <Spin size="small" style={{ marginLeft: 4 }} />}
-            </div>
-            <Select
-              placeholder="All Projects"
-              style={{ width: '100%', minWidth: 140 }}
-              allowClear
-              onChange={(value) => setSelectedProject(value)}
-              value={selectedProject}
-              suffixIcon={<ProjectOutlined />}
-              disabled={loading}
-            >
-              {projects.map((p) => (
-                <Option key={p.id} value={p.id}>
-                  {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
-                </Option>
-              ))}
-            </Select>
-          </Space>
-          <Space orientation="vertical" align="start">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <Text type="secondary" strong style={{ fontSize: 12 }}>
-                Financial Year
-              </Text>
-              {selectedFY === defaultFY && (
-                <Tag color="blue" style={{ marginLeft: 4 }}>
-                  Current
-                </Tag>
-              )}
-            </div>
-            <Select
-              placeholder="Select Year"
-              style={{ width: '100%', minWidth: 160 }}
-              popupMatchSelectWidth={false}
-              onChange={(value) => setSelectedFY(value)}
-              value={selectedFY}
-              disabled={loading}
-              popupRender={(menu) => (
-                <>
-                  <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>
-                    <Space size="small">
-                      <Button
-                        size="small"
-                        type="primary"
-                        ghost
-                        onClick={() => {
-                          const prevYear = currentYear - 1
-                          setSelectedFY(`${prevYear}-${(prevYear + 1).toString().slice(2)}`)
-                        }}
-                      >
-                        Previous Year
-                      </Button>
-                      <Button
-                        size="small"
-                        type="primary"
-                        ghost
-                        onClick={() => setSelectedFY(defaultFY)}
-                      >
-                        Current Year
-                      </Button>
-                    </Space>
-                  </div>
-                  {menu}
-                </>
-              )}
-            >
-              {financialYears.map((fy) => (
-                <Option key={fy} value={fy}>
-                  {fy === defaultFY ? `${fy} (Current)` : fy}
-                </Option>
-              ))}
-            </Select>
-          </Space>
-          <Space orientation="vertical" align="start">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Select
+                className="app-filter-select"
+                placeholder="All Projects"
+                style={{ width: '100%', minWidth: 180 }}
+                allowClear
+                onChange={(value) => setSelectedProject(value)}
+                value={selectedProject}
+                suffixIcon={<ProjectOutlined />}
+                disabled={loading}
+              >
+                {projects.map((p) => (
+                  <Option key={p.id} value={p.id}>
+                    {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
+                  </Option>
+                ))}
+              </Select>
+            </Space>
+            <Space orientation="vertical" align="start">
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Text type="secondary" strong style={{ fontSize: 12 }}>
+                  Financial Year
+                </Text>
+                {selectedFY === defaultFY && <Tag color="blue">Current</Tag>}
+              </div>
+              <Select
+                className="app-filter-select"
+                placeholder="Select Year"
+                style={{ width: '100%', minWidth: 180 }}
+                popupMatchSelectWidth={false}
+                onChange={(value) => setSelectedFY(value)}
+                value={selectedFY}
+                disabled={loading}
+                popupRender={(menu) => (
+                  <>
+                    <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>
+                      <Space size="small">
+                        <Button
+                          size="small"
+                          type="primary"
+                          ghost
+                          onClick={() => {
+                            const prevYear = currentYear - 1
+                            setSelectedFY(`${prevYear}-${(prevYear + 1).toString().slice(2)}`)
+                          }}
+                        >
+                          Previous Year
+                        </Button>
+                        <Button
+                          size="small"
+                          type="primary"
+                          ghost
+                          onClick={() => setSelectedFY(defaultFY)}
+                        >
+                          Current Year
+                        </Button>
+                      </Space>
+                    </div>
+                    {menu}
+                  </>
+                )}
+              >
+                {financialYears.map((fy) => (
+                  <Option key={fy} value={fy}>
+                    {fy === defaultFY ? `${fy} (Current)` : fy}
+                  </Option>
+                ))}
+              </Select>
+            </Space>
+            <Space orientation="vertical" align="start">
               <Text type="secondary" strong style={{ fontSize: 12 }}>
                 Unit Type
               </Text>
-              {loading && <Spin size="small" style={{ marginLeft: 4 }} />}
-            </div>
-            <Select
-              placeholder="All Types"
-              style={{ width: '100%', minWidth: 120 }}
-              allowClear
-              onChange={setSelectedUnitType}
-              value={selectedUnitType}
-              disabled={loading}
-            >
-              {UNIT_TYPE_OPTIONS.map((unitType) => (
-                <Option key={unitType} value={unitType}>
-                  {unitType}
-                </Option>
-              ))}
-            </Select>
-          </Space>
-          <Space orientation="vertical" align="start">
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Select
+                className="app-filter-select"
+                placeholder="All Types"
+                style={{ width: '100%', minWidth: 140 }}
+                allowClear
+                onChange={setSelectedUnitType}
+                value={selectedUnitType}
+                disabled={loading}
+              >
+                {UNIT_TYPE_OPTIONS.map((unitType) => (
+                  <Option key={unitType} value={unitType}>
+                    {unitType}
+                  </Option>
+                ))}
+              </Select>
+            </Space>
+            <Space orientation="vertical" align="start">
               <Text type="secondary" strong style={{ fontSize: 12 }}>
                 Status
               </Text>
-              {loading && <Spin size="small" style={{ marginLeft: 4 }} />}
-            </div>
-            <Select
-              placeholder="All Status"
-              style={{ width: '100%', minWidth: 110 }}
-              allowClear
-              onChange={setSelectedStatus}
-              value={selectedStatus}
-              disabled={loading}
-            >
-              <Option value="Active">Active</Option>
-              <Option value="Inactive">Inactive</Option>
-            </Select>
+              <Select
+                className="app-filter-select"
+                placeholder="All Status"
+                style={{ width: '100%', minWidth: 140 }}
+                allowClear
+                onChange={setSelectedStatus}
+                value={selectedStatus}
+                disabled={loading}
+              >
+                <Option value="Active">Active</Option>
+                <Option value="Inactive">Inactive</Option>
+              </Select>
+            </Space>
           </Space>
-        </Space>
-      </div>
-      </div>
+        </div>
+      </Card>
 
-      {/* Filter Summary Section */}
       {hasActiveFilters && (
-        <div
-          className="page-chip-bar"
-          style={{ marginBottom: 0, padding: '12px 16px', background: '#fafafa', borderRadius: 6 }}
-        >
+        <div className="page-chip-bar">
           <Space wrap align="center" className="responsive-action-bar">
             <Text type="secondary" style={{ fontSize: '12px', fontWeight: 500 }}>
               Active filters:
@@ -409,20 +397,28 @@ const Dashboard: React.FC = () => {
               </Tag>
             )}
             <Button
-              type="link"
+              type="default"
+              className="app-filter-clear-button"
               size="small"
               onClick={clearAllFilters}
-              style={{ fontSize: '12px', padding: 0, height: 'auto' }}
+              style={{ fontSize: '12px' }}
             >
-              Clear all filters
+              Clear all
             </Button>
           </Space>
         </div>
       )}
 
-      <Row gutter={[24, 24]}>
+      <Row gutter={[20, 20]} className="dashboard-stats-row">
         {statCards.map((card, index) => (
-          <Col key={index} xs={24} sm={12} lg={index >= 3 ? 6 : 4}>
+          <Col
+            key={index}
+            xs={24}
+            sm={12}
+            md={12}
+            lg={8}
+            xl={8}
+          >
             <Card
               variant="borderless"
               hoverable
@@ -459,7 +455,7 @@ const Dashboard: React.FC = () => {
                     formatter={
                       card.isCurrency
                         ? (val) =>
-                            `₹${Number(val).toLocaleString(undefined, {
+                            `Rs. ${Number(val).toLocaleString(undefined, {
                               minimumFractionDigits: 2,
                               maximumFractionDigits: 2
                             })}`
@@ -490,7 +486,6 @@ const Dashboard: React.FC = () => {
           <Card
             title="Quick Actions"
             variant="borderless"
-            styles={{ header: { borderBottom: '1px solid #f0f0f0' } }}
             className="page-toolbar-card"
           >
             <Row gutter={[16, 16]}>

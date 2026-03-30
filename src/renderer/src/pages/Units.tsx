@@ -18,7 +18,9 @@ import {
   Badge,
   Progress,
   Collapse,
-  Tag
+  Tag,
+  Row,
+  Col
 } from 'antd'
 import type { DividerProps } from 'antd'
 import {
@@ -28,7 +30,6 @@ import {
   ThunderboltOutlined,
   ExclamationCircleOutlined,
   WarningOutlined,
-  FileAddOutlined,
   EditOutlined,
   DeleteOutlined,
   PlusOutlined,
@@ -177,6 +178,7 @@ const Units: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [editingUnit, setEditingUnit] = useState<Unit | null>(null)
+  const [pageSize, setPageSize] = useState(10)
 
   const [importData, setImportData] = useState<Record<string, unknown>[]>([])
   const [mappedPreview, setMappedPreview] = useState<ImportUnitPreview[]>([])
@@ -184,7 +186,6 @@ const Units: React.FC = () => {
   const [importProjectId, setImportProjectId] = useState<number | null>(null)
   const [ignoreEmptyUnits, setIgnoreEmptyUnits] = useState(true)
   const [defaultArea, setDefaultArea] = useState<number>(0)
-  const [isQuickEntryMode, setIsQuickEntryMode] = useState(false)
 
   const [form] = Form.useForm()
   const navigate = useNavigate()
@@ -686,16 +687,14 @@ const Units: React.FC = () => {
     setFilteredUnits(filtered)
   }, [searchText, selectedProject, selectedUnitType, statusFilter, areaRange, units])
 
-  const handleAdd = (quickMode = false): void => {
+  const handleAdd = (): void => {
     setEditingUnit(null)
-    setIsQuickEntryMode(quickMode)
     form.resetFields()
     setIsModalOpen(true)
   }
 
   const handleEdit = (record: Unit): void => {
     setEditingUnit(record)
-    setIsQuickEntryMode(false)
     form.setFieldsValue(record)
     setIsModalOpen(true)
   }
@@ -1112,14 +1111,17 @@ const Units: React.FC = () => {
       dataIndex: 'project_name',
       key: 'project_name',
       fixed: 'left' as const,
+      width: 140,
       sorter: (a: Unit, b: Unit) => (a.project_name || '').localeCompare(b.project_name || '')
     },
     {
       title: 'Unit No',
       dataIndex: 'unit_number',
       key: 'unit_number',
+      width: 100,
       sorter: (a: Unit, b: Unit) => a.unit_number.localeCompare(b.unit_number)
     },
+    /* Sector column hidden - sector info usually in unit number (e.g., A-101)
     {
       title: 'Sector',
       dataIndex: 'sector_code',
@@ -1131,10 +1133,12 @@ const Units: React.FC = () => {
         }),
       render: (text: string) => text || '-'
     },
+    */
     {
       title: 'Type',
       dataIndex: 'unit_type',
       key: 'unit_type',
+      width: 80,
       sorter: (a: Unit, b: Unit) => (a.unit_type || '').localeCompare(b.unit_type || ''),
       render: (type: string) => {
         const label = type || 'Plot'
@@ -1146,12 +1150,14 @@ const Units: React.FC = () => {
       title: 'Owner',
       dataIndex: 'owner_name',
       key: 'owner_name',
+      width: 150,
       sorter: (a: Unit, b: Unit) => a.owner_name.localeCompare(b.owner_name)
     },
     {
       title: 'Contact',
       dataIndex: 'contact_number',
       key: 'contact_number',
+      responsive: ['md' as const],
       sorter: (a: Unit, b: Unit) =>
         (a.contact_number || '').localeCompare(b.contact_number || '', undefined, {
           numeric: true,
@@ -1163,6 +1169,7 @@ const Units: React.FC = () => {
       title: 'Email',
       dataIndex: 'email',
       key: 'email',
+      responsive: ['md' as const],
       sorter: (a: Unit, b: Unit) =>
         (a.email || '').localeCompare(b.email || '', undefined, {
           numeric: true,
@@ -1174,6 +1181,7 @@ const Units: React.FC = () => {
       title: 'Area (sqft)',
       dataIndex: 'area_sqft',
       key: 'area_sqft',
+      width: 100,
       align: 'right' as const,
       sorter: (a: Unit, b: Unit) => a.area_sqft - b.area_sqft
     },
@@ -1181,14 +1189,16 @@ const Units: React.FC = () => {
       title: 'Penalty',
       dataIndex: 'penalty',
       key: 'penalty',
+      responsive: ['md' as const],
       align: 'right' as const,
-      render: (val: number) => (val ? `₹${val}` : '-'),
+      render: (val: number) => (val ? `Rs. ${val}` : '-'),
       sorter: (a: Unit, b: Unit) => (a.penalty || 0) - (b.penalty || 0)
     },
     {
       title: 'Late Payment %',
       dataIndex: 'penalty_percentage',
       key: 'penalty_percentage',
+      responsive: ['md' as const],
       align: 'right' as const,
       render: (val: number) => (val !== null && val !== undefined ? `${val}%` : 'Default'),
       sorter: (a: Unit, b: Unit) => (a.penalty_percentage || 0) - (b.penalty_percentage || 0)
@@ -1197,6 +1207,7 @@ const Units: React.FC = () => {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
+      width: 80,
       sorter: (a: Unit, b: Unit) => (a.status || '').localeCompare(b.status || ''),
       render: (status: string) => {
         const color = status === 'Sold' ? 'success' : 'default'
@@ -1207,9 +1218,10 @@ const Units: React.FC = () => {
       title: 'Actions',
       key: 'actions',
       align: 'right' as const,
-      width: 280,
+      width: 220,
+      fixed: 'right' as const,
       render: (_: unknown, record: Unit) => (
-        <Space size="small">
+        <Space className="table-row-actions" size="small">
           <Button
             size="small"
             icon={<FilePdfOutlined />}
@@ -1249,7 +1261,7 @@ const Units: React.FC = () => {
   ]
 
   return (
-    <div className="page-screen" style={{ padding: '24px' }}>
+    <div className="page-screen">
       {/* Enhanced header with selection feedback */}
       <div className="page-hero">
         <div
@@ -1265,31 +1277,35 @@ const Units: React.FC = () => {
             <Text type="secondary" className="page-hero-subtitle">
               Review owners, import spreadsheets, and prepare units for billing in a faster workflow.
             </Text>
+            <Text
+              type="secondary"
+              className="page-helper-text"
+              style={{ display: 'block', marginTop: 8 }}
+            >
+              Import, clean, and manage unit records here before billing and payment operations.
+            </Text>
           </div>
           <Space wrap className="responsive-action-bar" align="center">
-          {canUndo && (
-            <Button 
-              icon={<UndoOutlined />} 
-              onClick={handleUndoDelete}
-              title="Undo last deletion"
-              aria-label="Undo last deletion"
+            {canUndo && (
+              <Button
+                icon={<UndoOutlined />}
+                onClick={handleUndoDelete}
+                title="Undo last deletion"
+                aria-label="Undo last deletion"
+              >
+                Undo Delete
+              </Button>
+            )}
+            <Upload
+              beforeUpload={handleImport}
+              showUploadList={false}
+              accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
             >
-              Undo Delete
+              <Button icon={<UploadOutlined />}>Import Excel</Button>
+            </Upload>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => handleAdd()}>
+              Add Unit
             </Button>
-          )}
-          <Upload
-            beforeUpload={handleImport}
-            showUploadList={false}
-            accept=".xlsx,.xls,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv"
-          >
-            <Button icon={<UploadOutlined />}>Import Excel</Button>
-          </Upload>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => handleAdd(false)}>
-            Add Unit
-          </Button>
-          <Button icon={<FileAddOutlined />} onClick={() => handleAdd(true)}>
-            Quick Add
-          </Button>
           </Space>
         </div>
       </div>
@@ -1314,8 +1330,8 @@ const Units: React.FC = () => {
         </div>
       )}
 
-      <Card className="page-toolbar-card page-table-card">
-        <div style={{ marginBottom: 24 }}>
+      <Card className="page-toolbar-card page-table-card unit-table-card">
+        <div className="unit-filter-panel">
           <FilterPanel
             filters={unitFilterFields}
             values={unitFilterValues}
@@ -1341,7 +1357,13 @@ const Units: React.FC = () => {
             dataSource={filteredUnits}
             rowKey="id"
             loading={loading}
-            pagination={{ pageSize: 10 }}
+            pagination={{ 
+              pageSize: pageSize, 
+              showSizeChanger: true, 
+              pageSizeOptions: [10, 20, 50],
+              onShowSizeChange: (_, size) => setPageSize(size)
+            }}
+            size="small"
             scroll={{ x: 'max-content' }}
           />
         </div>
@@ -1906,32 +1928,50 @@ const Units: React.FC = () => {
         onOk={handleModalOk}
         onCancel={() => {
           setIsModalOpen(false)
-          setIsQuickEntryMode(false)
         }}
-        width={isQuickEntryMode ? 480 : 680}
-        style={{ maxWidth: '95vw' }}
-        className="mobile-fullscreen-modal mobile-single-column"
-        bodyStyle={{ padding: '16px' }}
+        width={640}
+        style={{ 
+          maxWidth: '95vw',
+          margin: '0 auto'
+        }}
+        centered
+        className="unit-modal-responsive"
+        bodyStyle={{ padding: '12px 16px', maxHeight: '70vh', overflowY: 'auto' }}
       >
-        {/* Mode toggle tabs at top - only show when adding (not editing) */}
-        {!editingUnit && (
-          <div style={{ marginBottom: 16, borderBottom: '1px solid #f0f0f0' }}>
-            <Space size="large">
+        {/* Breadcrumb navigation for editing - styled like Generate Maintenance Letter */}
+        {editingUnit && (
+          <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fafafa', borderRadius: 10 }}>
+            <Space size="small" align="center">
               <Button
-                type={isQuickEntryMode ? 'link' : 'primary'}
-                onClick={() => setIsQuickEntryMode(false)}
-                style={{ padding: '8px 0', fontWeight: isQuickEntryMode ? 'normal' : 600 }}
+                type="text"
+                size="small"
+                style={{ fontWeight: 600, padding: '4px 8px' }}
+                onClick={() => document.getElementById('unit-info-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
               >
-                Full Form
+                1. Unit Info
               </Button>
+              <span style={{ color: '#999' }}>{'->'}</span>
               <Button
-                type={isQuickEntryMode ? 'primary' : 'link'}
-                onClick={() => setIsQuickEntryMode(true)}
-                style={{ padding: '8px 0', fontWeight: isQuickEntryMode ? 600 : 'normal' }}
+                type="text"
+                size="small"
+                style={{ fontWeight: 600, padding: '4px 8px' }}
+                onClick={() => document.getElementById('owner-details-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
               >
-                Quick Add
+                2. Owner Details
+              </Button>
+              <span style={{ color: '#999' }}>{'->'}</span>
+              <Button
+                type="text"
+                size="small"
+                style={{ fontWeight: 600, padding: '4px 8px' }}
+                onClick={() => document.getElementById('address-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+              >
+                3. Address
               </Button>
             </Space>
+            <div style={{ marginTop: 6, fontSize: '11.5px', color: '#666' }}>
+              Editing: <strong>{editingUnit.unit_number}</strong> | Owner: {editingUnit.owner_name}
+            </div>
           </div>
         )}
 
@@ -1946,145 +1986,163 @@ const Units: React.FC = () => {
           }}
         >
           {/* ── Project & Identity ── */}
-          <Divider orientation={'left' as DividerProps['orientation']} plain style={{ marginTop: 0 }}>
-            Unit Information
-          </Divider>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-            <Form.Item
-              name="project_id"
-              label="Project"
-              rules={[{ required: true, message: 'Please select a project' }]}
-              style={{ gridColumn: 'span 2' }}
-            >
-              <Select disabled={!!editingUnit}>
-                {projects.map((s) => (
-                  <Select.Option key={s.id} value={s.id}>
-                    {s.project_code ? `${s.project_code} - ${s.name}` : s.name}
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-
-            <Form.Item
-              name="unit_number"
-              label="Unit Number"
-              rules={[{ required: true, message: 'Please enter unit number' }]}
-            >
-              <Input placeholder="e.g. A-001" />
-            </Form.Item>
-            
-            {!isQuickEntryMode && (
-              <Form.Item name="sector_code" label="Sector / Block Code">
-                <Input placeholder="e.g. A, B, C" />
+          <div id="unit-info-section">
+            <Divider orientation={'left' as DividerProps['orientation']} plain style={{ marginTop: 0 }}>
+              Unit Information
+            </Divider>
+            <Row gutter={[16, 8]}>
+            <Col span={24}>
+              <Form.Item
+                name="project_id"
+                label="Project"
+                rules={[{ required: true, message: 'Please select a project' }]}
+              >
+                <Select disabled={!!editingUnit} style={{ width: '100%' }}>
+                  {projects.map((s) => (
+                    <Select.Option key={s.id} value={s.id}>
+                      {s.project_code ? `${s.project_code} - ${s.name}` : s.name}
+                    </Select.Option>
+                  ))}
+                </Select>
               </Form.Item>
-            )}
+            </Col>
 
-            <Form.Item
-              name="unit_type"
-              label="Unit Type"
-              rules={[{ required: true, message: 'Please select unit type' }]}
-            >
-              <Select>
-                <Option value="Plot">Plot</Option>
-                <Option value="Bungalow">Bungalow</Option>
-                <Option value="Garden">Garden</Option>
-              </Select>
-            </Form.Item>
-            <Form.Item
-              name="area_sqft"
-              label="Area (sqft)"
-              rules={[{ required: true, message: 'Please enter area' }]}
-            >
-              <InputNumber style={{ width: '100%' }} min={1} />
-            </Form.Item>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="unit_number"
+                label="Unit Number"
+                rules={[{ required: true, message: 'Please enter unit number' }]}
+              >
+                <Input placeholder="e.g. A-001" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            
+            <Col xs={24} sm={12}>
+              <Form.Item name="sector_code" label="Sector / Block Code">
+                <Input placeholder="e.g. A, B, C" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
 
-            {!isQuickEntryMode && (
-              <>
-                <Form.Item
-                  name="status"
-                  label="Status"
-                  rules={[{ required: true, message: 'Please select status' }]}
-                >
-                  <Select>
-                    <Option value="Sold">Sold</Option>
-                    <Option value="Unsold">Unsold</Option>
-                    <Option value="Vacant">Vacant</Option>
-                  </Select>
-                </Form.Item>
-                <Form.Item name="penalty" label="Opening Penalty (₹)">
-                  <InputNumber<number>
-                    style={{ width: '100%' }}
-                    min={0}
-                    formatter={(value) => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
-                    parser={(displayValue) =>
-                      displayValue?.replace(/₹\s?|(,*)/g, '') as unknown as number
-                    }
-                  />
-                </Form.Item>
-                <Form.Item name="penalty_percentage" label="Late Payment Charges (%)">
-                  <InputNumber<number>
-                    style={{ width: '100%' }}
-                    min={0}
-                    max={100}
-                    formatter={(value) => `${value}%`}
-                    parser={(displayValue) =>
-                      displayValue?.replace('%', '') as unknown as number
-                    }
-                    placeholder="Leave blank to use project default"
-                  />
-                </Form.Item>
-              </>
-            )}
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="unit_type"
+                label="Unit Type"
+                rules={[{ required: true, message: 'Please select unit type' }]}
+              >
+                <Select style={{ width: '100%' }}>
+                  <Option value="Plot">Plot</Option>
+                  <Option value="Bungalow">Bungalow</Option>
+                  <Option value="Garden">Garden</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="area_sqft"
+                label="Area (sqft)"
+                rules={[{ required: true, message: 'Please enter area' }]}
+              >
+                <InputNumber style={{ width: '100%' }} min={1} />
+              </Form.Item>
+            </Col>
+
+            <Col xs={24} sm={12}>
+              <Form.Item
+                name="status"
+                label="Status"
+                rules={[{ required: true, message: 'Please select status' }]}
+              >
+                <Select style={{ width: '100%' }}>
+                  <Option value="Sold">Sold</Option>
+                  <Option value="Unsold">Unsold</Option>
+                  <Option value="Vacant">Vacant</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item name="penalty" label="Opening Penalty (₹)">
+                <InputNumber<number>
+                  style={{ width: '100%' }}
+                  min={0}
+                  formatter={(value) => `₹ ${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                  parser={(displayValue) =>
+                    displayValue?.replace(/₹\s?|(,*)/g, '') as unknown as number
+                  }
+                />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item name="penalty_percentage" label="Late Payment Charges (%)" style={{ marginBottom: 0 }}>
+                <InputNumber<number>
+                  style={{ width: '100%' }}
+                  min={0}
+                  max={100}
+                  formatter={(value) => `${value}%`}
+                  parser={(displayValue) =>
+                    displayValue?.replace('%', '') as unknown as number
+                  }
+                  placeholder="Leave blank to use project default"
+                />
+              </Form.Item>
+            </Col>
+          </Row>
           </div>
 
           {/* ── Owner Details ── */}
-          <Divider orientation={'left' as DividerProps['orientation']} plain>
-            Owner Details
-          </Divider>
-          <div style={{ display: 'grid', gridTemplateColumns: isQuickEntryMode ? '1fr' : '1fr 1fr', gap: '16px' }}>
-            <Form.Item
-              name="owner_name"
-              label="Owner Name"
-              rules={[{ required: true, message: 'Please enter owner name' }]}
-              style={{ gridColumn: isQuickEntryMode ? 'span 1' : 'span 2' }}
-            >
-              <Input placeholder="Full name of owner" />
-            </Form.Item>
+          <div id="owner-details-section">
+            <Divider orientation={'left' as DividerProps['orientation']} plain>
+              Owner Details
+            </Divider>
+            <Row gutter={[16, 8]}>
+            <Col span={24}>
+              <Form.Item
+                name="owner_name"
+                label="Owner Name"
+                rules={[{ required: true, message: 'Please enter owner name' }]}
+              >
+                <Input placeholder="Full name of owner" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
             
-            {!isQuickEntryMode && (
-              <>
-                <Form.Item name="contact_number" label="Contact Number">
-                  <Input placeholder="Mobile / phone number" />
-                </Form.Item>
-                <Form.Item name="email" label="Email Address">
-                  <Input type="email" placeholder="owner@email.com" />
-                </Form.Item>
-              </>
-            )}
+            <Col xs={24} sm={12}>
+              <Form.Item name="contact_number" label="Contact Number">
+                <Input placeholder="Mobile / phone number" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col xs={24} sm={12}>
+              <Form.Item name="email" label="Email Address">
+                <Input type="email" placeholder="owner@email.com" style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            </Row>
           </div>
 
-          {/* ── Address Details (Full Mode Only) ── */}
-          {!isQuickEntryMode && (
-            <>
-              <Divider orientation={'left' as DividerProps['orientation']} plain>
-                Address Details
-              </Divider>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '16px' }}>
+          {/* ── Address Details ── */}
+          <div id="address-section">
+            <Divider orientation={'left' as DividerProps['orientation']} plain>
+              Address Details
+            </Divider>
+            <Row gutter={[16, 8]}>
+              <Col span={24}>
                 <Form.Item name="billing_address" label="Billing Address">
                   <Input.TextArea
                     rows={2}
                     placeholder="Address for maintenance letter / invoice delivery"
+                    style={{ width: '100%' }}
                   />
                 </Form.Item>
+              </Col>
+              <Col span={24}>
                 <Form.Item name="resident_address" label="Resident / Current Address">
                   <Input.TextArea
                     rows={2}
                     placeholder="Current residential address (if different from billing)"
+                    style={{ width: '100%' }}
                   />
                 </Form.Item>
-              </div>
-            </>
-          )}
+              </Col>
+            </Row>
+          </div>
         </Form>
       </Modal>
     </div>

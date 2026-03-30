@@ -472,6 +472,53 @@ export function registerIpcHandlers(): void {
     }
   )
 
+  ipcMain.handle(
+    'save-file',
+    async (
+      _,
+      options?: {
+        title?: string
+        defaultPath?: string
+        filters?: { name: string; extensions: string[] }[]
+      }
+    ): Promise<string | null> => {
+      console.log('🔍 [save-file] IPC handler called with options:', options)
+      
+      try {
+        // Validate filters if provided
+        let validatedFilters = [{ name: 'Database', extensions: ['db'] }]
+        if (Array.isArray(options?.filters)) {
+          validatedFilters = options.filters.filter(f => 
+            f && typeof f.name === 'string' && Array.isArray(f.extensions) && 
+            f.extensions.every(e => typeof e === 'string')
+          )
+          if (validatedFilters.length === 0) {
+            validatedFilters = [{ name: 'Database', extensions: ['db'] }]
+          }
+        }
+
+        const result = await dialog.showSaveDialog({
+          title: sanitizeText(options?.title) || 'Save File',
+          defaultPath: options?.defaultPath || 'barkat_backup.db',
+          filters: validatedFilters
+        })
+        
+        console.log('🔍 [save-file] Dialog result:', result)
+
+        if (result.canceled || !result.filePath) {
+          console.log('🔍 [save-file] User cancelled or no file selected')
+          return null
+        }
+
+        console.log('🔍 [save-file] Returning file path:', result.filePath)
+        return result.filePath
+      } catch (error) {
+        console.error('❌ [save-file] Dialog error:', error)
+        throw error
+      }
+    }
+  )
+
   // Payments
   ipcMain.handle('get-payments', (): Payment[] => {
     return paymentService.getAll()

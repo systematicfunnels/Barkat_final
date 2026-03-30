@@ -16,7 +16,9 @@ import {
   Typography,
   Tabs,
   List,
-  Alert
+  Alert,
+  Row,
+  Col
 } from 'antd'
 const { Title, Text, Paragraph } = Typography
 import {
@@ -129,6 +131,7 @@ const Projects: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isRateModalOpen, setIsRateModalOpen] = useState(false)
   const [editingProject, setEditingProject] = useState<Project | null>(null)
+  const [pageSize, setPageSize] = useState(10)
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
 
@@ -745,7 +748,7 @@ const Projects: React.FC = () => {
       align: 'center' as const,
       width: 120,
       render: (_: unknown, record: Project) => (
-        <Space size="small">
+        <Space className="table-row-actions" size="small">
           <Tooltip title="Manage Rates">
             <Button onClick={() => handleRates(record)} size="small">
               Rates
@@ -768,7 +771,7 @@ const Projects: React.FC = () => {
   ]
 
   return (
-    <div className="page-screen" style={{ padding: '24px' }}>
+    <div className="page-screen">
       {/* Header */}
       <div className="page-hero">
         <div
@@ -788,6 +791,13 @@ const Projects: React.FC = () => {
             </Typography.Title>
             <Text type="secondary" className="page-hero-subtitle">
               Manage project setup, workbook imports, and billing readiness from one place.
+            </Text>
+            <Text
+              type="secondary"
+              className="page-helper-text"
+              style={{ display: 'block', marginTop: 8 }}
+            >
+              Keep project records complete here before moving into units, rates, and billing.
             </Text>
           </div>
           <Space wrap className="responsive-action-bar">
@@ -832,7 +842,7 @@ const Projects: React.FC = () => {
         />
       </Card>
 
-      {/* Setup Checklist Banner — shown when any project has incomplete setup */}
+      {/* Setup Checklist Banner - shown when any project has incomplete setup */}
       {(() => {
         const incompleteProjects = projects.filter((p) => {
           const s = projectSetupSummaries[p.id!]
@@ -841,19 +851,19 @@ const Projects: React.FC = () => {
         if (incompleteProjects.length === 0) return null
         return (
           <Alert
+            className="project-setup-alert"
             type="warning"
             showIcon
             icon={<ExclamationCircleOutlined style={{ fontSize: 24 }} />}
-            style={{ marginBottom: 24, padding: '20px 24px' }}
             message={
-              <span style={{ fontWeight: 600, fontSize: 18, lineHeight: 1.5 }}>
+              <span className="project-setup-alert-title">
                 {incompleteProjects.length === 1
                   ? `"${incompleteProjects[0].name}" is not ready for billing`
                   : `${incompleteProjects.length} projects are not ready for billing`}
               </span>
             }
             description={
-              <div style={{ marginTop: 12 }}>
+              <div className="project-setup-alert-list">
                 {incompleteProjects.map((p) => {
                   const s = projectSetupSummaries[p.id!]
                   if (!s) return null
@@ -863,28 +873,21 @@ const Projects: React.FC = () => {
                   return (
                     <div
                       key={p.id}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'flex-start',
-                        gap: 16,
-                        padding: '14px 0',
-                        borderBottom: '1px solid rgba(0,0,0,0.1)',
-                        flexWrap: 'wrap'
-                      }}
+                      className="project-setup-alert-item"
                     >
-                      <span style={{ fontWeight: 600, minWidth: 180, fontSize: 16 }}>
-                        {p.project_code || `PRJ-${p.id}`} — {p.name}
+                      <span className="project-setup-alert-project">
+                        {p.project_code || `PRJ-${p.id}`} - {p.name}
                       </span>
-                      <span style={{ color: '#8c6d00', fontSize: 15, lineHeight: 1.5, flex: 1 }}>
+                      <span className="project-setup-alert-blockers">
                         {s.blockers.join(' · ')}
                       </span>
-                      <div style={{ marginLeft: 'auto', display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      <div className="project-setup-alert-actions">
                         {(needsBank || needsRate) && (
                           <Button
                             size="middle"
                             icon={<BankOutlined />}
                             onClick={() => handleEdit(p)}
-                            style={{ fontSize: 15, padding: '8px 16px', height: 'auto' }}
+                            className="project-setup-alert-button"
                           >
                             {needsBank ? 'Add Bank Details' : 'Edit Project'}
                           </Button>
@@ -895,7 +898,7 @@ const Projects: React.FC = () => {
                             icon={<ToolOutlined />}
                             onClick={() => handleRates(p)}
                             type="primary"
-                            style={{ fontSize: 15, padding: '8px 16px', height: 'auto' }}
+                            className="project-setup-alert-button"
                           >
                             Add Rates
                           </Button>
@@ -904,7 +907,7 @@ const Projects: React.FC = () => {
                           <Button
                             size="middle"
                             onClick={() => navigate('/units')}
-                            style={{ fontSize: 15, padding: '8px 16px', height: 'auto' }}
+                            className="project-setup-alert-button"
                           >
                             Add Units
                           </Button>
@@ -929,7 +932,12 @@ const Projects: React.FC = () => {
           columns={columns}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 10 }}
+          pagination={{ 
+            pageSize: pageSize,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            onShowSizeChange: (_, size) => setPageSize(size)
+          }}
           scroll={{ x: 'max-content' }}
         />
       </div>
@@ -940,10 +948,14 @@ const Projects: React.FC = () => {
         open={isModalOpen}
         onOk={handleModalOk}
         onCancel={() => setIsModalOpen(false)}
-        width={700}
-        style={{ maxWidth: '95vw', maxHeight: '90vh', top: 20 }}
-        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
-        className="mobile-fullscreen-modal mobile-single-column"
+        width={720}
+        style={{ 
+          maxWidth: '95vw',
+          margin: '0 auto'
+        }}
+        centered
+        className="project-modal-responsive"
+        bodyStyle={{ padding: '12px 16px', maxHeight: '70vh', overflowY: 'auto' }}
       >
         <Form 
           form={form} 
@@ -987,16 +999,30 @@ const Projects: React.FC = () => {
                       ? editingProjectSummary.unit_types.join(', ')
                       : 'None'}
                   </div>
-                  {editingProjectSummary.blockers.map((blocker) => (
-                    <div key={blocker} style={{ color: '#cf1322' }}>
-                      {blocker}
+                  {editingProjectSummary.blockers.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <Text type="danger" strong style={{ display: 'block', marginBottom: 4 }}>
+                        Blockers (Must Fix):
+                      </Text>
+                      <ul style={{ margin: 0, paddingLeft: 20, color: '#cf1322' }}>
+                        {editingProjectSummary.blockers.map((blocker) => (
+                          <li key={blocker}>{blocker}</li>
+                        ))}
+                      </ul>
                     </div>
-                  ))}
-                  {editingProjectSummary.warnings.map((warning) => (
-                    <div key={warning} style={{ color: '#d48806' }}>
-                      {warning}
+                  )}
+                  {editingProjectSummary.warnings.length > 0 && (
+                    <div style={{ marginTop: 8 }}>
+                      <Text type="warning" strong style={{ display: 'block', marginBottom: 4 }}>
+                        Warnings:
+                      </Text>
+                      <ul style={{ margin: 0, paddingLeft: 20, color: '#d48806' }}>
+                        {editingProjectSummary.warnings.map((warning) => (
+                          <li key={warning}>{warning}</li>
+                        ))}
+                      </ul>
                     </div>
-                  ))}
+                  )}
                 </div>
               }
               style={{ marginBottom: 16 }}
@@ -1009,82 +1035,91 @@ const Projects: React.FC = () => {
                 key: 'basic',
                 label: 'Basic Information',
                 children: (
-                  <div
-                    className="responsive-form-grid"
-                    style={{
-                      display: 'grid',
-                      gridTemplateColumns: '1fr 1fr',
-                      gap: '16px',
-                      marginTop: 16
-                    }}
-                  >
-                    <Form.Item label="Project Code">
-                      <Input
-                        value={editingProject?.project_code || 'Auto-generated on save'}
-                        disabled
-                      />
-                    </Form.Item>
+                  <Row gutter={[16, 8]} style={{ marginTop: 16 }}>
+                    <Col xs={24} md={12}>
+                      <Form.Item label="Project Code">
+                        <Input
+                          value={editingProject?.project_code || 'Auto-generated on save'}
+                          disabled
+                        />
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item
-                      name="name"
-                      label="Project Name"
-                      rules={[{ required: true, message: 'Please enter project name' }]}
-                      className="span-2"
-                      style={{ gridColumn: 'span 2' }}
-                    >
-                      <Input />
-                    </Form.Item>
+                    <Col xs={24} md={12}>
+                      <Form.Item
+                        name="name"
+                        label="Project Name"
+                        rules={[{ required: true, message: 'Please enter project name' }]}
+                      >
+                        <Input style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item name="address" label="Address" className="span-2" style={{ gridColumn: 'span 2' }}>
-                      <Input.TextArea rows={2} />
-                    </Form.Item>
+                    <Col span={24}>
+                      <Form.Item name="address" label="Address">
+                        <Input.TextArea rows={2} style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item name="city" label="City">
-                      <Input />
-                    </Form.Item>
+                    <Col xs={24} md={12}>
+                      <Form.Item name="city" label="City">
+                        <Input style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item name="state" label="State">
-                      <Input />
-                    </Form.Item>
+                    <Col xs={24} md={12}>
+                      <Form.Item name="state" label="State">
+                        <Input style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item name="pincode" label="Pincode">
-                      <Input />
-                    </Form.Item>
+                    <Col xs={24} md={12}>
+                      <Form.Item name="pincode" label="Pincode">
+                        <Input style={{ width: '100%' }} />
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item name="status" label="Status">
-                      <Select placeholder="Select status">
-                        <Option value="Active">Active</Option>
-                        <Option value="Inactive">Inactive</Option>
-                      </Select>
-                    </Form.Item>
+                    <Col xs={24} md={12}>
+                      <Form.Item name="status" label="Status">
+                        <Select placeholder="Select status" style={{ width: '100%' }}>
+                          <Option value="Active">Active</Option>
+                          <Option value="Inactive">Inactive</Option>
+                        </Select>
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item
-                      name="template_type"
-                      label="Workflow Template"
-                      rules={[{ required: true, message: 'Please select workflow template' }]}
-                    >
-                      <Select
-                        options={TEMPLATE_OPTIONS.map((option) => ({
-                          value: option.value,
-                          label: option.label
-                        }))}
-                      />
-                    </Form.Item>
+                    <Col xs={24} md={12}>
+                      <Form.Item
+                        name="template_type"
+                        label="Workflow Template"
+                        rules={[{ required: true, message: 'Please select workflow template' }]}
+                      >
+                        <Select
+                          options={TEMPLATE_OPTIONS.map((option) => ({
+                            value: option.value,
+                            label: option.label
+                          }))}
+                          style={{ width: '100%' }}
+                        />
+                      </Form.Item>
+                    </Col>
 
-                    <Form.Item
-                      name="import_profile_key"
-                      label="Import Profile"
-                      rules={[{ required: true, message: 'Please select import profile' }]}
-                      style={{ gridColumn: 'span 2' }}
-                    >
-                      <Select
-                        options={IMPORT_PROFILE_OPTIONS.map((option) => ({
-                          value: option.value,
-                          label: `${option.label} - ${option.description}`
-                        }))}
-                      />
-                    </Form.Item>
-                  </div>
+                    <Col span={24}>
+                      <Form.Item
+                        name="import_profile_key"
+                        label="Import Profile"
+                        rules={[{ required: true, message: 'Please select import profile' }]}
+                      >
+                        <Select
+                          options={IMPORT_PROFILE_OPTIONS.map((option) => ({
+                            value: option.value,
+                            label: `${option.label} - ${option.description}`
+                          }))}
+                          style={{ width: '100%' }}
+                        />
+                      </Form.Item>
+                    </Col>
+                  </Row>
                 )
               },
               {
@@ -1141,63 +1176,74 @@ const Projects: React.FC = () => {
                               </Button>
                             }
                           >
-                            <div
-                              className="responsive-form-grid tight"
-                              style={{
-                                display: 'grid',
-                                gridTemplateColumns: '1fr 1fr',
-                                gap: '8px'
-                              }}
-                            >
-                              <Input
-                                value={String(config.sector_code || '')}
-                                onChange={(e) =>
-                                  handleSectorConfigChange(index, 'sector_code', e.target.value)
-                                }
-                                placeholder="Sector Code (e.g. A, B, C, 1, 2, etc.)"
-                                addonBefore="Sector"
-                              />
-                              <Input
-                                value={String(config.account_name || '')}
-                                onChange={(e) =>
-                                  handleSectorConfigChange(index, 'account_name', e.target.value)
-                                }
-                                placeholder="Account Name"
-                                addonBefore="A/c Name"
-                              />
-                              <Input
-                                value={String(config.bank_name || '')}
-                                onChange={(e) =>
-                                  handleSectorConfigChange(index, 'bank_name', e.target.value)
-                                }
-                                placeholder="Bank Name"
-                                addonBefore="Bank"
-                              />
-                              <Input
-                                value={String(config.account_no || '')}
-                                onChange={(e) =>
-                                  handleSectorConfigChange(index, 'account_no', e.target.value)
-                                }
-                                placeholder="Account Number"
-                                addonBefore="A/c No"
-                              />
-                              <Input
-                                value={String(config.ifsc_code || '')}
-                                onChange={(e) =>
-                                  handleSectorConfigChange(index, 'ifsc_code', e.target.value.toUpperCase())
-                                }
-                                placeholder="IFSC Code"
-                                addonBefore="IFSC"
-                              />
-                              <Input
-                                value={String(config.branch || '')}
-                                onChange={(e) =>
-                                  handleSectorConfigChange(index, 'branch', e.target.value)
-                                }
-                                placeholder="Branch"
-                                addonBefore="Branch"
-                              />
-                              <div className="span-2" style={{ gridColumn: 'span 2' }}>
+                            <Row gutter={[8, 8]}>
+                              <Col xs={24} sm={8}>
+                                <Input
+                                  value={String(config.sector_code || '')}
+                                  onChange={(e) =>
+                                    handleSectorConfigChange(index, 'sector_code', e.target.value)
+                                  }
+                                  placeholder="Sector Code (e.g. A, B, C, 1, 2, etc.)"
+                                  addonBefore="Sector"
+                                  style={{ width: '100%' }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Input
+                                  value={String(config.account_name || '')}
+                                  onChange={(e) =>
+                                    handleSectorConfigChange(index, 'account_name', e.target.value)
+                                  }
+                                  placeholder="Account Name"
+                                  addonBefore="A/c Name"
+                                  style={{ width: '100%' }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Input
+                                  value={String(config.bank_name || '')}
+                                  onChange={(e) =>
+                                    handleSectorConfigChange(index, 'bank_name', e.target.value)
+                                  }
+                                  placeholder="Bank Name"
+                                  addonBefore="Bank"
+                                  style={{ width: '100%' }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Input
+                                  value={String(config.account_no || '')}
+                                  onChange={(e) =>
+                                    handleSectorConfigChange(index, 'account_no', e.target.value)
+                                  }
+                                  placeholder="Account Number"
+                                  addonBefore="A/c No"
+                                  style={{ width: '100%' }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Input
+                                  value={String(config.ifsc_code || '')}
+                                  onChange={(e) =>
+                                    handleSectorConfigChange(index, 'ifsc_code', e.target.value.toUpperCase())
+                                  }
+                                  placeholder="IFSC Code"
+                                  addonBefore="IFSC"
+                                  style={{ width: '100%' }}
+                                />
+                              </Col>
+                              <Col xs={24} sm={8}>
+                                <Input
+                                  value={String(config.branch || '')}
+                                  onChange={(e) =>
+                                    handleSectorConfigChange(index, 'branch', e.target.value)
+                                  }
+                                  placeholder="Branch"
+                                  addonBefore="Branch"
+                                  style={{ width: '100%' }}
+                                />
+                              </Col>
+                              <Col span={24}>
                                 <Input
                                   value={String(config.qr_code_path || '')}
                                   onChange={(e) =>
@@ -1216,9 +1262,10 @@ const Projects: React.FC = () => {
                                       Browse
                                     </Button>
                                   }
+                                  style={{ width: '100%' }}
                                 />
-                              </div>
-                            </div>
+                              </Col>
+                            </Row>
                           </Card>
                         ))}
                         <Button
@@ -1288,8 +1335,6 @@ const Projects: React.FC = () => {
         }}
         confirmLoading={isWorkbookImporting}
         width={860}
-        style={{ maxWidth: '95vw', maxHeight: '90vh' }}
-        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
         className="mobile-fullscreen-modal"
       >
         {standardWorkbookPreview && (
@@ -1416,8 +1461,7 @@ const Projects: React.FC = () => {
           </Button>
         ]}
         width={600}
-        style={{ maxWidth: '95vw', maxHeight: '90vh' }}
-        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
+        className="mobile-fullscreen-modal"
       >
         <div style={{ maxHeight: '400px', overflow: 'auto' }}>
           <List

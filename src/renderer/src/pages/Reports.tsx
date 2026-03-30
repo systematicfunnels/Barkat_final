@@ -70,7 +70,6 @@ const Reports: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedUnitType, setSelectedUnitType] = useState<string | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
-  const [selectedYears, setSelectedYears] = useState<string[]>([])
   const [outstandingRange, setOutstandingRange] = useState<[number | null, number | null]>([
     null,
     null
@@ -81,6 +80,7 @@ const Reports: React.FC = () => {
   const [years, setYears] = useState<string[]>([])
   const [availableYears, setAvailableYears] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [pageSize, setPageSize] = useState(20)
   const [exporting, setExporting] = useState(false)
   const [screenWidth, setScreenWidth] = useState(window.innerWidth)
   const [searchText, setSearchText] = useState('')
@@ -119,6 +119,7 @@ const Reports: React.FC = () => {
 
   const reportFilterFields = useMemo(
     () => [
+      createSearchFilter('searchText', 'Search', 'Search unit, owner, or project...'),
       createSelectFilter(
         'selectedProject',
         'Project',
@@ -144,20 +145,6 @@ const Reports: React.FC = () => {
         }
       ),
       createSelectFilter(
-        'selectedYears',
-        'Years',
-        availableYears.map((year) => ({ value: year, label: year })),
-        'Financial Years',
-        {
-          emptyValue: [],
-          multiple: true,
-          maxTagCount: 'responsive',
-          isActive: (value) => Array.isArray(value) && value.length > 0,
-          formatValue: (value) =>
-            Array.isArray(value) ? `${value.length} selected` : String(value ?? '')
-        }
-      ),
-      createSelectFilter(
         'selectedStatus',
         'Status',
         [
@@ -178,7 +165,6 @@ const Reports: React.FC = () => {
           emptyValue: null
         }
       ),
-      createSearchFilter('searchText', 'Search', 'Search unit, owner, or project...'),
       createRangeFilter('outstandingRange', 'Outstanding', {
         emptyValue: [null, null],
         minPlaceholder: 'Min Outstanding',
@@ -187,29 +173,27 @@ const Reports: React.FC = () => {
           Array.isArray(value) && (value[0] !== null || value[1] !== null),
         formatValue: (value) => {
           const [min, max] = Array.isArray(value) ? value : [null, null]
-          return `${min !== null ? `₹${min}` : 'Any'} - ${max !== null ? `₹${max}` : 'Any'}`
+          return `${min !== null ? `Rs. ${min}` : 'Any'} - ${max !== null ? `Rs. ${max}` : 'Any'}`
         }
       })
     ],
-    [availableYears, projects, unitTypes]
+    [projects, unitTypes]
   )
 
   const reportFilterValues = useMemo(
     () => ({
       selectedProject,
-      selectedYears,
       selectedStatus,
       selectedUnitType,
       searchText,
       outstandingRange
     }),
     [
-      outstandingRange,
       searchText,
       selectedProject,
-      selectedStatus,
       selectedUnitType,
-      selectedYears
+      selectedStatus,
+      outstandingRange
     ]
   )
 
@@ -217,9 +201,6 @@ const Reports: React.FC = () => {
     switch (key) {
       case 'selectedProject':
         setSelectedProject((value as number | null | undefined) ?? null)
-        break
-      case 'selectedYears':
-        setSelectedYears(Array.isArray(value) ? value.map(String) : [])
         break
       case 'selectedStatus':
         setSelectedStatus((value as string | null | undefined) ?? null)
@@ -250,7 +231,6 @@ const Reports: React.FC = () => {
       selectedProject !== null ||
       selectedUnitType !== null ||
       selectedStatus !== null ||
-      selectedYears.length > 0 ||
       outstandingRange[0] !== null ||
       outstandingRange[1] !== null
     )
@@ -259,7 +239,6 @@ const Reports: React.FC = () => {
     selectedProject,
     selectedUnitType,
     selectedStatus,
-    selectedYears,
     outstandingRange
   ])
 
@@ -269,7 +248,6 @@ const Reports: React.FC = () => {
     setSelectedProject(null)
     setSelectedUnitType(null)
     setSelectedStatus(null)
-    setSelectedYears([])
     setOutstandingRange([null, null])
   }, [])
 
@@ -285,7 +263,7 @@ const Reports: React.FC = () => {
       setProjects(allProjects)
       setAllUnits(unitsData)
 
-      // Load letters + payments — scoped to selected project if one is chosen
+      // Load letters + payments - scoped to selected project if one is chosen
       // This prevents loading 8000+ rows when only one project's data is needed
       const [lettersData, paymentsData] = await Promise.all([
         window.api.letters.getAll(),
@@ -302,10 +280,8 @@ const Reports: React.FC = () => {
       const allYears = Array.from(new Set(allLetters.map((l) => l.financial_year))).sort() as string[]
       setAvailableYears(allYears)
 
-      // Default to last 3 years for better UX
-      const recentYears = allYears.slice(-3) as string[]
-      setSelectedYears(recentYears)
-      setYears(recentYears)
+      // Show all years in the report
+      setYears(allYears)
 
       const letterMap = new Map<string, (typeof allLetters)[number]>(
         allLetters.map((letter) => [`${letter.unit_id}:${letter.financial_year}`, letter])
@@ -414,12 +390,8 @@ const Reports: React.FC = () => {
   useEffect(() => {
     if (allPivotData.length === 0) return
 
-    // Update years based on selection
-    if (selectedYears.length > 0) {
-      setYears(selectedYears)
-    } else {
-      setYears(availableYears)
-    }
+    // Always show all available years
+    setYears(availableYears)
 
     const filteredData = allPivotData.filter((row) => {
       // Search filter
@@ -439,13 +411,8 @@ const Reports: React.FC = () => {
       // Status filter
       const matchStatus = !selectedStatus || row.unit_status === selectedStatus
 
-      // Year filter - check if unit has data in selected years
-      const matchYears =
-        selectedYears.length === 0 ||
-        selectedYears.some((year) => {
-          const yearData = row[year] as YearlyData
-          return yearData && (yearData.billed > 0 || yearData.paid > 0)
-        })
+      // Show all years data - no year filtering
+      const matchYears = true
 
       // Outstanding range filter
       const matchMinOutstanding =
@@ -475,16 +442,14 @@ const Reports: React.FC = () => {
       outstanding: totalBilled - totalCollected
     })
 
-    // Calculate yearly totals for filtered data
-    const yearsToCalculate = selectedYears.length > 0 ? selectedYears : availableYears
-    calculateYearlyTotals(filteredData, yearsToCalculate)
+    // Calculate yearly totals for all available years
+    calculateYearlyTotals(filteredData, availableYears)
   }, [
     allPivotData,
     searchText,
     selectedProject,
     selectedUnitType,
     selectedStatus,
-    selectedYears,
     outstandingRange,
     projects,
     selectedProjectRecord,
@@ -600,15 +565,12 @@ const Reports: React.FC = () => {
         if (selectedStatus) {
           worksheet.addRow([`Status: ${selectedStatus}`])
         }
-        if (selectedYears.length > 0) {
-          worksheet.addRow([`Years: ${selectedYears.join(', ')}`])
-        }
         if (searchText) {
           worksheet.addRow([`Search: "${searchText}"`])
         }
         if (outstandingRange[0] !== null || outstandingRange[1] !== null) {
           worksheet.addRow([
-            `Outstanding Range: ${outstandingRange[0] !== null ? `₹${outstandingRange[0]}` : 'Any'} - ${outstandingRange[1] !== null ? `₹${outstandingRange[1]}` : 'Any'}`
+            `Outstanding Range: ${outstandingRange[0] !== null ? `Rs. ${outstandingRange[0]}` : 'Any'} - ${outstandingRange[1] !== null ? `Rs. ${outstandingRange[1]}` : 'Any'}`
           ])
         }
 
@@ -858,7 +820,7 @@ const Reports: React.FC = () => {
           render: (row: PivotData) => {
             const yearData = row[year] as YearlyData
             const billed = yearData?.billed || 0
-            return <Text>{billed > 0 ? `₹${billed.toLocaleString()}` : '-'}</Text>
+            return <Text>{billed > 0 ? `Rs. ${billed.toLocaleString()}` : '-'}</Text>
           }
         },
         {
@@ -869,7 +831,7 @@ const Reports: React.FC = () => {
           render: (row: PivotData) => {
             const yearData = row[year] as YearlyData
             const paid = yearData?.paid || 0
-            return <Text type="success">{paid > 0 ? `₹${paid.toLocaleString()}` : '-'}</Text>
+            return <Text type="success">{paid > 0 ? `Rs. ${paid.toLocaleString()}` : '-'}</Text>
           }
         },
         {
@@ -882,13 +844,13 @@ const Reports: React.FC = () => {
             const balance = yearData?.balance || 0
             return (
               <Tooltip
-                title={`Billed: ₹${yearData?.billed?.toLocaleString() || '0'} | Paid: ₹${yearData?.paid?.toLocaleString() || '0'}`}
+                title={`Billed: Rs. ${yearData?.billed?.toLocaleString() || '0'} | Paid: Rs. ${yearData?.paid?.toLocaleString() || '0'}`}
               >
                 <Text
                   type={balance > 0 ? 'danger' : balance < 0 ? 'warning' : 'success'}
                   style={{ fontSize: '12px' }}
                 >
-                  {balance !== 0 ? `₹${Math.abs(balance).toLocaleString()}` : '-'}
+                  {balance !== 0 ? `Rs. ${Math.abs(balance).toLocaleString()}` : '-'}
                   {balance > 0 && <ExclamationCircleOutlined style={{ marginLeft: 4 }} />}
                 </Text>
               </Tooltip>
@@ -903,7 +865,7 @@ const Reports: React.FC = () => {
       key: 'total_billed',
       width: 120,
       align: 'right' as const,
-      render: (val: number) => `₹${val.toLocaleString()}`,
+      render: (val: number) => `Rs. ${val.toLocaleString()}`,
       sorter: (a: PivotData, b: PivotData) => a.total_billed - b.total_billed
     },
     {
@@ -912,7 +874,7 @@ const Reports: React.FC = () => {
       key: 'total_paid',
       width: 120,
       align: 'right' as const,
-      render: (val: number) => `₹${val.toLocaleString()}`,
+      render: (val: number) => `Rs. ${val.toLocaleString()}`,
       sorter: (a: PivotData, b: PivotData) => a.total_paid - b.total_paid
     },
     {
@@ -924,7 +886,7 @@ const Reports: React.FC = () => {
       align: 'right' as const,
       render: (val: number) => (
         <Text strong type={val > 0 ? 'danger' : val < 0 ? 'warning' : 'success'}>
-          ₹{val.toLocaleString()}
+          Rs. {val.toLocaleString()}
         </Text>
       ),
       sorter: (a: PivotData, b: PivotData) => a.outstanding - b.outstanding
@@ -932,7 +894,7 @@ const Reports: React.FC = () => {
   ]
 
   return (
-    <div className="page-screen" style={{ padding: '0 8px' }}>
+    <div className="page-screen">
       <div className="page-hero">
         <div
           className="responsive-page-header"
@@ -952,6 +914,13 @@ const Reports: React.FC = () => {
             <Text type="secondary" className="page-hero-subtitle">
               Analyze billed, collected, and outstanding amounts across projects and financial years.
             </Text>
+            <Text
+              type="secondary"
+              className="page-helper-text"
+              style={{ display: 'block', marginTop: 8 }}
+            >
+              Start with the summary cards, then drill into the pivot ledger for unit-level detail.
+            </Text>
           </div>
           <Space className="responsive-action-bar">
             <Button
@@ -966,7 +935,7 @@ const Reports: React.FC = () => {
         </div>
       </div>
 
-      <Card style={{ marginBottom: 0 }} className="page-toolbar-card">
+      <Card style={{ marginBottom: 0 }} className="page-toolbar-card reports-filter-card">
         <FilterPanel
           filters={reportFilterFields}
           values={reportFilterValues}
@@ -987,7 +956,7 @@ const Reports: React.FC = () => {
           }
           style={{ marginBottom: 24 }}
           bodyStyle={{ padding: '16px 0' }}
-          className="page-toolbar-card"
+          className="page-toolbar-card report-summary-card"
         >
           <Row gutter={[16, 16]}>
             {yearlyTotals.map((total) => {
@@ -1025,16 +994,16 @@ const Reports: React.FC = () => {
                     <Space direction="vertical" size={2} style={{ width: '100%' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Text type="secondary">Billed:</Text>
-                        <Text strong>₹{total.billed.toLocaleString()}</Text>
+                        <Text strong>Rs. {total.billed.toLocaleString()}</Text>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Text type="secondary">Collected:</Text>
-                        <Text type="success">₹{total.paid.toLocaleString()}</Text>
+                        <Text type="success">Rs. {total.paid.toLocaleString()}</Text>
                       </div>
                       <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                         <Text type="secondary">Outstanding:</Text>
                         <Text type={total.balance > 0 ? 'danger' : 'success'}>
-                          ₹{total.balance.toLocaleString()}
+                          Rs. {total.balance.toLocaleString()}
                         </Text>
                       </div>
                     </Space>
@@ -1053,7 +1022,7 @@ const Reports: React.FC = () => {
               title="TOTAL BILLED"
               value={stats.totalBilled}
               precision={0}
-              prefix="₹"
+              prefix="Rs. "
               valueStyle={{ fontSize: '24px' }}
             />
           </Card>
@@ -1064,7 +1033,7 @@ const Reports: React.FC = () => {
               title="TOTAL COLLECTED"
               value={stats.totalCollected}
               precision={0}
-              prefix="₹"
+              prefix="Rs. "
               valueStyle={{ color: '#3f8600', fontSize: '24px' }}
             />
           </Card>
@@ -1075,7 +1044,7 @@ const Reports: React.FC = () => {
               title="TOTAL OUTSTANDING"
               value={stats.outstanding}
               precision={0}
-              prefix="₹"
+              prefix="Rs. "
               valueStyle={{
                 color: stats.outstanding > 0 ? '#cf1322' : '#3f8600',
                 fontSize: '24px'
@@ -1091,15 +1060,10 @@ const Reports: React.FC = () => {
             <FilterOutlined />
             <span>Unit-wise Pivot Ledger</span>
             {hasActiveFilters && <Tag color="blue">Filtered</Tag>}
-            {selectedYears.length > 0 && (
-              <Text type="secondary" style={{ fontSize: '14px' }}>
-                ({selectedYears.length} years selected)
-              </Text>
-            )}
           </Space>
         }
         bodyStyle={{ padding: 0 }}
-        className="page-table-card"
+        className="page-table-card report-ledger-card"
         extra={
           shouldCollapseYears && (
             <Text type="secondary" style={{ fontSize: '12px' }}>
@@ -1122,7 +1086,12 @@ const Reports: React.FC = () => {
             columns={columns as TableProps<PivotData>['columns']}
             dataSource={pivotData}
             loading={loading}
-            pagination={{ pageSize: 20 }}
+            pagination={{ 
+              pageSize: pageSize,
+              showSizeChanger: true,
+              pageSizeOptions: [10, 20, 50, 100],
+              onShowSizeChange: (_, size) => setPageSize(size)
+            }}
             scroll={{ x: 'max-content', y: 'calc(100vh - 600px)' }}
             size="small"
             bordered
@@ -1141,10 +1110,10 @@ const Reports: React.FC = () => {
                     return (
                       <React.Fragment key={year}>
                         <Table.Summary.Cell index={index * 3 + 5} align="right">
-                          <Text>₹{yearlyTotal?.billed.toLocaleString() || '0'}</Text>
+                          <Text>Rs. {yearlyTotal?.billed.toLocaleString() || '0'}</Text>
                         </Table.Summary.Cell>
                         <Table.Summary.Cell index={index * 3 + 6} align="right">
-                          <Text type="success">₹{yearlyTotal?.paid.toLocaleString() || '0'}</Text>
+                          <Text type="success">Rs. {yearlyTotal?.paid.toLocaleString() || '0'}</Text>
                         </Table.Summary.Cell>
                         <Table.Summary.Cell index={index * 3 + 7} align="right">
                           <Text
@@ -1152,23 +1121,23 @@ const Reports: React.FC = () => {
                               yearlyTotal?.balance && yearlyTotal.balance > 0 ? 'danger' : 'success'
                             }
                           >
-                            ₹{yearlyTotal?.balance.toLocaleString() || '0'}
+                            Rs. {yearlyTotal?.balance.toLocaleString() || '0'}
                           </Text>
                         </Table.Summary.Cell>
                       </React.Fragment>
                     )
                   })}
                   <Table.Summary.Cell index={years.length * 3 + 5} align="right">
-                    <Text strong>₹{stats.totalBilled.toLocaleString()}</Text>
+                    <Text strong>Rs. {stats.totalBilled.toLocaleString()}</Text>
                   </Table.Summary.Cell>
                   <Table.Summary.Cell index={years.length * 3 + 6} align="right">
                     <Text strong type="success">
-                      ₹{stats.totalCollected.toLocaleString()}
+                      Rs. {stats.totalCollected.toLocaleString()}
                     </Text>
                   </Table.Summary.Cell>
                   <Table.Summary.Cell index={years.length * 3 + 7} align="right">
                     <Text strong type={stats.outstanding > 0 ? 'danger' : 'success'}>
-                      ₹{stats.outstanding.toLocaleString()}
+                      Rs. {stats.outstanding.toLocaleString()}
                     </Text>
                   </Table.Summary.Cell>
                 </Table.Summary.Row>
