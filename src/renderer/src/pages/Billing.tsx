@@ -32,7 +32,8 @@ import {
   InfoCircleOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
-  CopyOutlined
+  CopyOutlined,
+  SearchOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import isSameOrAfter from 'dayjs/plugin/isSameOrAfter'
@@ -44,10 +45,15 @@ dayjs.extend(isSameOrBefore)
 import { MaintenanceLetter, Project, LetterAddOn, Unit, ProjectSetupSummary } from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import { UNIT_TYPE_FILTER_OPTIONS } from '../constants/unitTypes'
+import FilterPanel, {
+  createRangeFilter,
+  createSearchFilter,
+  createSelectFilter,
+  FilterOption
+} from '../components/shared/FilterPanel'
 
 const { Title, Text } = Typography
 const { Option } = Select
-const { Search } = Input
 
 interface PdfProgress {
   current: number
@@ -324,7 +330,7 @@ const Billing: React.FC = () => {
 
   // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
-    return (
+    return Boolean(
       searchText ||
       selectedProject !== null ||
       selectedYear !== defaultFY ||
@@ -481,10 +487,13 @@ const Billing: React.FC = () => {
         // Check if we're editing an existing letter
         if (currentLetter && currentLetter.id) {
           // Update existing letter
-          console.log('[FRONTEND] Updating letter:', currentLetter.id, {
-            due_date: dueDate,
-            generated_date: letterDate
-          })
+          if (process.env.NODE_ENV === 'development') {
+            console.log('Updating letter', {
+              id: currentLetter.id,
+              due_date: dueDate,
+              generated_date: letterDate
+            })
+          }
           
           // First update the basic letter fields
           const success = await window.api.letters.update(currentLetter.id, {
@@ -492,8 +501,6 @@ const Billing: React.FC = () => {
             generated_date: letterDate,
             status: 'Modified'  // Mark as modified when edited
           })
-          
-          console.log('[FRONTEND] Update result:', success)
           
           if (!success) {
             message.error('Failed to update letter')
@@ -544,9 +551,13 @@ const Billing: React.FC = () => {
           // Regenerate PDF with updated addons
           try {
             await window.api.letters.generatePdf(currentLetter.id)
-            console.log('[FRONTEND] PDF regenerated with updated addons')
+            if (process.env.NODE_ENV === 'development') {
+              console.log('PDF regenerated with updated add-ons')
+            }
           } catch (pdfError) {
-            console.warn('[FRONTEND] Failed to regenerate PDF:', pdfError)
+            if (process.env.NODE_ENV === 'development') {
+              console.warn('Failed to regenerate PDF:', pdfError)
+            }
             // Don't fail the update if PDF generation fails
           }
           
@@ -919,6 +930,149 @@ const Billing: React.FC = () => {
     return project?.name || ''
   }, [selectedProject, projects])
 
+  const billingStatusOptions = useMemo(
+    () => [
+      { value: 'Generated', label: `Generated (${filterStats.generated})` },
+      { value: 'Modified', label: `Modified (${filterStats.modified})` },
+      { value: 'Pending', label: `Pending (${filterStats.pending})` },
+      { value: 'Paid', label: `Paid (${filterStats.paid})` },
+      { value: 'Overdue', label: `Overdue (${filterStats.overdue})` }
+    ],
+    [filterStats]
+  )
+
+  const billingFilterFields = useMemo(
+    () => [
+      createSearchFilter('searchText', 'Search', 'Search unit, owner, or project...'),
+      createSelectFilter(
+        'selectedProject',
+        'Project',
+        projects.flatMap((project) =>
+          project.id !== undefined
+            ? [
+                {
+                  value: project.id,
+                  label: project.project_code
+                    ? `${project.project_code} - ${project.name}`
+                    : project.name
+                }
+              ]
+            : []
+        ),
+        'Project',
+        {
+          emptyValue: null,
+          formatValue: (value) => {
+            const project = projects.find((item) => item.id === value)
+            return project?.name || ''
+          }
+        }
+      ),
+      createSelectFilter(
+        'selectedYear',
+        'Year',
+        uniqueYears.map((year) => ({ value: year, label: year })),
+        'Financial Year',
+        {
+          emptyValue: defaultFY,
+          isActive: (value) => value !== null && value !== defaultFY
+        }
+      ),
+      createSelectFilter('selectedStatus', 'Status', billingStatusOptions, 'Status', {
+        emptyValue: null,
+        formatValue: (value) => String(value ?? '')
+      }),
+      createSelectFilter(
+        'selectedUnitType',
+        'Type',
+        UNIT_TYPE_FILTER_OPTIONS.map((unitType) => ({ value: unitType, label: unitType })),
+        'Unit Type',
+        {
+          emptyValue: 'All',
+          isActive: (value) => value !== null && value !== 'All'
+        }
+      ),
+      createRangeFilter('amountRange', 'Amount', {
+        emptyValue: [null, null],
+        minPlaceholder: 'Min',
+        maxPlaceholder: 'Max',
+        isActive: (value) =>
+          Array.isArray(value) && (value[0] !== null || value[1] !== null),
+        formatValue: (value) => {
+          const [min, max] = Array.isArray(value) ? value : [null, null]
+          return `${min !== null ? `₹${min}` : 'Any'} - ${max !== null ? `₹${max}` : 'Any'}`
+        }
+      })
+    ],
+    [billingStatusOptions, defaultFY, projects, uniqueYears]
+  )
+
+  const billingFilterValues = useMemo(
+    () => ({
+      searchText,
+      selectedProject,
+      selectedYear,
+      selectedStatus,
+      selectedUnitType,
+      amountRange
+    }),
+    [amountRange, searchText, selectedProject, selectedStatus, selectedUnitType, selectedYear]
+  )
+
+  const billingExtraActiveFilters = useMemo<FilterOption[]>(
+    () =>
+      dueDateRange[0] || dueDateRange[1]
+        ? [
+            {
+              key: 'dueDateRange',
+              label: `Due: ${dueDateRange[0]?.format('DD/MM/YY') || 'Any'} to ${dueDateRange[1]?.format('DD/MM/YY') || 'Any'}`,
+              value: dueDateRange,
+              onRemove: () => setDueDateRange([null, null])
+            }
+          ]
+        : [],
+    [dueDateRange]
+  )
+
+  const handleBillingFilterChange = useCallback((key: string, value: unknown) => {
+    switch (key) {
+      case 'searchText':
+        setSearchText(typeof value === 'string' ? value : '')
+        break
+      case 'selectedProject':
+        setSelectedProject((value as number | null | undefined) ?? null)
+        break
+      case 'selectedYear':
+        setSelectedYear((value as string | null | undefined) ?? defaultFY)
+        break
+      case 'selectedStatus':
+        setSelectedStatus((value as string | null | undefined) ?? null)
+        break
+      case 'selectedUnitType':
+        setSelectedUnitType((value as string | null | undefined) ?? 'All')
+        break
+      case 'amountRange':
+        if (Array.isArray(value)) {
+          const nextRange: [number | null, number | null] = [
+            typeof value[0] === 'number' ? value[0] : null,
+            typeof value[1] === 'number' ? value[1] : null
+          ]
+          if (
+            nextRange[0] !== null &&
+            nextRange[1] !== null &&
+            nextRange[0] > nextRange[1]
+          ) {
+            message.warning('Minimum amount cannot exceed maximum')
+            return
+          }
+          setAmountRange(nextRange)
+        }
+        break
+      default:
+        break
+    }
+  }, [defaultFY])
+
   const columns = [
     {
       title: 'Unit',
@@ -1151,21 +1305,6 @@ const Billing: React.FC = () => {
             </Text>
           </div>
           <Space>
-            {selectedRowKeys.length > 0 && (
-              <>
-                <Button
-                  type="primary"
-                  icon={<FilePdfOutlined />}
-                  onClick={handleBatchPdf}
-                  loading={generatingPdf}
-                >
-                  Generate PDFs ({selectedRowKeys.length})
-                </Button>
-                <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
-                  Delete Selected ({selectedRowKeys.length})
-                </Button>
-              </>
-            )}
             <Button type="primary" icon={<PlusOutlined />} onClick={handleBatchGenerate}>
               Generate Maintenance Letters
             </Button>
@@ -1173,104 +1312,49 @@ const Billing: React.FC = () => {
         </div>
       </div>
 
+      {selectedRowKeys.length > 0 && (
+        <div className="page-selection-bar">
+          <Text className="page-selection-label">
+            {selectedRowKeys.length} letter{selectedRowKeys.length !== 1 ? 's' : ''} selected
+          </Text>
+          <Space wrap>
+            <Button
+              type="primary"
+              icon={<FilePdfOutlined />}
+              onClick={handleBatchPdf}
+              loading={generatingPdf}
+            >
+              Generate PDFs ({selectedRowKeys.length})
+            </Button>
+            <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
+              Delete Selected ({selectedRowKeys.length})
+            </Button>
+          </Space>
+        </div>
+      )}
+
       <Card style={{ marginBottom: 0 }} className="page-toolbar-card page-table-card">
 
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
-          <Space wrap size="middle">
-            <Search
-              placeholder="Search Unit, Owner, or Project..."
-              style={{ width: 250 }}
-              allowClear
-              onSearch={setSearchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              value={searchText}
-              enterButton
-              suffix={null}
-              aria-label="Search maintenance letters by unit, owner, or project"
-            />
-            <Select
-              placeholder="Project"
-              style={{ width: '100%', minWidth: 160 }}
-              allowClear
-              onChange={setSelectedProject}
-              value={selectedProject}
-            >
-              {projects.map((p) => (
-                <Option key={p.id} value={p.id}>
-                  {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Financial Year"
-              style={{ width: '100%', minWidth: 140 }}
-              allowClear
-              onChange={setSelectedYear}
-              value={selectedYear}
-            >
-              {uniqueYears.map((year) => (
-                <Option key={year} value={year}>
-                  {year}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Status"
-              style={{ width: '100%', minWidth: 140 }}
-              allowClear
-              onChange={setSelectedStatus}
-              value={selectedStatus}
-            >
-              <Option value="Generated">
-                <Space>
-                  <span>Generated</span>
-                  <Tag color="blue">{filterStats.generated}</Tag>
-                </Space>
-              </Option>
-              <Option value="Modified">
-                <Space>
-                  <span>Modified</span>
-                  <Tag color="purple">{filterStats.modified}</Tag>
-                </Space>
-              </Option>
-              <Option value="Pending">
-                <Space>
-                  <span>Pending</span>
-                  <Tag color="orange">{filterStats.pending}</Tag>
-                </Space>
-              </Option>
-              <Option value="Paid">
-                <Space>
-                  <span>Paid</span>
-                  <Tag color="green">{filterStats.paid}</Tag>
-                </Space>
-              </Option>
-              <Option value="Overdue">
-                <Space>
-                  <span>Overdue</span>
-                  <Tag color="red">{filterStats.overdue}</Tag>
-                </Space>
-              </Option>
-            </Select>
-            <Select
-              placeholder="Unit Type"
-              style={{ width: '100%', minWidth: 120 }}
-              allowClear
-              onChange={(val) => setSelectedUnitType(val ?? 'All')}
-              value={selectedUnitType}
-            >
-              {UNIT_TYPE_FILTER_OPTIONS.map((unitType) => (
-                <Option key={unitType} value={unitType}>
-                  {unitType}
-                </Option>
-              ))}
-            </Select>
-          </Space>
+          <FilterPanel
+            filters={billingFilterFields}
+            values={billingFilterValues}
+            onChange={handleBillingFilterChange}
+            onClear={clearAllFilters}
+            showActiveFilters={false}
+            showClearButton={false}
+            variant="plain"
+          />
+
+          <Text className="page-helper-text">
+            Status guide: Generated = created and unchanged, Modified = manually edited, Pending = not yet generated, Paid = settled, Overdue = past due date.
+          </Text>
 
           <Space wrap size="middle">
             <Space>
               <Text type="secondary">Amount Range:</Text>
               <InputNumber
+                className="app-filter-number"
                 placeholder="Min"
                 style={{ width: '100%', minWidth: 90 }}
                 value={amountRange[0]}
@@ -1285,6 +1369,7 @@ const Billing: React.FC = () => {
               />
               <Text>-</Text>
               <InputNumber
+                className="app-filter-number"
                 placeholder="Max"
                 style={{ width: '100%', minWidth: 90 }}
                 value={amountRange[1]}
@@ -1301,6 +1386,7 @@ const Billing: React.FC = () => {
             <Space>
               <Text type="secondary">Due Date Range:</Text>
               <DatePicker.RangePicker
+                className="app-filter-date-range"
                 style={{ width: '100%', minWidth: 220 }}
                 value={[dueDateRange[0], dueDateRange[1]]}
                 onChange={(dates) => setDueDateRange(dates ? [dates[0], dates[1]] : [null, null])}
@@ -1310,7 +1396,7 @@ const Billing: React.FC = () => {
           </Space>
 
           {/* Filter Summary Chips */}
-          {hasActiveFilters && (
+          {false && hasActiveFilters && (
             <div
               style={{
                 marginTop: 16,
@@ -1372,6 +1458,16 @@ const Billing: React.FC = () => {
               </Space>
             </div>
           )}
+          <FilterPanel
+            filters={billingFilterFields}
+            values={billingFilterValues}
+            onChange={handleBillingFilterChange}
+            onClear={clearAllFilters}
+            showActiveFilters={hasActiveFilters}
+            showFields={false}
+            extraActiveFilters={billingExtraActiveFilters}
+            variant="plain"
+          />
         </Space>
       </Card>
 
@@ -1836,7 +1932,9 @@ const Billing: React.FC = () => {
                     align="center"
                   >
                     <Input
+                      className="app-search-field"
                       placeholder="Search unit / owner..."
+                      prefix={<SearchOutlined />}
                       style={{ width: 260 }}
                       value={unitSearchText}
                       onChange={(e) => setUnitSearchText(e.target.value)}

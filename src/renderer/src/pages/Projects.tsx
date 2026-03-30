@@ -24,7 +24,6 @@ import {
   EditOutlined,
   DeleteOutlined,
   UploadOutlined,
-  SearchOutlined,
   BankOutlined,
   FolderOpenOutlined,
   CheckCircleOutlined,
@@ -41,6 +40,10 @@ import {
 import { readExcelWorkbook } from '../utils/excelReader'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import MaintenanceRateModal from '../components/MaintenanceRateModal'
+import FilterPanel, {
+  createSearchFilter,
+  createSelectFilter
+} from '../components/shared/FilterPanel'
 import { parseStandardWorkbook, StandardWorkbookParseResult } from '../utils/standardWorkbook'
 
 const { Option } = Select
@@ -148,27 +151,23 @@ const Projects: React.FC = () => {
   const location = useLocation()
 
   const fetchProjects = useCallback(async (): Promise<void> => {
-    console.log('[PROJECTS] Fetching projects...')
     setLoading(true)
     try {
-      console.log('[PROJECTS] Calling API...')
       const [data, summaries] = await Promise.all([
         window.api.projects.getAll(),
         window.api.projects.getSetupSummaries(currentFY)
       ])
-      console.log(`[PROJECTS] API response - projects: ${data.length}, summaries: ${summaries.length}`)
-      console.log('[PROJECTS] Project data:', data.map(p => ({ id: p.id, name: p.name, status: p.status })))
       setProjects(data)
       setProjectSetupSummaries(
         Object.fromEntries(summaries.map((summary) => [summary.project_id, summary]))
       )
-      console.log(`[PROJECTS] State updated - projects set to: ${data.length}`)
     } catch (error) {
-      console.error('[PROJECTS] Error fetching projects:', error)
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[PROJECTS] Error fetching projects:', error)
+      }
       message.error('Failed to fetch projects')
     } finally {
       setLoading(false)
-      console.log('[PROJECTS] fetchProjects completed')
     }
   }, [currentFY])
 
@@ -204,8 +203,67 @@ const Projects: React.FC = () => {
 
   // Get unique cities for filter
   const uniqueCities = useMemo(() => {
-    return Array.from(new Set(projects.map((p) => p.city).filter(Boolean))).sort()
+    return Array.from(
+      new Set(projects.map((p) => p.city).filter((city): city is string => Boolean(city)))
+    ).sort()
   }, [projects])
+
+  const projectFilterFields = useMemo(
+    () => [
+      createSearchFilter(
+        'searchText',
+        'Search',
+        'Search project code, name, address, or city...'
+      ),
+      createSelectFilter(
+        'statusFilter',
+        'Status',
+        [
+          { value: 'Active', label: 'Active' },
+          { value: 'Inactive', label: 'Inactive' }
+        ],
+        'Status',
+        {
+          emptyValue: null
+        }
+      ),
+      createSelectFilter(
+        'cityFilter',
+        'City',
+        uniqueCities.map((city) => ({ value: city, label: city })),
+        'City',
+        {
+          emptyValue: null
+        }
+      )
+    ],
+    [uniqueCities]
+  )
+
+  const projectFilterValues = useMemo(
+    () => ({
+      searchText,
+      statusFilter,
+      cityFilter
+    }),
+    [cityFilter, searchText, statusFilter]
+  )
+
+  const handleProjectFilterChange = useCallback((key: string, value: unknown) => {
+    switch (key) {
+      case 'searchText':
+        setSearchText(typeof value === 'string' ? value : '')
+        break
+      case 'statusFilter':
+        setStatusFilter((value as string | null | undefined) ?? null)
+        break
+      case 'cityFilter':
+        setCityFilter((value as string | null | undefined) ?? null)
+        break
+      default:
+        break
+    }
+  }, [])
 
   const existingProjectNameSet = useMemo(() => {
     return new Set(projects.map((project) => project.name.trim().toLowerCase()))
@@ -213,7 +271,7 @@ const Projects: React.FC = () => {
 
   // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
-    return searchText || statusFilter || cityFilter
+    return Boolean(searchText || statusFilter || cityFilter)
   }, [searchText, statusFilter, cityFilter])
 
   // Clear all filters
@@ -433,30 +491,16 @@ const Projects: React.FC = () => {
   }
 
   const handleEdit = async (record: Project): Promise<void> => {
-    console.log('[EDIT PROJECT] Starting edit for project:', record.name, 'ID:', record.id)
     setEditingProject(record)
     
     // Fetch existing sector configs from database
-    console.log('[EDIT PROJECT] Fetching sector configs for project ID:', record.id)
     try {
       const existingSectorConfigs = await window.api.projects.getSectorPaymentConfigs(record.id!)
-      console.log('[EDIT PROJECT] Raw API response:', existingSectorConfigs)
-      console.log('[EDIT PROJECT] Sector configs count:', existingSectorConfigs?.length || 0)
-      
-      if (existingSectorConfigs && existingSectorConfigs.length > 0) {
-        console.log('[EDIT PROJECT] Sector configs found:', existingSectorConfigs.map(config => ({
-          sector_code: config.sector_code,
-          account_name: config.account_name,
-          bank_name: config.bank_name
-        })))
-      } else {
-        console.log('[EDIT PROJECT] No sector configs found for this project')
-      }
-      
       setSectorConfigs(existingSectorConfigs || [])
     } catch (error) {
-      console.error('[EDIT PROJECT] Failed to fetch sector configs:', error)
-      console.error('[EDIT PROJECT] Error details:', error instanceof Error ? error.message : String(error))
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[EDIT PROJECT] Failed to fetch sector configs:', error)
+      }
       // Fallback to empty configs if fetch fails
       setSectorConfigs(getEmptySectorConfigs())
     }
@@ -469,10 +513,8 @@ const Projects: React.FC = () => {
       template_type: record.template_type || 'standard',
       import_profile_key: record.import_profile_key || 'standard_normalized'
     }
-    console.log('[EDIT PROJECT] Form values status:', formValues.status)
     form.setFieldsValue(formValues)
     setIsModalOpen(true)
-    console.log('[EDIT PROJECT] Edit modal opened')
   }
 
   const handleRates = (record: Project): void => {
@@ -749,11 +791,6 @@ const Projects: React.FC = () => {
             </Text>
           </div>
           <Space wrap className="responsive-action-bar">
-            {selectedRowKeys.length > 0 && (
-              <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
-                Delete Selected ({selectedRowKeys.length})
-              </Button>
-            )}
             <Upload
               beforeUpload={(file) => {
                 handleStandardWorkbookImport(file)
@@ -771,74 +808,28 @@ const Projects: React.FC = () => {
         </div>
       </div>
 
-      <Card style={{ marginBottom: 0 }} className="page-toolbar-card">
-        <Space wrap className="responsive-filters" style={{ marginBottom: 8 }}>
-          <Input
-            placeholder="Search Project Code, Name, Address, or City..."
-            prefix={<SearchOutlined />}
-            style={{ width: '100%', minWidth: 200, maxWidth: 350 }}
-            allowClear
-            onChange={(e) => setSearchText(e.target.value)}
-            value={searchText}
-          />
-          <Select
-            placeholder="Status"
-            style={{ width: '100%', minWidth: 120 }}
-            allowClear
-            onChange={(val) => setStatusFilter(val)}
-            value={statusFilter}
-          >
-            <Option value="Active">Active</Option>
-            <Option value="Inactive">Inactive</Option>
-          </Select>
-          <Select
-            placeholder="City"
-            style={{ width: '100%', minWidth: 120 }}
-            allowClear
-            onChange={(val) => setCityFilter(val)}
-            value={cityFilter}
-          >
-            {uniqueCities.map((city) => (
-              <Option key={city} value={city}>
-                {city}
-              </Option>
-            ))}
-          </Select>
-        </Space>
+      {selectedRowKeys.length > 0 && (
+        <div className="page-selection-bar">
+          <Text className="page-selection-label">
+            {selectedRowKeys.length} project{selectedRowKeys.length !== 1 ? 's' : ''} selected
+          </Text>
+          <Space wrap>
+            <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
+              Delete Selected ({selectedRowKeys.length})
+            </Button>
+          </Space>
+        </div>
+      )}
 
-        {/* Filter Summary Chips */}
-        {hasActiveFilters && (
-          <div className="page-chip-bar" style={{ marginTop: 16 }}>
-            <Space wrap>
-              <Text type="secondary" style={{ fontSize: '12px' }}>
-                Active filters:
-              </Text>
-              {searchText && (
-                <Tag closable onClose={() => setSearchText('')} style={{ fontSize: '12px' }}>
-                  Search: &quot;{searchText}&quot;
-                </Tag>
-              )}
-              {statusFilter && (
-                <Tag closable onClose={() => setStatusFilter(null)} style={{ fontSize: '12px' }}>
-                  Status: {statusFilter}
-                </Tag>
-              )}
-              {cityFilter && (
-                <Tag closable onClose={() => setCityFilter(null)} style={{ fontSize: '12px' }}>
-                  City: {cityFilter}
-                </Tag>
-              )}
-              <Button
-                type="link"
-                size="small"
-                onClick={clearAllFilters}
-                style={{ fontSize: '12px', padding: 0, height: 'auto' }}
-              >
-                Clear all
-              </Button>
-            </Space>
-          </div>
-        )}
+      <Card style={{ marginBottom: 0 }} className="page-toolbar-card">
+        <FilterPanel
+          filters={projectFilterFields}
+          values={projectFilterValues}
+          onChange={handleProjectFilterChange}
+          onClear={clearAllFilters}
+          showActiveFilters={hasActiveFilters}
+          variant="plain"
+        />
       </Card>
 
       {/* Setup Checklist Banner — shown when any project has incomplete setup */}
@@ -1248,15 +1239,13 @@ const Projects: React.FC = () => {
                               Add Common Sectors (A, B, C)
                             </Button>
                           )}
-                          {editingProject && (
+                          {process.env.NODE_ENV === 'development' && editingProject && (
                             <Button 
                               size="small" 
                               type="dashed" 
                               onClick={async () => {
-                                console.log('[DEBUG] Manual fetch test for project:', editingProject.id)
                                 try {
                                   const configs = await window.api.projects.getSectorPaymentConfigs(editingProject.id!)
-                                  console.log('[DEBUG] Manual fetch result:', configs)
                                   message.info(`Found ${configs?.length || 0} sector configs`)
                                 } catch (error) {
                                   console.error('[DEBUG] Manual fetch error:', error)
@@ -1279,43 +1268,6 @@ const Projects: React.FC = () => {
             ]}
           />
         </Form>
-      </Modal>
-
-      {/* Import Summary Modal */}
-      <Modal
-        title="Import Summary"
-        open={showImportSummary}
-        onCancel={() => setShowImportSummary(false)}
-        footer={[
-          <Button key="close" onClick={() => setShowImportSummary(false)}>
-            Close
-          </Button>
-        ]}
-        width={600}
-        style={{ maxWidth: '95vw', maxHeight: '90vh' }}
-        bodyStyle={{ maxHeight: 'calc(90vh - 180px)', overflowY: 'auto' }}
-      >
-        <div style={{ maxHeight: '400px', overflow: 'auto' }}>
-          <List
-            dataSource={importResults}
-            renderItem={(result, index) => (
-              <List.Item>
-                <List.Item.Meta
-                  title={`${index + 1}. ${result.project_code || 'PRJ'} - ${result.project_name}`}
-                  description={
-                    <Space direction="vertical" size={0}>
-                      <Text>Units: {result.imported_units} | Letters: {result.imported_letters}</Text>
-                      <Text>Rates: {result.imported_rates} | Payments: {result.imported_payments}</Text>
-                      {result.created && (
-                        <Tag color="green">Successfully Created</Tag>
-                      )}
-                    </Space>
-                  }
-                />
-              </List.Item>
-            )}
-          />
-        </div>
       </Modal>
 
       {/* Standard Workbook Import Modal */}

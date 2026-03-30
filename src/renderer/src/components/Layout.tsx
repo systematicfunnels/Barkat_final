@@ -27,7 +27,15 @@ function useDebounce<T extends (...args: unknown[]) => void>(
   delay: number
 ): T {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-   
+
+  useEffect(() => {
+    return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+    }
+  }, [])
+
   return useCallback((...args: unknown[]) => {
     if (timeoutRef.current) {
       clearTimeout(timeoutRef.current)
@@ -96,37 +104,44 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     {
       key: '/',
       icon: <DashboardOutlined />,
-      label: 'Dashboard'
+      label: 'Dashboard',
+      title: 'Dashboard'
     },
     {
       key: '/projects',
       icon: <HomeOutlined />,
-      label: 'Projects'
+      label: 'Projects',
+      title: 'Projects'
     },
     {
       key: '/units',
       icon: <UserOutlined />,
-      label: 'Units'
+      label: 'Units',
+      title: 'Units'
     },
     {
       key: '/billing',
       icon: <FileTextOutlined />,
-      label: 'Maintenance Letters'
+      label: 'Maintenance Letters',
+      title: 'Maintenance Letters'
     },
     {
       key: '/payments',
       icon: <IndianRupee size={16} />,
-      label: 'Payments & Receipts'
+      label: 'Payments & Receipts',
+      title: 'Payments & Receipts'
     },
     {
       key: '/reports',
       icon: <BarChartOutlined />,
-      label: 'Reports'
+      label: 'Reports',
+      title: 'Reports'
     },
     {
       key: '/settings',
       icon: <SettingOutlined />,
-      label: 'Settings'
+      label: 'Settings',
+      title: 'Settings'
     }
   ]
 
@@ -149,6 +164,12 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [handleResize])
+
+  useEffect(() => {
+    if (isMobile) {
+      setMobileDrawerOpen(false)
+    }
+  }, [isMobile, location.pathname])
 
   const handleMenuClick = useCallback((key: string) => {
     try {
@@ -191,6 +212,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         className="app-shell-menu"
         selectedKeys={[location.pathname]}
         mode="inline"
+        inlineCollapsed={!isMobile && collapsed}
         items={menuItems}
         onClick={({ key }) => handleMenuClick(key)}
       />
@@ -208,7 +230,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           collapsed={collapsed}
           onCollapse={(value) => setCollapsed(value)}
           width={sidebarWidth}
-          collapsedWidth={80}
+          collapsedWidth={collapsedSidebarWidth}
           style={{
             overflow: 'auto',
             height: '100vh',
@@ -248,9 +270,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         {renderMenu()}
       </Drawer>
 
-      <AntLayout className="app-shell-main" style={{
+        <AntLayout className="app-shell-main" style={{
           marginLeft: contentOffset,
-          transition: 'all 0.2s',
+          transition: 'margin-left 0.2s ease, width 0.2s ease',
           minWidth: 0,
           width: isMobile ? '100%' : undefined
         }}
@@ -279,6 +301,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 icon={<MenuOutlined />}
                 onClick={() => setMobileDrawerOpen(true)}
                 aria-label="Open sidebar"
+                aria-expanded={mobileDrawerOpen}
               />
             ) : (
               <Button
@@ -286,6 +309,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
                 icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />}
                 onClick={() => setCollapsed((prev) => !prev)}
                 aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+                aria-expanded={!collapsed}
               />
             )}
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>

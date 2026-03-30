@@ -7,21 +7,17 @@ import {
   Statistic,
   Typography,
   Table,
-  Select,
   Space,
   Button,
   TableProps,
   Tooltip,
   message,
-  Input,
   Tag,
-  InputNumber,
   Alert
 } from 'antd'
 import {
   FileExcelOutlined,
   ExclamationCircleOutlined,
-  SearchOutlined,
   FilterOutlined,
   BarChartOutlined
 } from '@ant-design/icons'
@@ -30,10 +26,13 @@ import dayjs from 'dayjs'
 
 import { Project, Unit } from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
+import FilterPanel, {
+  createRangeFilter,
+  createSearchFilter,
+  createSelectFilter
+} from '../components/shared/FilterPanel'
 
 const { Title, Text } = Typography
-const { Option } = Select
-const { Search } = Input
 
 interface YearlyData {
   billed: number
@@ -61,6 +60,8 @@ interface PivotData {
   total_paid: number
   outstanding: number
 }
+
+type PivotRowWithYears = PivotData & Record<string, string | number | YearlyData>
 
 const Reports: React.FC = () => {
   const navigate = useNavigate()
@@ -92,6 +93,11 @@ const Reports: React.FC = () => {
 
   const [yearlyTotals, setYearlyTotals] = useState<YearlyTotal[]>([])
 
+  const selectedProjectRecord = useMemo(
+    () => projects.find((project) => project.id === selectedProject) || null,
+    [projects, selectedProject]
+  )
+
   // Handle screen resize for responsive columns
   useEffect(() => {
     const handleResize = (): void => setScreenWidth(window.innerWidth)
@@ -101,19 +107,145 @@ const Reports: React.FC = () => {
 
   // Get selected project name for display
   const selectedProjectName = useMemo(() => {
-    if (!selectedProject) return ''
-    const project = projects.find((p) => p.id === selectedProject)
-    return project?.name || ''
-  }, [selectedProject, projects])
+    return selectedProjectRecord?.name || ''
+  }, [selectedProjectRecord])
 
   // Get unique unit types for filter
   const unitTypes = useMemo(() => {
-    return Array.from(new Set(allUnits.map((u) => u.unit_type).filter(Boolean))).sort()
+    return Array.from(
+      new Set(allUnits.map((u) => u.unit_type).filter((type): type is string => Boolean(type)))
+    ).sort()
   }, [allUnits])
+
+  const reportFilterFields = useMemo(
+    () => [
+      createSelectFilter(
+        'selectedProject',
+        'Project',
+        projects.flatMap((project) =>
+          project.id !== undefined
+            ? [
+                {
+                  value: project.id,
+                  label: project.project_code
+                    ? `${project.project_code} - ${project.name}`
+                    : project.name
+                }
+              ]
+            : []
+        ),
+        'Project',
+        {
+          emptyValue: null,
+          formatValue: (value) => {
+            const project = projects.find((item) => item.id === value)
+            return project?.name || ''
+          }
+        }
+      ),
+      createSelectFilter(
+        'selectedYears',
+        'Years',
+        availableYears.map((year) => ({ value: year, label: year })),
+        'Financial Years',
+        {
+          emptyValue: [],
+          multiple: true,
+          maxTagCount: 'responsive',
+          isActive: (value) => Array.isArray(value) && value.length > 0,
+          formatValue: (value) =>
+            Array.isArray(value) ? `${value.length} selected` : String(value ?? '')
+        }
+      ),
+      createSelectFilter(
+        'selectedStatus',
+        'Status',
+        [
+          { value: 'Sold', label: 'Sold' },
+          { value: 'Unsold', label: 'Unsold' }
+        ],
+        'Status',
+        {
+          emptyValue: null
+        }
+      ),
+      createSelectFilter(
+        'selectedUnitType',
+        'Unit Type',
+        unitTypes.map((type) => ({ value: type, label: type })),
+        'Unit Type',
+        {
+          emptyValue: null
+        }
+      ),
+      createSearchFilter('searchText', 'Search', 'Search unit, owner, or project...'),
+      createRangeFilter('outstandingRange', 'Outstanding', {
+        emptyValue: [null, null],
+        minPlaceholder: 'Min Outstanding',
+        maxPlaceholder: 'Max Outstanding',
+        isActive: (value) =>
+          Array.isArray(value) && (value[0] !== null || value[1] !== null),
+        formatValue: (value) => {
+          const [min, max] = Array.isArray(value) ? value : [null, null]
+          return `${min !== null ? `₹${min}` : 'Any'} - ${max !== null ? `₹${max}` : 'Any'}`
+        }
+      })
+    ],
+    [availableYears, projects, unitTypes]
+  )
+
+  const reportFilterValues = useMemo(
+    () => ({
+      selectedProject,
+      selectedYears,
+      selectedStatus,
+      selectedUnitType,
+      searchText,
+      outstandingRange
+    }),
+    [
+      outstandingRange,
+      searchText,
+      selectedProject,
+      selectedStatus,
+      selectedUnitType,
+      selectedYears
+    ]
+  )
+
+  const handleReportFilterChange = useCallback((key: string, value: unknown) => {
+    switch (key) {
+      case 'selectedProject':
+        setSelectedProject((value as number | null | undefined) ?? null)
+        break
+      case 'selectedYears':
+        setSelectedYears(Array.isArray(value) ? value.map(String) : [])
+        break
+      case 'selectedStatus':
+        setSelectedStatus((value as string | null | undefined) ?? null)
+        break
+      case 'selectedUnitType':
+        setSelectedUnitType((value as string | null | undefined) ?? null)
+        break
+      case 'searchText':
+        setSearchText(typeof value === 'string' ? value : '')
+        break
+      case 'outstandingRange':
+        if (Array.isArray(value)) {
+          setOutstandingRange([
+            typeof value[0] === 'number' ? value[0] : null,
+            typeof value[1] === 'number' ? value[1] : null
+          ])
+        }
+        break
+      default:
+        break
+    }
+  }, [])
 
   // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
-    return (
+    return Boolean(
       searchText ||
       selectedProject !== null ||
       selectedUnitType !== null ||
@@ -155,15 +287,16 @@ const Reports: React.FC = () => {
 
       // Load letters + payments — scoped to selected project if one is chosen
       // This prevents loading 8000+ rows when only one project's data is needed
-      const [allLetters, allPayments] = selectedProject
-        ? await Promise.all([
-            (await window.api.letters.getAll()).filter(l => l.project_id === selectedProject),
-            (await window.api.payments.getAll()).filter(p => p.project_id === selectedProject)
-          ])
-        : await Promise.all([
-            window.api.letters.getAll(),
-            window.api.payments.getAll()
-          ])
+      const [lettersData, paymentsData] = await Promise.all([
+        window.api.letters.getAll(),
+        window.api.payments.getAll()
+      ])
+      const allLetters = selectedProject
+        ? lettersData.filter((letter) => letter.project_id === selectedProject)
+        : lettersData
+      const allPayments = selectedProject
+        ? paymentsData.filter((payment) => payment.project_id === selectedProject)
+        : paymentsData
 
       // Get all available financial years from letters
       const allYears = Array.from(new Set(allLetters.map((l) => l.financial_year))).sort() as string[]
@@ -174,9 +307,18 @@ const Reports: React.FC = () => {
       setSelectedYears(recentYears)
       setYears(recentYears)
 
+      const letterMap = new Map<string, (typeof allLetters)[number]>(
+        allLetters.map((letter) => [`${letter.unit_id}:${letter.financial_year}`, letter])
+      )
+      const paymentTotals = new Map<string, number>()
+      allPayments.forEach((payment) => {
+        const key = `${payment.unit_id}:${payment.financial_year}`
+        paymentTotals.set(key, (paymentTotals.get(key) || 0) + payment.payment_amount)
+      })
+
       // Prepare all pivot data (unfiltered)
       const allData: PivotData[] = unitsData.map((unit) => {
-        const row: PivotData = {
+        const row: PivotRowWithYears = {
           key: String(unit.id),
           unit_number: unit.unit_number,
           owner_name: unit.owner_name,
@@ -189,16 +331,13 @@ const Reports: React.FC = () => {
         }
 
         allYears.forEach((year) => {
-          const letter = allLetters.find((l) => l.unit_id === unit.id && l.financial_year === year)
-          const paymentsForYear = allPayments.filter(
-            (p) => p.unit_id === unit.id && p.financial_year === year
-          )
-
+          const key = `${unit.id}:${year}`
+          const letter = letterMap.get(key)
           const billed = letter ? letter.final_amount : 0
-          const paid = paymentsForYear.reduce((sum, p) => sum + p.payment_amount, 0)
+          const paid = paymentTotals.get(key) || 0
           const balance = billed - paid
 
-          ;(row as any)[year] = { billed, paid, balance }
+          row[year] = { billed, paid, balance }
           row.total_billed += billed
           row.total_paid += paid
         })
@@ -292,8 +431,7 @@ const Reports: React.FC = () => {
 
       // Project filter
       const matchProject =
-        !selectedProject ||
-        row.project_name === projects.find((p) => p.id === selectedProject)?.name
+        !selectedProject || row.project_name === selectedProjectRecord?.name
 
       // Unit type filter
       const matchUnitType = !selectedUnitType || row.unit_type === selectedUnitType
@@ -349,6 +487,7 @@ const Reports: React.FC = () => {
     selectedYears,
     outstandingRange,
     projects,
+    selectedProjectRecord,
     availableYears
   ])
 
@@ -828,140 +967,14 @@ const Reports: React.FC = () => {
       </div>
 
       <Card style={{ marginBottom: 0 }} className="page-toolbar-card">
-        <div style={{ marginBottom: 16 }}>
-          <Space wrap size="middle" className="responsive-filters">
-            <Search
-              placeholder="Search unit, owner, or project..."
-              prefix={<SearchOutlined />}
-              style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
-              allowClear
-              onChange={(e) => setSearchText(e.target.value)}
-              onSearch={setSearchText}
-              value={searchText}
-              enterButton
-              suffix={null}
-              aria-label="Search reports by unit, owner, or project"
-            />
-            <Select
-              placeholder="Project"
-              style={{ width: '100%', minWidth: 160 }}
-              allowClear
-              onChange={setSelectedProject}
-              value={selectedProject}
-            >
-              {projects.map((p) => (
-                <Option key={p.id} value={p.id}>
-                  {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Unit Type"
-              style={{ width: '100%', minWidth: 110 }}
-              allowClear
-              onChange={setSelectedUnitType}
-              value={selectedUnitType}
-            >
-              {unitTypes.map((type) => (
-                <Option key={type} value={type}>
-                  {type}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Status"
-              style={{ width: '100%', minWidth: 110 }}
-              allowClear
-              onChange={setSelectedStatus}
-              value={selectedStatus}
-            >
-              <Option value="Sold">Sold</Option>
-              <Option value="Unsold">Unsold</Option>
-            </Select>
-            <Select
-              mode="multiple"
-              placeholder="Financial Years"
-              style={{ width: '100%', minWidth: 160 }}
-              allowClear
-              onChange={setSelectedYears}
-              value={selectedYears}
-              maxTagCount="responsive"
-            >
-              {availableYears.map((year) => (
-                <Option key={year} value={year}>
-                  {year}
-                </Option>
-              ))}
-            </Select>
-            <Space wrap className="responsive-stack">
-              <InputNumber
-                placeholder="Min Outstanding"
-                style={{ width: '100%', minWidth: 120 }}
-                value={outstandingRange[0]}
-                onChange={(val) => setOutstandingRange([val, outstandingRange[1]])}
-                min={0}
-              />
-              <span>-</span>
-              <InputNumber
-                placeholder="Max Outstanding"
-                style={{ width: '100%', minWidth: 120 }}
-                value={outstandingRange[1]}
-                onChange={(val) => setOutstandingRange([outstandingRange[0], val])}
-                min={0}
-              />
-            </Space>
-          </Space>
-
-          {/* Filter Summary Chips */}
-          {hasActiveFilters && (
-            <div className="page-chip-bar" style={{ marginTop: 16 }}>
-              <Space wrap>
-                <Text type="secondary" style={{ fontSize: '12px' }}>
-                  Applied filters:
-                </Text>
-                {searchText && (
-                  <Tag closable onClose={() => setSearchText('')}>
-                    Search: &quot;{searchText}&quot;
-                  </Tag>
-                )}
-                {selectedProject !== null && (
-                  <Tag closable onClose={() => setSelectedProject(null)}>
-                    Project: {selectedProjectName}
-                  </Tag>
-                )}
-                {selectedUnitType !== null && (
-                  <Tag closable onClose={() => setSelectedUnitType(null)}>
-                    Type: {selectedUnitType}
-                  </Tag>
-                )}
-                {selectedStatus !== null && (
-                  <Tag closable onClose={() => setSelectedStatus(null)}>
-                    Status: {selectedStatus}
-                  </Tag>
-                )}
-                {selectedYears.length > 0 && (
-                  <Tag closable onClose={() => setSelectedYears([])}>
-                    Years: {selectedYears.length} selected
-                  </Tag>
-                )}
-                {(outstandingRange[0] !== null || outstandingRange[1] !== null) && (
-                  <Tag closable onClose={() => setOutstandingRange([null, null])}>
-                    Outstanding: {outstandingRange[0] !== null ? `₹${outstandingRange[0]}` : 'Any'}{' '}
-                    - {outstandingRange[1] !== null ? `₹${outstandingRange[1]}` : 'Any'}
-                  </Tag>
-                )}
-                <Button
-                  type="link"
-                  size="small"
-                  onClick={clearAllFilters}
-                  style={{ fontSize: '12px', padding: 0, height: 'auto' }}
-                >
-                  Clear all filters
-                </Button>
-              </Space>
-            </div>
-          )}
-        </div>
+        <FilterPanel
+          filters={reportFilterFields}
+          values={reportFilterValues}
+          onChange={handleReportFilterChange}
+          onClear={clearAllFilters}
+          showActiveFilters={hasActiveFilters}
+          variant="plain"
+        />
       </Card>
 
       {/* Yearly Summary Cards */}
@@ -1095,6 +1108,9 @@ const Reports: React.FC = () => {
           )
         }
       >
+        <Text className="page-helper-text" style={{ display: 'block', margin: '16px 16px 0' }}>
+          On smaller widths, review the summary cards first and use horizontal table scroll for year-by-year detail.
+        </Text>
         <Alert
           message="Table shows Billed, Paid, and Balance for each financial year"
           type="info"

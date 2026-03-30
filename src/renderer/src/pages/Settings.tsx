@@ -116,6 +116,9 @@ const Settings: React.FC = () => {
           <Paragraph>
             Restore a previously exported backup file to recover or move your workspace data.
           </Paragraph>
+          <Text type="secondary" className="page-helper-text">
+            This replaces the current local database with the selected backup.
+          </Text>
           <Button icon={<UploadOutlined />} onClick={handleImport} loading={loading}>
             Restore from Backup
           </Button>
@@ -125,6 +128,9 @@ const Settings: React.FC = () => {
           <Paragraph>
             Run integrity checks and repair common foreign-key or relational consistency issues.
           </Paragraph>
+          <Text type="secondary" className="page-helper-text">
+            Use this when records look inconsistent or after a failed import or restore.
+          </Text>
           <Button icon={<ToolOutlined />} onClick={handleDatabaseRepair} loading={loading}>
             Check & Repair
           </Button>

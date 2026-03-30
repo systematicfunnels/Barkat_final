@@ -40,10 +40,14 @@ import { readExcelFile } from '../utils/excelReader'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import { UNIT_TYPES, UNIT_TYPE_COLORS } from '../constants/unitTypes'
 import { useOperationHistory } from '../hooks/useOperationHistory'
+import FilterPanel, {
+  createRangeFilter,
+  createSearchFilter,
+  createSelectFilter
+} from '../components/shared/FilterPanel'
 
 const { Title, Text, Paragraph } = Typography
 const { Option } = Select
-const { Search } = Input
 const { Panel } = Collapse
 
 interface ImportUnitPreview extends Unit {
@@ -189,7 +193,7 @@ const Units: React.FC = () => {
 
   // Memoized filter status for performance
   const hasActiveFilters = useMemo(() => {
-    return (
+    return Boolean(
       searchText ||
       selectedProject ||
       selectedUnitType ||
@@ -213,6 +217,112 @@ const Units: React.FC = () => {
     () => projects.find((project) => project.id === importProjectId) || null,
     [projects, importProjectId]
   )
+
+  const unitFilterFields = useMemo(
+    () => [
+      createSearchFilter('searchText', 'Search', 'Search unit number or owner...'),
+      createSelectFilter(
+        'selectedProject',
+        'Project',
+        projects.flatMap((project) =>
+          project.id !== undefined
+            ? [
+                {
+                  value: project.id,
+                  label: project.project_code
+                    ? `${project.project_code} - ${project.name}`
+                    : project.name
+                }
+              ]
+            : []
+        ),
+        'Project',
+        {
+          emptyValue: null,
+          formatValue: (value) => getProjectNameById((value as number | null) ?? null)
+        }
+      ),
+      createSelectFilter(
+        'statusFilter',
+        'Status',
+        [
+          { value: 'Sold', label: 'Sold' },
+          { value: 'Unsold', label: 'Unsold' }
+        ],
+        'Status',
+        {
+          emptyValue: null
+        }
+      ),
+      createSelectFilter(
+        'selectedUnitType',
+        'Unit Type',
+        UNIT_TYPES.map((unitType) => ({ value: unitType, label: unitType })),
+        'Unit Type',
+        {
+          emptyValue: null
+        }
+      ),
+      createRangeFilter('areaRange', 'Area', {
+        emptyValue: [null, null],
+        minPlaceholder: 'Min Area',
+        maxPlaceholder: 'Max Area',
+        isActive: (value) =>
+          Array.isArray(value) && (value[0] !== null || value[1] !== null),
+        formatValue: (value) => {
+          const [min, max] = Array.isArray(value) ? value : [null, null]
+          return `${min ?? 'Any'} to ${max ?? 'Any'}`
+        }
+      })
+    ],
+    [getProjectNameById, projects]
+  )
+
+  const unitFilterValues = useMemo(
+    () => ({
+      searchText,
+      selectedProject,
+      statusFilter,
+      selectedUnitType,
+      areaRange
+    }),
+    [areaRange, searchText, selectedProject, selectedUnitType, statusFilter]
+  )
+
+  const handleUnitFilterChange = useCallback((key: string, value: unknown) => {
+    switch (key) {
+      case 'searchText':
+        setSearchText(typeof value === 'string' ? value : '')
+        break
+      case 'selectedProject':
+        setSelectedProject((value as number | null | undefined) ?? null)
+        break
+      case 'statusFilter':
+        setStatusFilter((value as string | null | undefined) ?? null)
+        break
+      case 'selectedUnitType':
+        setSelectedUnitType((value as string | null | undefined) ?? null)
+        break
+      case 'areaRange':
+        if (Array.isArray(value)) {
+          const nextRange: [number | null, number | null] = [
+            typeof value[0] === 'number' ? value[0] : null,
+            typeof value[1] === 'number' ? value[1] : null
+          ]
+          if (
+            nextRange[0] !== null &&
+            nextRange[1] !== null &&
+            nextRange[0] > nextRange[1]
+          ) {
+            message.warning('Minimum area cannot be greater than maximum')
+          }
+          setAreaRange(nextRange)
+        }
+        break
+      default:
+        break
+    }
+  }, [])
 
   const detectedImportProfile = useMemo(() => detectImportProfile(importData), [importData])
 
@@ -334,8 +444,13 @@ const Units: React.FC = () => {
 
   // Helper function to map a single row to a Unit object
   const mapRowToUnit = useCallback(
-    (row: Record<string, unknown>, projectId: number | null): ImportUnitPreview | null => {
-      const previewId = (row.__id as string) || Math.random().toString(36).substr(2, 9)
+    (
+      row: Record<string, unknown>,
+      projectId: number | null,
+      fallbackPreviewId: string
+    ): ImportUnitPreview | null => {
+      const previewId =
+        typeof row.__id === 'string' && row.__id.trim() ? row.__id : fallbackPreviewId
       const normalizedRow: Record<string, unknown> = {}
       Object.keys(row).forEach((key) => {
         const normalizedKey = String(key).toLowerCase().trim()
@@ -509,7 +624,7 @@ const Units: React.FC = () => {
       const preview = importData
         .map((row, index) => {
           if (!row.__id) row.__id = `row-${index}`
-          return mapRowToUnit(row, importProjectId)
+          return mapRowToUnit(row, importProjectId, `row-${index}`)
         })
         .filter((u): u is ImportUnitPreview => u !== null)
       setMappedPreview(preview)
@@ -1162,23 +1277,6 @@ const Units: React.FC = () => {
               Undo Delete
             </Button>
           )}
-          <div style={{ minWidth: selectedRowKeys.length > 0 ? 'auto' : 0, transition: 'all 0.2s' }}>
-            {selectedRowKeys.length > 0 && (
-              <Space>
-                <Text type="secondary">({selectedRowKeys.length} selected)</Text>
-                <Button
-                  type="primary"
-                  icon={<SolutionOutlined />}
-                  onClick={() => navigate('/billing', { state: { unitIds: selectedRowKeys } })}
-                >
-                  Generate Letters ({selectedRowKeys.length})
-                </Button>
-                <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
-                  Delete ({selectedRowKeys.length})
-                </Button>
-              </Space>
-            )}
-          </div>
           <Upload
             beforeUpload={handleImport}
             showUploadList={false}
@@ -1196,145 +1294,36 @@ const Units: React.FC = () => {
         </div>
       </div>
 
+      {selectedRowKeys.length > 0 && (
+        <div className="page-selection-bar">
+          <Text className="page-selection-label">
+            {selectedRowKeys.length} unit{selectedRowKeys.length !== 1 ? 's' : ''} selected
+          </Text>
+          <Space wrap>
+            <Button
+              type="primary"
+              icon={<SolutionOutlined />}
+              onClick={() => navigate('/billing', { state: { unitIds: selectedRowKeys } })}
+            >
+              Generate Letters ({selectedRowKeys.length})
+            </Button>
+            <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
+              Delete ({selectedRowKeys.length})
+            </Button>
+          </Space>
+        </div>
+      )}
+
       <Card className="page-toolbar-card page-table-card">
         <div style={{ marginBottom: 24 }}>
-          <Space wrap className="responsive-filters" size="middle">
-            <Search
-              placeholder="Search unit, owner..."
-              allowClear
-              onSearch={setSearchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
-              enterButton
-              suffix={null}
-              aria-label="Search units by unit number or owner name"
-            />
-            <Select
-              placeholder="Project"
-              style={{ width: '100%', minWidth: 160 }}
-              allowClear
-              onChange={setSelectedProject}
-              value={selectedProject}
-              aria-label="Filter by project"
-            >
-              {projects.map((s) => (
-                <Option key={s.id} value={s.id}>
-                  {s.name}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Status"
-              style={{ width: '100%', minWidth: 120 }}
-              allowClear
-              onChange={setStatusFilter}
-              value={statusFilter}
-              aria-label="Filter by unit status"
-            >
-              <Option value="Sold">Sold</Option>
-              <Option value="Unsold">Unsold</Option>
-            </Select>
-            <Select
-              placeholder="Unit Type"
-              style={{ width: '100%', minWidth: 120 }}
-              allowClear
-              onChange={setSelectedUnitType}
-              value={selectedUnitType}
-              aria-label="Filter by unit type"
-            >
-              {UNIT_TYPES.map((unitType) => (
-                <Option key={unitType} value={unitType}>
-                  {unitType}
-                </Option>
-              ))}
-            </Select>
-
-            {/* Area range with validation - fixed to validate onBlur */}
-            <Input.Group compact style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-              <InputNumber
-                placeholder="Min Area"
-                style={{ width: 100, flex: '1 1 90px' }}
-                value={areaRange[0]}
-                onChange={(min) => setAreaRange([min, areaRange[1]])}
-                onBlur={() => {
-                  if (areaRange[1] && areaRange[0] && areaRange[0] > areaRange[1]) {
-                    message.warning('Minimum area cannot be greater than maximum')
-                  }
-                }}
-                aria-label="Minimum area in square feet"
-              />
-              <span style={{ padding: '0 8px', lineHeight: '32px' }}>to</span>
-              <InputNumber
-                placeholder="Max Area"
-                style={{ width: 100, flex: '1 1 90px' }}
-                value={areaRange[1]}
-                onChange={(max) => setAreaRange([areaRange[0], max])}
-                onBlur={() => {
-                  if (areaRange[0] && areaRange[1] && areaRange[1] < areaRange[0]) {
-                    message.warning('Maximum area cannot be less than minimum')
-                  }
-                }}
-                aria-label="Maximum area in square feet"
-              />
-            </Input.Group>
-          </Space>
-
-          {/* Filter summary chips */}
-          {hasActiveFilters && (
-            <div className="page-chip-bar" style={{ marginTop: 16 }}>
-              <Space wrap>
-                <Text type="secondary" style={{ fontSize: '12px' }}>
-                  Applied filters:
-                </Text>
-                {searchText && (
-                  <Tag closable onClose={() => setSearchText('')} style={{ fontSize: '12px' }}>
-                    Search: &quot;{searchText}&quot;
-                  </Tag>
-                )}
-                {selectedProject && (
-                  <Tag
-                    closable
-                    onClose={() => setSelectedProject(null)}
-                    style={{ fontSize: '12px' }}
-                  >
-                    Project: {getProjectNameById(selectedProject)}
-                  </Tag>
-                )}
-                {selectedUnitType && (
-                  <Tag
-                    closable
-                    onClose={() => setSelectedUnitType(null)}
-                    style={{ fontSize: '12px' }}
-                  >
-                    Type: {selectedUnitType}
-                  </Tag>
-                )}
-                {statusFilter && (
-                  <Tag closable onClose={() => setStatusFilter(null)} style={{ fontSize: '12px' }}>
-                    Status: {statusFilter}
-                  </Tag>
-                )}
-                {(areaRange[0] !== null || areaRange[1] !== null) && (
-                  <Tag
-                    closable
-                    onClose={() => setAreaRange([null, null])}
-                    style={{ fontSize: '12px' }}
-                  >
-                    Area: {areaRange[0] !== null ? `${areaRange[0]}` : 'Any'} to{' '}
-                    {areaRange[1] !== null ? `${areaRange[1]}` : 'Any'}
-                  </Tag>
-                )}
-                <Button
-                  type="link"
-                  size="small"
-                  onClick={clearAllFilters}
-                  style={{ fontSize: '12px', padding: 0, height: 'auto' }}
-                >
-                  Clear all
-                </Button>
-              </Space>
-            </div>
-          )}
+          <FilterPanel
+            filters={unitFilterFields}
+            values={unitFilterValues}
+            onChange={handleUnitFilterChange}
+            onClear={clearAllFilters}
+            showActiveFilters={hasActiveFilters}
+            variant="plain"
+          />
         </div>
 
         {/* Mobile scroll hint */}

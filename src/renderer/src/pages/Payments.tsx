@@ -33,10 +33,13 @@ import {
 import dayjs from 'dayjs'
 import { Project, Unit, Payment, MaintenanceLetter } from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
+import FilterPanel, {
+  createSearchFilter,
+  createSelectFilter
+} from '../components/shared/FilterPanel'
 
 const { Title, Text } = Typography
 const { Option } = Select
-const { Search } = Input
 
 interface BulkPaymentEntry {
   unit_id: number
@@ -122,6 +125,7 @@ const Payments: React.FC = () => {
   const [bulkProject, setBulkProject] = useState<number | null>(null)
   const [generatingReceipts, setGeneratingReceipts] = useState(false)
   const [receiptProgress, setReceiptProgress] = useState<ReceiptProgress | null>(null)
+  const [filterPanelOpen, setFilterPanelOpen] = useState<string[]>([])
 
   const fetchData = async (): Promise<void> => {
     setLoading(true)
@@ -190,17 +194,99 @@ const Payments: React.FC = () => {
 
   // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
-    return (
+    return Boolean(
       searchText || selectedProject !== null || selectedFY !== defaultFY || selectedMode !== null
     )
   }, [searchText, selectedProject, selectedFY, selectedMode, defaultFY])
 
-  // Get selected project name
-  const selectedProjectName = useMemo(() => {
-    if (!selectedProject) return ''
-    const project = projects.find((p) => p.id === selectedProject)
-    return project?.name || ''
-  }, [selectedProject, projects])
+  const paymentFilterFields = useMemo(
+    () => [
+      createSearchFilter(
+        'searchText',
+        'Search',
+        'Search receipt, unit, owner, or project...'
+      ),
+      createSelectFilter(
+        'selectedProject',
+        'Project',
+        projects.flatMap((project) =>
+          project.id !== undefined
+            ? [
+                {
+                  value: project.id,
+                  label: project.project_code
+                    ? `${project.project_code} - ${project.name}`
+                    : project.name
+                }
+              ]
+            : []
+        ),
+        'Project',
+        {
+          emptyValue: null,
+          formatValue: (value) => {
+            const project = projects.find((item) => item.id === value)
+            return project?.name || ''
+          }
+        }
+      ),
+      createSelectFilter(
+        'selectedFY',
+        'FY',
+        uniqueFinancialYears
+          .filter((fy): fy is string => Boolean(fy))
+          .map((fy) => ({ value: fy, label: fy })),
+        'Financial Year',
+        {
+          emptyValue: defaultFY,
+          isActive: (value) => value !== null && value !== defaultFY
+        }
+      ),
+      createSelectFilter(
+        'selectedMode',
+        'Mode',
+        [
+          { value: 'Transfer', label: 'Bank Transfer / UPI' },
+          { value: 'Cheque', label: 'Cheque' },
+          { value: 'Cash', label: 'Cash' }
+        ],
+        'Payment Mode',
+        {
+          emptyValue: null
+        }
+      )
+    ],
+    [defaultFY, projects, uniqueFinancialYears]
+  )
+
+  const paymentFilterValues = useMemo(
+    () => ({
+      searchText,
+      selectedProject,
+      selectedFY,
+      selectedMode
+    }),
+    [searchText, selectedFY, selectedMode, selectedProject]
+  )
+
+  const handlePaymentFilterChange = useCallback((key: string, value: unknown) => {
+    switch (key) {
+      case 'searchText':
+        setSearchText(typeof value === 'string' ? value : '')
+        break
+      case 'selectedProject':
+        setSelectedProject((value as number | null | undefined) ?? null)
+        break
+      case 'selectedFY':
+        setSelectedFY((value as string | null | undefined) ?? defaultFY)
+        break
+      case 'selectedMode':
+        setSelectedMode((value as string | null | undefined) ?? null)
+        break
+      default:
+        break
+    }
+  }, [defaultFY])
 
   // Clear all filters
   const clearAllFilters = useCallback(() => {
@@ -227,6 +313,10 @@ const Payments: React.FC = () => {
       return matchSearch && matchProject && matchMode && matchFY
     }).length
   }, [payments, searchText, selectedProject, selectedMode, selectedFY, projects])
+
+  useEffect(() => {
+    setFilterPanelOpen(hasActiveFilters ? ['basic'] : [])
+  }, [hasActiveFilters])
 
   const handleAdd = (): void => {
     setEditingPayment(null)
@@ -369,7 +459,9 @@ const Payments: React.FC = () => {
       setLoading(true)
       
       // Use batch service for efficient bulk payment creation
-      console.log('🔄 Starting bulk payment creation for:', validPayments.length, 'payments')
+      if (process.env.NODE_ENV === 'development') {
+        console.log('Starting bulk payment creation', { count: validPayments.length })
+      }
       const result = await window.api.batch.createPayments(validPayments)
       
       // Generate receipts for successful payments only
@@ -388,9 +480,10 @@ const Payments: React.FC = () => {
 
         setGeneratingReceipts(true)
         try {
-          console.log('🧾 Starting receipt generation for payments:', successfulIds)
+          if (process.env.NODE_ENV === 'development') {
+            console.log('Starting receipt generation', { paymentIds: successfulIds })
+          }
           await Promise.all(successfulIds.map((id) => window.api.payments.generateReceiptPdf(id)))
-          console.log('✅ All receipts generated successfully')
           message.success('Receipts generated successfully')
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -515,9 +608,13 @@ const Payments: React.FC = () => {
       onOk: async (): Promise<void> => {
         setLoading(true)
         try {
-          console.log('🗑️ Starting bulk deletion for:', selectedRowKeys.length, 'payments')
+          if (process.env.NODE_ENV === 'development') {
+            console.log('Starting bulk deletion', { count: selectedRowKeys.length })
+          }
           const result = await window.api.batch.deletePayments(selectedRowKeys as number[])
-          console.log('📊 Bulk delete result:', result)
+          if (process.env.NODE_ENV === 'development') {
+            console.log('Bulk delete result', result)
+          }
           
           if (result.failed > 0) {
             message.warning(`${result.successful} payments deleted, ${result.failed} failed`)
@@ -830,26 +927,6 @@ const Payments: React.FC = () => {
             )}
           </div>
           <Space className="responsive-action-bar">
-            {selectedRowKeys.length > 0 && (
-              <>
-                <Button
-                  type="primary"
-                  icon={<PrinterOutlined />}
-                  onClick={handleBatchReceipts}
-                  loading={generatingReceipts}
-                >
-                  Batch Receipts ({selectedRowKeys.length})
-                </Button>
-                <Button
-                  danger
-                  icon={<DeleteOutlined />}
-                  onClick={handleBulkDelete}
-                  aria-label={`Delete ${selectedRowKeys.length} selected payments`}
-                >
-                  Delete Selected ({selectedRowKeys.length})
-                </Button>
-              </>
-            )}
             <Button
               icon={<TableOutlined />}
               onClick={handleBulkAdd}
@@ -870,9 +947,38 @@ const Payments: React.FC = () => {
         </div>
       </div>
 
+      {selectedRowKeys.length > 0 && (
+        <div className="page-selection-bar">
+          <Text className="page-selection-label">
+            {selectedRowKeys.length} payment{selectedRowKeys.length !== 1 ? 's' : ''} selected
+          </Text>
+          <Space wrap>
+            <Button
+              type="primary"
+              icon={<PrinterOutlined />}
+              onClick={handleBatchReceipts}
+              loading={generatingReceipts}
+            >
+              Batch Receipts ({selectedRowKeys.length})
+            </Button>
+            <Button
+              danger
+              icon={<DeleteOutlined />}
+              onClick={handleBulkDelete}
+              aria-label={`Delete ${selectedRowKeys.length} selected payments`}
+            >
+              Delete Selected ({selectedRowKeys.length})
+            </Button>
+          </Space>
+        </div>
+      )}
+
       <Card className="page-toolbar-card page-table-card">
         <Collapse 
-          defaultActiveKey={['basic']}
+          activeKey={filterPanelOpen}
+          onChange={(keys) =>
+            setFilterPanelOpen(Array.isArray(keys) ? keys.map(String) : keys ? [String(keys)] : [])
+          }
           items={[
             {
               key: 'basic',
@@ -884,119 +990,30 @@ const Payments: React.FC = () => {
                 </Space>
               ),
               children: (
-                <Space wrap size="middle" className="responsive-filters">
-                  <Search
-                    placeholder="Search receipt, unit, owner, or project..."
-                    allowClear
-                    onChange={(e) => setSearchText(e.target.value)}
-                    onSearch={setSearchText}
-                    style={{ width: '100%', minWidth: 200, maxWidth: 280 }}
-                    enterButton
-                    suffix={null}
-                    value={searchText}
-                    aria-label="Search payments by receipt, unit, owner, or project"
-                  />
-                  <Select
-                    placeholder="Project"
-                    style={{ width: '100%', minWidth: 160 }}
-                    allowClear
-                    onChange={setSelectedProject}
-                    value={selectedProject}
-                    aria-label="Filter by project"
-                  >
-                    {projects.map((s) => (
-                      <Option key={s.id} value={s.id}>
-                        {s.name}
-                      </Option>
-                    ))}
-                  </Select>
-                  <Select
-                    placeholder="Financial Year"
-                    style={{ width: '100%', minWidth: 140 }}
-                    allowClear
-                    onChange={setSelectedFY}
-                    value={selectedFY}
-                    aria-label="Filter by financial year"
-                  >
-                    {uniqueFinancialYears.map((fy) => (
-                      <Option key={fy} value={fy}>
-                        {fy}
-                      </Option>
-                    ))}
-                  </Select>
-                  <Select
-                    placeholder="Mode"
-                    style={{ width: '100%', minWidth: 160 }}
-                    allowClear
-                    onChange={setSelectedMode}
-                    value={selectedMode}
-                    aria-label="Filter by payment mode"
-                  >
-                    <Option value="Transfer">Bank Transfer / UPI</Option>
-                    <Option value="Cheque">Cheque</Option>
-                    <Option value="Cash">Cash</Option>
-                  </Select>
-                </Space>
+                <FilterPanel
+                  filters={paymentFilterFields}
+                  values={paymentFilterValues}
+                  onChange={handlePaymentFilterChange}
+                  onClear={clearAllFilters}
+                  showActiveFilters={false}
+                  showClearButton={false}
+                  variant="plain"
+                />
               )
             }
           ]}
         />
 
-        {/* Filter Summary Chips */}
-        {hasActiveFilters && (
-          <div className="page-chip-bar" style={{ marginTop: 16 }}>
-            <Space wrap>
-              <Text type="secondary" style={{ fontSize: '12px' }}>
-                Active filters:
-              </Text>
-              {searchText && (
-                <Tag
-                  closable
-                  onClose={() => setSearchText('')}
-                  aria-label={`Search filter: ${searchText}`}
-                >
-                  Search: &quot;{searchText}&quot;
-                </Tag>
-              )}
-              {selectedProject !== null && (
-                <Tag
-                  closable
-                  onClose={() => setSelectedProject(null)}
-                  aria-label={`Project filter: ${selectedProjectName}`}
-                >
-                  Project: {selectedProjectName}
-                </Tag>
-              )}
-              {selectedFY !== null && selectedFY !== defaultFY && (
-                <Tag
-                  closable
-                  onClose={() => setSelectedFY(defaultFY)}
-                  aria-label={`Financial year filter: ${selectedFY}`}
-                >
-                  FY: {selectedFY}
-                </Tag>
-              )}
-              {selectedMode !== null && (
-                <Tag
-                  closable
-                  onClose={() => setSelectedMode(null)}
-                  aria-label={`Payment mode filter: ${selectedMode}`}
-                >
-                  Mode: {selectedMode}
-                </Tag>
-              )}
-              <Button
-                type="link"
-                size="small"
-                onClick={clearAllFilters}
-                style={{ fontSize: '12px', padding: 0, height: 'auto' }}
-                aria-label="Clear all filters"
-              >
-                Clear all
-              </Button>
-            </Space>
-          </div>
-        )}
+        <FilterPanel
+          filters={paymentFilterFields}
+          values={paymentFilterValues}
+          onChange={handlePaymentFilterChange}
+          onClear={clearAllFilters}
+          showActiveFilters={hasActiveFilters}
+          showClearButton
+          showFields={false}
+          variant="plain"
+        />
       </Card>
 
         <div className="table-scroll-wrapper mobile-card-table">

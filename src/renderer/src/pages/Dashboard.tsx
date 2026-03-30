@@ -228,6 +228,9 @@ const Dashboard: React.FC = () => {
             Welcome back! Summary for Financial Year <strong>{selectedFY}</strong>
             {selectedFY === defaultFY && ' (Current)'}
           </Text>
+          <Text type="secondary" className="page-helper-text" style={{ display: 'block', marginTop: 8 }}>
+            Select a summary card to open the related workspace.
+          </Text>
         </div>
         <Space
           size="middle"
