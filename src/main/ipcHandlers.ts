@@ -1,4 +1,5 @@
 import { dialog, ipcMain, shell, app } from 'electron'
+import { randomUUID } from 'crypto'
 import fs from 'fs'
 import path from 'path'
 import { dbService } from './db/database'
@@ -22,6 +23,7 @@ import {
   detailedMaintenanceLetterService,
   LetterCalculation
 } from './services/DetailedMaintenanceLetterService'
+import { reportService, FinancialReportFilters } from './services/ReportService'
 import { dryRunService } from './services/DryRunService'
 import { errorLogger, getSafeErrorMessage, ValidationError } from './utils/errorHandler'
 import { workerPool, WorkerTask } from './utils/workerPool'
@@ -44,6 +46,12 @@ const isNonNegativeNumber = (value: unknown): value is number =>
 
 const isPositiveNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value > 0
+
+const isNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value >= 0
+
+const isPositiveIntegerAmount = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && Number.isInteger(value) && value > 0
 
 const isIsoDate = (value: unknown): value is string =>
   typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -119,6 +127,54 @@ export function registerIpcHandlers(): void {
       }
       if (payload.sector_configs !== undefined && !Array.isArray(payload.sector_configs)) {
         throw new Error('Invalid workbook sector config payload')
+      }
+      if (payload.rates !== undefined && !Array.isArray(payload.rates)) {
+        throw new Error('Invalid workbook rate payload')
+      }
+      if (Array.isArray(payload.rates)) {
+        for (const rate of payload.rates) {
+          if (!isFinancialYear(rate?.financial_year)) {
+            throw new Error('Each imported rate requires a valid financial year (YYYY-YY)')
+          }
+          if (!sanitizeText(rate?.unit_type)) {
+            throw new Error('Each imported rate requires a unit type')
+          }
+          if (!isPositiveNumber(rate?.rate_per_sqft)) {
+            throw new Error('Each imported rate requires a rate per sqft greater than 0')
+          }
+          if (
+            rate?.gst_percent !== undefined &&
+            (!isNonNegativeNumber(rate.gst_percent) || rate.gst_percent > 100)
+          ) {
+            throw new Error('Imported GST percentage must be between 0 and 100')
+          }
+
+          const importedPenalty =
+            rate?.penalty_percentage !== undefined ? rate.penalty_percentage : rate?.penalty_percent
+          if (
+            importedPenalty !== undefined &&
+            importedPenalty !== null &&
+            (!isNonNegativeNumber(importedPenalty) || importedPenalty > 100)
+          ) {
+            throw new Error('Imported penalty percentage must be between 0 and 100')
+          }
+
+          const importedDiscount =
+            rate?.discount_percentage !== undefined
+              ? rate.discount_percentage
+              : rate?.discount_percent
+          if (
+            importedDiscount !== undefined &&
+            importedDiscount !== null &&
+            (!isNonNegativeNumber(importedDiscount) || importedDiscount > 100)
+          ) {
+            throw new Error('Imported discount percentage must be between 0 and 100')
+          }
+
+          if (rate?.due_date !== undefined && sanitizeText(rate.due_date) && !isIsoDate(rate.due_date)) {
+            throw new Error('Imported rate due date must be in YYYY-MM-DD format')
+          }
+        }
       }
       return projectService.importStandardWorkbookProject(payload)
     }
@@ -287,7 +343,7 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle(
     'create-batch-letters',
-    (_, { projectId, unitIds, financialYear, letterDate, dueDate, addOns }): boolean => {
+    (_, { projectId, unitIds, financialYear, letterDate, dueDate, addOns }) => {
       if (!isPositiveInteger(projectId)) {
         throw new Error('Invalid project selected')
       }
@@ -309,13 +365,14 @@ export function registerIpcHandlers(): void {
       if (
         Array.isArray(addOns) &&
         addOns.some(
-          (addon) => !sanitizeText(addon?.addon_name) || !isNonNegativeNumber(addon?.addon_amount)
+          (addon) =>
+            !sanitizeText(addon?.addon_name) || !isNonNegativeInteger(addon?.addon_amount)
         )
       ) {
-        throw new Error('Each add-on requires a valid name and non-negative amount')
+        throw new Error('Each add-on requires a valid name and a whole non-negative amount')
       }
 
-      return maintenanceLetterService.createBatch(
+      return maintenanceLetterService.createBatchDetailed(
         projectId,
         financialYear,
         letterDate,
@@ -325,6 +382,20 @@ export function registerIpcHandlers(): void {
       )
     }
   )
+
+  ipcMain.handle('get-financial-report-summary', (_, projectId?: number, filters?: FinancialReportFilters) => {
+    if (projectId !== undefined && projectId !== null && !isPositiveInteger(projectId)) {
+      throw new Error('Invalid project selected')
+    }
+    return reportService.getFinancialSummary(projectId, filters)
+  })
+
+  ipcMain.handle('get-available-financial-years', (_, projectId?: number) => {
+    if (projectId !== undefined && projectId !== null && !isPositiveInteger(projectId)) {
+      throw new Error('Invalid project selected')
+    }
+    return reportService.getAvailableFinancialYears(projectId)
+  })
 
   ipcMain.handle('update-letter', (_, id: number, updates: Partial<MaintenanceLetter>): boolean => {
     return maintenanceLetterService.update(id, updates)
@@ -362,6 +433,15 @@ export function registerIpcHandlers(): void {
         remarks?: string
       }
     ): boolean => {
+      if (!isPositiveInteger(params?.unit_id)) {
+        throw new Error('Invalid unit selected')
+      }
+      if (!isFinancialYear(params?.financial_year)) {
+        throw new Error('Invalid financial year format (expected YYYY-YY)')
+      }
+      if (!sanitizeText(params?.addon_name) || !isNonNegativeInteger(params?.addon_amount)) {
+        throw new Error('Add-on requires a valid name and a whole non-negative amount')
+      }
       return maintenanceLetterService.addAddOn(params)
     }
   )
@@ -445,9 +525,7 @@ export function registerIpcHandlers(): void {
         title?: string
         filters?: { name: string; extensions: string[] }[]
       }
-    ): Promise<string | null> => {
-      console.log('🔍 [select-local-file] IPC handler called with options:', options)
-      
+    ): Promise<string | null> => {      
       try {
         // Use dialog without parent window - simpler approach
         const result = await dialog.showOpenDialog({
@@ -455,18 +533,11 @@ export function registerIpcHandlers(): void {
           properties: ['openFile'],
           filters: Array.isArray(options?.filters) ? options.filters : undefined
         })
-        
-        console.log('🔍 [select-local-file] Dialog result:', result)
-
-        if (result.canceled || result.filePaths.length === 0) {
-          console.log('🔍 [select-local-file] User cancelled or no file selected')
-          return null
+        if (result.canceled || result.filePaths.length === 0) {          return null
+        }        return result.filePaths[0]
+      } catch (error) {        if (process.env.NODE_ENV !== 'production') {
+          console.error('[select-local-file] Dialog error:', error)
         }
-
-        console.log('🔍 [select-local-file] Returning file path:', result.filePaths[0])
-        return result.filePaths[0]
-      } catch (error) {
-        console.error('❌ [select-local-file] Dialog error:', error)
         throw error
       }
     }
@@ -481,9 +552,7 @@ export function registerIpcHandlers(): void {
         defaultPath?: string
         filters?: { name: string; extensions: string[] }[]
       }
-    ): Promise<string | null> => {
-      console.log('🔍 [save-file] IPC handler called with options:', options)
-      
+    ): Promise<string | null> => {      
       try {
         // Validate filters if provided
         let validatedFilters = [{ name: 'Database', extensions: ['db'] }]
@@ -502,18 +571,11 @@ export function registerIpcHandlers(): void {
           defaultPath: options?.defaultPath || 'barkat_backup.db',
           filters: validatedFilters
         })
-        
-        console.log('🔍 [save-file] Dialog result:', result)
-
-        if (result.canceled || !result.filePath) {
-          console.log('🔍 [save-file] User cancelled or no file selected')
-          return null
+        if (result.canceled || !result.filePath) {          return null
+        }        return result.filePath
+      } catch (error) {        if (process.env.NODE_ENV !== 'production') {
+          console.error('[save-file] Dialog error:', error)
         }
-
-        console.log('🔍 [save-file] Returning file path:', result.filePath)
-        return result.filePath
-      } catch (error) {
-        console.error('❌ [save-file] Dialog error:', error)
         throw error
       }
     }
@@ -561,8 +623,8 @@ export function registerIpcHandlers(): void {
     if (!isIsoDate(payment?.payment_date)) {
       throw new Error('Invalid payment date format (expected YYYY-MM-DD)')
     }
-    if (!isPositiveNumber(payment?.payment_amount)) {
-      throw new Error('Payment amount must be greater than 0')
+    if (!isPositiveIntegerAmount(payment?.payment_amount)) {
+      throw new Error('Payment amount must be a whole number greater than 0')
     }
     if (!/^\d{4}-\d{2}$/.test(payment?.financial_year || '')) {
       throw new Error('Financial year must be in YYYY-YY format (e.g., 2024-25)')
@@ -589,6 +651,12 @@ export function registerIpcHandlers(): void {
     if (!isPositiveInteger(id)) {
       throw new Error('Invalid payment ID')
     }
+    if (
+      payment.payment_amount !== undefined &&
+      !isPositiveIntegerAmount(payment.payment_amount)
+    ) {
+      throw new Error('Payment amount must be a whole number greater than 0')
+    }
     return paymentService.update(id, payment)
   })
 
@@ -614,10 +682,48 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('create-rate', (_, rate: MaintenanceRate): number => {
+    if (!isPositiveInteger(rate?.project_id)) {
+      throw new Error('Invalid project selected')
+    }
+    if (!isFinancialYear(rate?.financial_year)) {
+      throw new Error('Invalid financial year format (expected YYYY-YY)')
+    }
+    if (!isPositiveNumber(rate?.rate_per_sqft)) {
+      throw new Error('Rate per sqft must be greater than 0')
+    }
+    if (!isNonNegativeNumber(rate?.gst_percent ?? 0) || (rate?.gst_percent ?? 0) > 100) {
+      throw new Error('GST percentage must be between 0 and 100')
+    }
+    if (
+      rate?.penalty_percentage !== undefined &&
+      rate?.penalty_percentage !== null &&
+      (!isNonNegativeNumber(rate.penalty_percentage) || rate.penalty_percentage > 100)
+    ) {
+      throw new Error('Penalty percentage must be between 0 and 100')
+    }
     return maintenanceRateService.create(rate)
   })
 
   ipcMain.handle('update-rate', (_, id: number, rate: Partial<MaintenanceRate>): boolean => {
+    if (rate.financial_year !== undefined && !isFinancialYear(rate.financial_year)) {
+      throw new Error('Invalid financial year format (expected YYYY-YY)')
+    }
+    if (rate.rate_per_sqft !== undefined && !isPositiveNumber(rate.rate_per_sqft)) {
+      throw new Error('Rate per sqft must be greater than 0')
+    }
+    if (
+      rate.gst_percent !== undefined &&
+      (!isNonNegativeNumber(rate.gst_percent) || rate.gst_percent > 100)
+    ) {
+      throw new Error('GST percentage must be between 0 and 100')
+    }
+    if (
+      rate.penalty_percentage !== undefined &&
+      rate.penalty_percentage !== null &&
+      (!isNonNegativeNumber(rate.penalty_percentage) || rate.penalty_percentage > 100)
+    ) {
+      throw new Error('Penalty percentage must be between 0 and 100')
+    }
     return maintenanceRateService.update(id, rate)
   })
 
@@ -630,6 +736,18 @@ export function registerIpcHandlers(): void {
   })
 
   ipcMain.handle('add-slab', (_, slab: MaintenanceSlab): number => {
+    if (!isPositiveInteger(slab?.rate_id)) {
+      throw new Error('Invalid maintenance rate selected')
+    }
+    if (!isIsoDate(slab?.due_date)) {
+      throw new Error('Invalid due date format (expected YYYY-MM-DD)')
+    }
+    if (
+      !isNonNegativeNumber(slab?.discount_percentage) ||
+      slab.discount_percentage > 100
+    ) {
+      throw new Error('Discount percentage must be between 0 and 100')
+    }
     return maintenanceRateService.addSlab(slab)
   })
 
@@ -782,7 +900,7 @@ export function registerIpcHandlers(): void {
     'enqueue-worker-task',
     async (_, taskType: string, data: Record<string, unknown>) => {
       try {
-        const taskId = `${taskType}_${Date.now()}_${Math.random().toString(36).slice(2)}`
+        const taskId = `${taskType}_${randomUUID()}`
         const task: WorkerTask = {
           id: taskId,
           type: taskType,
@@ -827,6 +945,22 @@ export function registerIpcHandlers(): void {
       return result
     } catch (error: unknown) {
       errorLogger.log(error as Error, { operation: 'create-backup' })
+      throw new Error(getSafeErrorMessage(error))
+    }
+  })
+
+  ipcMain.handle('export-backup', async (_, destinationPath: string) => {
+    try {
+      if (!destinationPath) {
+        throw new ValidationError('Destination path required')
+      }
+      const result = await backupService.exportBackup(destinationPath)
+      if (!result.success) {
+        throw new Error(result.error)
+      }
+      return result
+    } catch (error: unknown) {
+      errorLogger.log(error as Error, { operation: 'export-backup', destinationPath })
       throw new Error(getSafeErrorMessage(error))
     }
   })
@@ -883,6 +1017,14 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('get-backup-config', () => {
     return backupService.getConfig()
+  })
+
+  ipcMain.handle('get-app-info', () => {
+    return {
+      version: app.getVersion(),
+      isPackaged: app.isPackaged,
+      platform: process.platform
+    }
   })
 
   // Batch operations endpoints
@@ -1065,3 +1207,4 @@ export function registerIpcHandlers(): void {
     }
   })
 }
+

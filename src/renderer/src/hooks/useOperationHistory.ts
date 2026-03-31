@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import { message } from 'antd'
 
 export type OperationType = 'delete' | 'create' | 'update' | 'import'
@@ -17,7 +17,20 @@ export interface UseOperationHistoryOptions<T> {
   onRestore?: (operation: Operation<T>) => void
 }
 
-export function useOperationHistory<T>(options: UseOperationHistoryOptions<T> = {}) {
+export interface UseOperationHistoryResult<T> {
+  history: Operation<T>[]
+  currentIndex: number
+  canUndo: boolean
+  canRedo: boolean
+  addOperation: (operation: Omit<Operation<T>, 'id' | 'timestamp'>) => void
+  undo: () => Promise<boolean>
+  redo: () => Promise<boolean>
+  clear: () => void
+}
+
+export function useOperationHistory<T>(
+  options: UseOperationHistoryOptions<T> = {}
+): UseOperationHistoryResult<T> {
   const { maxHistory = 10 } = options
   const [history, setHistory] = useState<Operation<T>[]>([])
   const [currentIndex, setCurrentIndex] = useState(-1)
@@ -25,8 +38,10 @@ export function useOperationHistory<T>(options: UseOperationHistoryOptions<T> = 
   const currentIndexRef = useRef(currentIndex)
 
   // Keep refs in sync for async operations
-  historyRef.current = history
-  currentIndexRef.current = currentIndex
+  useEffect(() => {
+    historyRef.current = history
+    currentIndexRef.current = currentIndex
+  }, [history, currentIndex])
 
   const canUndo = currentIndex >= 0
   const canRedo = currentIndex < history.length - 1
@@ -38,7 +53,7 @@ export function useOperationHistory<T>(options: UseOperationHistoryOptions<T> = 
       timestamp: Date.now()
     }
 
-    setHistory(prev => {
+    setHistory((prev) => {
       // Remove any redo operations
       const trimmed = prev.slice(0, currentIndexRef.current + 1)
       // Add new operation
@@ -50,7 +65,7 @@ export function useOperationHistory<T>(options: UseOperationHistoryOptions<T> = 
       return newHistory
     })
 
-    setCurrentIndex(prev => Math.min(prev + 1, maxHistory - 1))
+    setCurrentIndex((prev) => Math.min(prev + 1, maxHistory - 1))
   }, [maxHistory])
 
   const undo = useCallback(async (): Promise<boolean> => {
@@ -67,7 +82,7 @@ export function useOperationHistory<T>(options: UseOperationHistoryOptions<T> = 
 
     try {
       await operation.restoreFn(operation.data)
-      setCurrentIndex(prev => prev - 1)
+      setCurrentIndex((prev) => prev - 1)
       message.success(`Undid: ${operation.description}`)
       return true
     } catch (error) {

@@ -4,14 +4,20 @@ import {
   Project,
   ProjectSetupSummary,
   ProjectSectorPaymentConfig,
+  ProjectChargesConfig,
+  ProjectAddonTemplateInput,
+  ProjectAddonTemplateReorderItem,
   StandardWorkbookProjectImportPayload,
   StandardWorkbookProjectImportResult,
   Unit,
   MaintenanceLetter,
+  BatchLetterResult,
+  FinancialReportSummary,
   MaintenanceRate,
   MaintenanceSlab,
   Payment,
-  LetterCalculation
+  LetterCalculation,
+  FinancialReportFilters
 } from './types'
 
 export * from './types'
@@ -53,16 +59,19 @@ const api = {
       unitType?: string,
       status?: string
     ) => ipcRenderer.invoke('get-dashboard-stats', projectId, financialYear, unitType, status),
-    getChargesConfig: (projectId: number) => ipcRenderer.invoke('get-project-charges-config', projectId),
-    saveChargesConfig: (config: any) => ipcRenderer.invoke('save-project-charges-config', config),
+    getChargesConfig: (projectId: number) =>
+      ipcRenderer.invoke('get-project-charges-config', projectId) as Promise<ProjectChargesConfig | null>,
+    saveChargesConfig: (config: ProjectChargesConfig) =>
+      ipcRenderer.invoke('save-project-charges-config', config),
     getAddonTemplates: (projectId: number) => ipcRenderer.invoke('get-addon-templates', projectId),
     getEnabledAddonTemplates: (projectId: number) =>
       ipcRenderer.invoke('get-enabled-addon-templates', projectId),
-    createAddonTemplate: (template: any) => ipcRenderer.invoke('create-addon-template', template),
-    updateAddonTemplate: (id: number, template: any) =>
+    createAddonTemplate: (template: ProjectAddonTemplateInput) =>
+      ipcRenderer.invoke('create-addon-template', template),
+    updateAddonTemplate: (id: number, template: Partial<ProjectAddonTemplateInput>) =>
       ipcRenderer.invoke('update-addon-template', id, template),
     deleteAddonTemplate: (id: number) => ipcRenderer.invoke('delete-addon-template', id),
-    reorderAddonTemplates: (templates: any[]) =>
+    reorderAddonTemplates: (templates: ProjectAddonTemplateReorderItem[]) =>
       ipcRenderer.invoke('reorder-addon-templates', templates),
     initializeDefaultAddonTemplates: (projectId: number) =>
       ipcRenderer.invoke('initialize-default-addon-templates', projectId),
@@ -92,7 +101,7 @@ const api = {
       letterDate: string
       dueDate: string
       addOns?: { addon_name: string; addon_amount: number }[]
-    }) => ipcRenderer.invoke('create-batch-letters', params),
+    }) => ipcRenderer.invoke('create-batch-letters', params) as Promise<BatchLetterResult>,
     delete: (id: number) => ipcRenderer.invoke('delete-letter', id),
     bulkDelete: (ids: number[]) => ipcRenderer.invoke('bulk-delete-letters', ids),
     generatePdf: (id: number) => ipcRenderer.invoke('generate-letter-pdf', id),
@@ -126,6 +135,12 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('delete-payment', id),
     bulkDelete: (ids: number[]) => ipcRenderer.invoke('bulk-delete-payments', ids),
     generateReceiptPdf: (id: number) => ipcRenderer.invoke('generate-receipt-pdf', id)
+  },
+  reports: {
+    getFinancialSummary: (projectId?: number, filters?: FinancialReportFilters) =>
+      ipcRenderer.invoke('get-financial-report-summary', projectId, filters) as Promise<FinancialReportSummary>,
+    getAvailableFinancialYears: (projectId?: number) =>
+      ipcRenderer.invoke('get-available-financial-years', projectId) as Promise<string[]>
   },
   shell: {
     showItemInFolder: (path: string) => ipcRenderer.invoke('show-item-in-folder', path)
@@ -183,12 +198,20 @@ const api = {
   },
   backup: {
     createBackup: () => ipcRenderer.invoke('create-backup'),
+    exportBackup: (destinationPath: string) => ipcRenderer.invoke('export-backup', destinationPath),
     restoreBackup: (backupPath: string) => ipcRenderer.invoke('restore-backup', backupPath),
     listBackups: () => ipcRenderer.invoke('list-backups'),
     startAutoBackup: (intervalDays?: number) =>
       ipcRenderer.invoke('start-auto-backup', intervalDays),
     stopAutoBackup: () => ipcRenderer.invoke('stop-auto-backup'),
     getConfig: () => ipcRenderer.invoke('get-backup-config')
+  },
+  system: {
+    getAppInfo: () => ipcRenderer.invoke('get-app-info') as Promise<{
+      version: string
+      isPackaged: boolean
+      platform: string
+    }>
   },
   batch: {
     createPayments: (payments: Payment[]) => ipcRenderer.invoke('batch-create-payments', payments),

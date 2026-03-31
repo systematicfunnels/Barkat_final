@@ -123,6 +123,14 @@ CREATE TABLE IF NOT EXISTS maintenance_letters (
   is_paid BOOLEAN DEFAULT 0, -- Aligned with ER
   is_sent BOOLEAN DEFAULT 0, -- Aligned with ER
   due_date DATE,
+  snapshot_account_name TEXT,
+  snapshot_bank_name TEXT,
+  snapshot_account_no TEXT,
+  snapshot_ifsc_code TEXT,
+  snapshot_branch TEXT,
+  snapshot_branch_address TEXT,
+  snapshot_qr_code_path TEXT,
+  snapshot_uses_sector_config BOOLEAN DEFAULT 0,
   status TEXT DEFAULT 'Generated' CHECK(status IN ('Generated', 'Modified', 'Pending', 'Paid')), -- Generated, Modified, Pending, Paid
   pdf_path TEXT,
   generated_date DATETIME DEFAULT CURRENT_TIMESTAMP,

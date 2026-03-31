@@ -35,8 +35,8 @@ const BreadcrumbNavigation: React.FC<BreadcrumbNavigationProps> = ({
     ...items
   ]
 
-  const itemRender = (route: any) => {
-    const item = route as BreadcrumbItem
+  const itemRender: NonNullable<React.ComponentProps<typeof Breadcrumb>['itemRender']> = (route) => {
+    const item = route as Partial<BreadcrumbItem>
     if (item.path) {
       return (
         <Link to={item.path}>

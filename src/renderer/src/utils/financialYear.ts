@@ -61,3 +61,12 @@ export const getCurrentFinancialYear = (): string => {
   const year = now.getMonth() < 3 ? now.getFullYear() - 1 : now.getFullYear()
   return `${year}-${(year + 1).toString().slice(-2)}`
 }
+
+/**
+ * Returns the next financial year after the supplied/current FY.
+ */
+export const getUpcomingFinancialYear = (financialYear?: string): string => {
+  const baseFY = financialYear || getCurrentFinancialYear()
+  const startYear = Number(baseFY.slice(0, 4))
+  return `${startYear + 1}-${String(startYear + 2).slice(-2)}`
+}

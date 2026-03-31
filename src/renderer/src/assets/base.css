@@ -3475,3 +3475,37 @@ html, body, #root {
     max-height: calc(100vh - 100px);
   }
 }
+
+/* Billing generation modal */
+.billing-generate-modal .ant-modal-content {
+  max-height: calc(100vh - 120px);
+  overflow: hidden;
+}
+
+.billing-generate-modal .ant-modal-body {
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-bottom: 12px !important;
+}
+
+.billing-generate-modal .ant-modal-footer {
+  position: relative;
+  z-index: 2;
+  background: #ffffff;
+}
+
+.billing-unit-selection-table {
+  margin-top: 8px;
+}
+
+.billing-unit-selection-table .ant-table-wrapper {
+  max-height: none;
+}
+
+.billing-unit-selection-table .ant-table-container {
+  border-radius: 14px;
+}
+
+.unit-info-row > .ant-col:nth-last-child(-n + 2) {
+  display: none;
+}

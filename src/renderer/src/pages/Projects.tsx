@@ -47,6 +47,7 @@ import FilterPanel, {
   createSelectFilter
 } from '../components/shared/FilterPanel'
 import { parseStandardWorkbook, StandardWorkbookParseResult } from '../utils/standardWorkbook'
+import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/financialYear'
 
 const { Option } = Select
 
@@ -120,9 +121,8 @@ const IMPORT_PROFILE_LABELS = Object.fromEntries(
 
 const Projects: React.FC = () => {
   const navigate = useNavigate()
-  const currentYear =
-    new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear()
-  const currentFY = `${currentYear}-${String(currentYear + 1).slice(2)}`
+  const currentFY = getCurrentFinancialYear()
+  const upcomingFY = getUpcomingFinancialYear(currentFY)
   const [projects, setProjects] = useState<Project[]>([])
   const [projectSetupSummaries, setProjectSetupSummaries] = useState<
     Record<number, ProjectSetupSummary>
@@ -442,10 +442,17 @@ const Projects: React.FC = () => {
       const importedPayments = results.reduce((sum, r) => sum + (r.imported_payments || 0), 0)
 
       // Check for projects missing bank details
-      const projectsMissingBankDetails = preview.projects.filter(p => 
-        !p.sector_configs || p.sector_configs.length === 0 || 
-        !p.sector_configs.some(sc => sc.account_name && sc.bank_name && sc.account_no && sc.ifsc_code)
-      ).map(p => p.project.name)
+      const projectsMissingBankDetails = preview.projects
+        .filter((p) => {
+          const hasSectorBankDetails =
+            !!p.sector_configs &&
+            p.sector_configs.some(
+              (sc) => sc.account_name && sc.bank_name && sc.account_no && sc.ifsc_code
+            )
+
+          return !hasSectorBankDetails
+        })
+        .map((p) => p.project.name)
 
       setImportResults(results)
       setShowImportSummary(true)
@@ -471,7 +478,7 @@ const Projects: React.FC = () => {
       // Show warning for projects missing bank details
       if (projectsMissingBankDetails.length > 0) {
         message.warning({
-          content: `Note: ${projectsMissingBankDetails.join(', ')} - missing bank details. Please edit project to add bank information.`,
+          content: `Note: ${projectsMissingBankDetails.join(', ')} - missing sector bank details. Please edit the project and add sector payment configs.`,
           key: 'bank_details_missing',
           duration: 6
         })
@@ -589,15 +596,6 @@ const Projects: React.FC = () => {
         state: String(values.state || '').trim(),
         pincode: String(values.pincode || '').trim(),
         status: String(values.status || 'Active').trim(),
-        account_name: String(values.account_name || '').trim(),
-        bank_name: String(values.bank_name || '').trim(),
-        account_no: String(values.account_no || '').trim(),
-        ifsc_code: String(values.ifsc_code || '')
-          .trim()
-          .toUpperCase(),
-        branch: String(values.branch || '').trim(),
-        branch_address: String(values.branch_address || '').trim(),
-        qr_code_path: String(values.qr_code_path || '').trim(),
         letterhead_path: String(values.letterhead_path || '').trim(),
         template_type: String(values.template_type || 'standard').trim(),
         import_profile_key: String(values.import_profile_key || 'standard_normalized').trim()
@@ -695,7 +693,7 @@ const Projects: React.FC = () => {
       )
     },
     {
-      title: `Setup (${currentFY})`,
+      title: `Setup (Current ${currentFY} | Upcoming ${upcomingFY})`,
       key: 'setup_status',
       width: 320,
       render: (_: unknown, record: Project) => {
@@ -719,7 +717,7 @@ const Projects: React.FC = () => {
           <Space direction="vertical" size={4}>
             <Tag color={statusColor}>{statusLabel}</Tag>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Units: {summary.unit_count} | Sectors:{' '}
+              Units: {summary.unit_count} | Detected Sectors:{' '}
               {summary.sector_codes.length > 0 ? summary.sector_codes.join(', ') : 'None'}
             </Text>
             {summary.blockers[0] && (
@@ -867,7 +865,10 @@ const Projects: React.FC = () => {
                 {incompleteProjects.map((p) => {
                   const s = projectSetupSummaries[p.id!]
                   if (!s) return null
-                  const needsBank = s.blockers.some((b) => b.toLowerCase().includes('bank'))
+                  const needsBank = s.blockers.some((b) => {
+                    const text = b.toLowerCase()
+                    return text.includes('bank') || text.includes('sector code') || text.includes('sector grouping')
+                  })
                   const needsRate = s.blockers.some((b) => b.toLowerCase().includes('rate'))
                   const needsUnits = s.blockers.some((b) => b.toLowerCase().includes('unit'))
                   return (
@@ -889,7 +890,7 @@ const Projects: React.FC = () => {
                             onClick={() => handleEdit(p)}
                             className="project-setup-alert-button"
                           >
-                            {needsBank ? 'Add Bank Details' : 'Edit Project'}
+                            {needsBank ? 'Configure Sector Banks' : 'Edit Project'}
                           </Button>
                         )}
                         {needsRate && (
@@ -1036,6 +1037,15 @@ const Projects: React.FC = () => {
                 label: 'Basic Information',
                 children: (
                   <Row gutter={[16, 8]} style={{ marginTop: 16 }}>
+                    <Col span={24}>
+                      <Alert
+                        type="info"
+                        showIcon
+                        style={{ marginBottom: 8 }}
+                        message="Recommended setup order"
+                        description={`Create the project, add units with sector codes, configure sector bank details, add rates for the current FY (${currentFY}) or upcoming FY (${upcomingFY}), then generate maintenance letters.`}
+                      />
+                    </Col>
                     <Col xs={24} md={12}>
                       <Form.Item label="Project Code">
                         <Input
@@ -1091,8 +1101,8 @@ const Projects: React.FC = () => {
                     <Col xs={24} md={12}>
                       <Form.Item
                         name="template_type"
-                        label="Workflow Template"
-                        rules={[{ required: true, message: 'Please select workflow template' }]}
+                        label="Letter Template"
+                        extra="The default choice is fine for most manual projects."
                       >
                         <Select
                           options={TEMPLATE_OPTIONS.map((option) => ({
@@ -1107,8 +1117,8 @@ const Projects: React.FC = () => {
                     <Col span={24}>
                       <Form.Item
                         name="import_profile_key"
-                        label="Import Profile"
-                        rules={[{ required: true, message: 'Please select import profile' }]}
+                        label="Excel Import Profile"
+                        extra="Used mainly for workbook imports. Manual projects can keep the default profile."
                       >
                         <Select
                           options={IMPORT_PROFILE_OPTIONS.map((option) => ({
@@ -1128,14 +1138,20 @@ const Projects: React.FC = () => {
                 icon: <BankOutlined />,
                 children: (
                   <div style={{ marginTop: 16 }}>
-                    {/* Sector-Specific Bank Details Section */}
                     <div>
-                      <Title level={5} style={{ marginBottom: 16 }}>Bank Details</Title>
+                      <Title level={5} style={{ marginBottom: 16 }}>Sector Bank Details</Title>
                       <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                        Configure sector-specific bank accounts and QR codes. Each sector can have
-                        its own bank account. Letters will use the sector account first.
-                        Sectors will be automatically populated when importing project data.
+                        Manual and imported projects both use sector bank details. Add one payment
+                        config row for each sector that should appear on maintenance letters.
                       </Paragraph>
+
+                      <Alert
+                        type="info"
+                        showIcon
+                        style={{ marginBottom: 16 }}
+                        message="Recommended flow"
+                        description="Manual flow: add units with sector codes first, then add matching sector bank configs here. Import flow: detected sectors from the workbook can be auto-populated here and completed manually."
+                      />
 
                       {editingProjectSummary && editingProjectSummary.sector_codes.length > 0 && (
                         <Alert
@@ -1144,7 +1160,11 @@ const Projects: React.FC = () => {
                           message={`Detected sectors: ${editingProjectSummary.sector_codes.join(', ')}`}
                           description={
                             <div>
-                              <div>Add a row for each sector that has a different bank account or QR code.</div>
+                              <div>
+                                These sectors were detected from the project units. Use the button below
+                                to create one bank-config row per detected sector, then fill the payment
+                                details manually.
+                              </div>
                               <Button 
                                 size="small" 
                                 type="link" 
@@ -1156,6 +1176,17 @@ const Projects: React.FC = () => {
                             </div>
                           }
                           style={{ marginBottom: 16 }}
+                        />
+                      )}
+
+                      {(!editingProjectSummary ||
+                        editingProjectSummary.sector_codes.length === 0) && (
+                        <Alert
+                          type="warning"
+                          showIcon
+                          style={{ marginBottom: 16 }}
+                          message="Manual sector setup"
+                          description="If you are setting up a project manually, add units with sector codes first, or start with common sectors here and keep the same sector codes on the units."
                         />
                       )}
 
@@ -1283,7 +1314,7 @@ const Projects: React.FC = () => {
                             </Button>
                           ) : (
                             <Button size="small" onClick={() => setSectorConfigs(getABCSectorConfigs())}>
-                              Add Common Sectors (A, B, C)
+                              Start Manual Sectors (A, B, C)
                             </Button>
                           )}
                           {process.env.NODE_ENV === 'development' && editingProject && (

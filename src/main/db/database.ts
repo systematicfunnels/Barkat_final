@@ -7,6 +7,26 @@ import { schema } from './schema'
 class DatabaseService {
   private db: Database.Database
 
+  private isVerboseLoggingEnabled(): boolean {
+    return process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
+  }
+
+  private debug(...args: unknown[]): void {
+    if (this.isVerboseLoggingEnabled()) {
+      console.log(...args)
+    }
+  }
+
+  private warn(...args: unknown[]): void {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn(...args)
+    }
+  }
+
+  private error(...args: unknown[]): void {
+    console.error(...args)
+  }
+
   private formatProjectCode(sequenceNumber: number): string {
     return `PRJ-${String(sequenceNumber).padStart(3, '0')}`
   }
@@ -23,7 +43,7 @@ class DatabaseService {
         )
         .all() as { id: number; project_code: string | null }[]
 
-      console.log(`[DATABASE] ensureProjectCodes: Found ${rows.length} projects to process`)
+      this.debug(`[DATABASE] ensureProjectCodes: Found ${rows.length} projects to process`)
 
       const usedCodes = new Set<string>()
       let nextSequence = 1
@@ -41,7 +61,9 @@ class DatabaseService {
         }
       }
 
-      console.log(`[DATABASE] ensureProjectCodes: Found ${usedCodes.size} existing codes, next sequence: ${nextSequence}`)
+      this.debug(
+        `[DATABASE] ensureProjectCodes: Found ${usedCodes.size} existing codes, next sequence: ${nextSequence}`
+      )
 
       // Second pass: assign codes to projects without codes
       const updateStatement = this.db.prepare('UPDATE projects SET project_code = ? WHERE id = ?')
@@ -62,45 +84,54 @@ class DatabaseService {
         nextSequence += 1
         updatedCount += 1
         
-        console.log(`[DATABASE] ensureProjectCodes: Assigned code ${candidate} to project ID ${row.id}`)
+        this.debug(`[DATABASE] ensureProjectCodes: Assigned code ${candidate} to project ID ${row.id}`)
       }
       
-      console.log(`[DATABASE] Project codes ensured: ${rows.length} projects processed, ${updatedCount} codes assigned`)
+      this.debug(
+        `[DATABASE] Project codes ensured: ${rows.length} projects processed, ${updatedCount} codes assigned`
+      )
     } catch (error) {
-      console.error('[DATABASE] Failed to ensure project codes:', error)
+      this.error('[DATABASE] Failed to ensure project codes:', error)
     }
   }
 
   constructor() {
-    const dbPath = app.isPackaged
-      ? path.join(app.getPath('userData'), 'barkat.db')
-      : path.join(__dirname, '../../barkat.db')
+    const dbPath =
+      process.env.BARKAT_DB_PATH ||
+      (app.isPackaged
+        ? path.join(app.getPath('userData'), 'barkat.db')
+        : path.join(__dirname, '../../barkat.db'))
+    const dbDir = path.dirname(dbPath)
 
-    console.log('[DATABASE] Database path:', dbPath)
-    console.log('[DATABASE] App packaged:', app.isPackaged)
-    console.log('[DATABASE] User data path:', app.getPath('userData'))
-    console.log('[DATABASE] __dirname:', __dirname)
+    if (!fs.existsSync(dbDir)) {
+      fs.mkdirSync(dbDir, { recursive: true })
+    }
+
+    this.debug('[DATABASE] Database path:', dbPath)
+    this.debug('[DATABASE] App packaged:', app.isPackaged)
+    this.debug('[DATABASE] User data path:', app.getPath('userData'))
+    this.debug('[DATABASE] __dirname:', __dirname)
 
     // Check if database file exists
     const dbExists = fs.existsSync(dbPath)
-    console.log('[DATABASE] Database file exists:', dbExists)
+    this.debug('[DATABASE] Database file exists:', dbExists)
     
     if (dbExists) {
       const stats = fs.statSync(dbPath)
-      console.log('[DATABASE] Database file size:', stats.size, 'bytes')
-      console.log('[DATABASE] Database modified:', stats.mtime)
+      this.debug('[DATABASE] Database file size:', stats.size, 'bytes')
+      this.debug('[DATABASE] Database modified:', stats.mtime)
     }
 
     try {
       this.db = new Database(dbPath)
-      console.log('[DATABASE] Database connection established successfully')
+      this.debug('[DATABASE] Database connection established successfully')
       
       // Test basic query
       try {
         const testQuery = this.db.prepare('SELECT COUNT(*) as count FROM sqlite_master WHERE type="table"').get()
-        console.log('[DATABASE] Test query result:', testQuery)
+        this.debug('[DATABASE] Test query result:', testQuery)
       } catch (testError) {
-        console.error('[DATABASE] Test query failed:', testError)
+        this.debug('[DATABASE] Test query failed:', testError)
       }
       
     } catch (error: unknown) {
@@ -123,14 +154,14 @@ class DatabaseService {
           }
 
           this.db = new Database(dbPath)
-          console.warn(
+          this.warn(
             '[DATABASE] Corrupted sqlite db detected; backed up and recreated:',
             backupPath
           )
         } catch (recoveryError: unknown) {
           const recoveryMessage =
             recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
-          console.error('[DATABASE] Failed to recover from corrupted db:', recoveryMessage)
+          this.error('[DATABASE] Failed to recover from corrupted db:', recoveryMessage)
           throw error
         }
       } else {
@@ -180,10 +211,10 @@ class DatabaseService {
           this.db.prepare('UPDATE maintenance_letters SET due_date = ? WHERE id = ?')
             .run(base.toISOString().split('T')[0], letter.id)
         }
-        console.log(`[DATABASE] Fixed ${invalidLetters.length} maintenance letters with missing due_date`)
+        this.debug(`[DATABASE] Fixed ${invalidLetters.length} maintenance letters with missing due_date`)
       }
     } catch (error) {
-      console.error('[DATABASE] Failed to fix due dates:', error)
+      this.error('[DATABASE] Failed to fix due dates:', error)
     }
 
     // Diagnostic check
@@ -210,7 +241,7 @@ class DatabaseService {
         this.db.exec(`DROP TABLE IF EXISTS ${table.name}`)
       }
     } catch (e) {
-      console.error('[DATABASE] Error cleaning up old tables:', e)
+      this.error('[DATABASE] Error cleaning up old tables:', e)
     }
   }
 
@@ -782,6 +813,24 @@ class DatabaseService {
           this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN is_paid BOOLEAN DEFAULT 0')
         if (!columns.some((c) => c.name === 'is_sent'))
           this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN is_sent BOOLEAN DEFAULT 0')
+        if (!columns.some((c) => c.name === 'snapshot_account_name'))
+          this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN snapshot_account_name TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_bank_name'))
+          this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN snapshot_bank_name TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_account_no'))
+          this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN snapshot_account_no TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_ifsc_code'))
+          this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN snapshot_ifsc_code TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_branch'))
+          this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN snapshot_branch TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_branch_address'))
+          this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN snapshot_branch_address TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_qr_code_path'))
+          this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN snapshot_qr_code_path TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_uses_sector_config'))
+          this.db.exec(
+            'ALTER TABLE maintenance_letters ADD COLUMN snapshot_uses_sector_config BOOLEAN DEFAULT 0'
+          )
 
         // Add unique index for granularity enforcement
         this.db.exec(

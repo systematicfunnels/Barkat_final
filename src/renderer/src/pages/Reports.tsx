@@ -24,7 +24,13 @@ import {
 import ExcelJS from 'exceljs'
 import dayjs from 'dayjs'
 
-import { Project, Unit } from '@preload/types'
+import {
+  Project,
+  FinancialReportFilters,
+  FinancialReportYearlyData as YearlyData,
+  FinancialReportYearlyTotal as YearlyTotal,
+  FinancialReportRow as PivotData
+} from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import FilterPanel, {
   createRangeFilter,
@@ -34,39 +40,9 @@ import FilterPanel, {
 
 const { Title, Text } = Typography
 
-interface YearlyData {
-  billed: number
-  paid: number
-  balance: number
-}
-
-interface YearlyTotal {
-  year: string
-  billed: number
-  paid: number
-  balance: number
-  unitCount: number
-}
-
-interface PivotData {
-  key: string
-  unit_number: string
-  owner_name: string
-  project_name: string
-  unit_type: string
-  unit_status: string
-  [year: string]: string | number | YearlyData
-  total_billed: number
-  total_paid: number
-  outstanding: number
-}
-
-type PivotRowWithYears = PivotData & Record<string, string | number | YearlyData>
-
 const Reports: React.FC = () => {
   const navigate = useNavigate()
   const [projects, setProjects] = useState<Project[]>([])
-  const [allUnits, setAllUnits] = useState<Unit[]>([])
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedUnitType, setSelectedUnitType] = useState<string | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
@@ -76,9 +52,7 @@ const Reports: React.FC = () => {
   ])
 
   const [pivotData, setPivotData] = useState<PivotData[]>([])
-  const [allPivotData, setAllPivotData] = useState<PivotData[]>([])
   const [years, setYears] = useState<string[]>([])
-  const [availableYears, setAvailableYears] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
   const [pageSize, setPageSize] = useState(20)
   const [exporting, setExporting] = useState(false)
@@ -113,9 +87,9 @@ const Reports: React.FC = () => {
   // Get unique unit types for filter
   const unitTypes = useMemo(() => {
     return Array.from(
-      new Set(allUnits.map((u) => u.unit_type).filter((type): type is string => Boolean(type)))
+      new Set(pivotData.map((row) => row.unit_type).filter((type): type is string => Boolean(type)))
     ).sort()
-  }, [allUnits])
+  }, [pivotData])
 
   const reportFilterFields = useMemo(
     () => [
@@ -254,207 +228,29 @@ const Reports: React.FC = () => {
   const fetchData = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      // Always load projects and units for filter dropdowns
-      const [allProjects, unitsData] = await Promise.all([
+      const filters: FinancialReportFilters = {
+        searchText,
+        selectedUnitType,
+        selectedStatus,
+        outstandingRange
+      }
+      const [allProjects, reportSummary] = await Promise.all([
         window.api.projects.getAll(),
-        window.api.units.getAll()
+        window.api.reports.getFinancialSummary(selectedProject || undefined, filters)
       ])
 
       setProjects(allProjects)
-      setAllUnits(unitsData)
-
-      // Load letters + payments - scoped to selected project if one is chosen
-      // This prevents loading 8000+ rows when only one project's data is needed
-      const [lettersData, paymentsData] = await Promise.all([
-        window.api.letters.getAll(),
-        window.api.payments.getAll()
-      ])
-      const allLetters = selectedProject
-        ? lettersData.filter((letter) => letter.project_id === selectedProject)
-        : lettersData
-      const allPayments = selectedProject
-        ? paymentsData.filter((payment) => payment.project_id === selectedProject)
-        : paymentsData
-
-      // Get all available financial years from letters
-      const allYears = Array.from(new Set(allLetters.map((l) => l.financial_year))).sort() as string[]
-      setAvailableYears(allYears)
-
-      // Show all years in the report
-      setYears(allYears)
-
-      const letterMap = new Map<string, (typeof allLetters)[number]>(
-        allLetters.map((letter) => [`${letter.unit_id}:${letter.financial_year}`, letter])
-      )
-      const paymentTotals = new Map<string, number>()
-      allPayments.forEach((payment) => {
-        const key = `${payment.unit_id}:${payment.financial_year}`
-        paymentTotals.set(key, (paymentTotals.get(key) || 0) + payment.payment_amount)
-      })
-
-      // Prepare all pivot data (unfiltered)
-      const allData: PivotData[] = unitsData.map((unit) => {
-        const row: PivotRowWithYears = {
-          key: String(unit.id),
-          unit_number: unit.unit_number,
-          owner_name: unit.owner_name,
-          project_name: unit.project_name || 'N/A',
-          unit_type: unit.unit_type || 'Plot',
-          unit_status: unit.status || 'Sold',
-          total_billed: 0,
-          total_paid: 0,
-          outstanding: 0
-        }
-
-        allYears.forEach((year) => {
-          const key = `${unit.id}:${year}`
-          const letter = letterMap.get(key)
-          const billed = letter ? letter.final_amount : 0
-          const paid = paymentTotals.get(key) || 0
-          const balance = billed - paid
-
-          row[year] = { billed, paid, balance }
-          row.total_billed += billed
-          row.total_paid += paid
-        })
-
-        row.outstanding = row.total_billed - row.total_paid
-        return row
-      })
-
-      setAllPivotData(allData)
-
-      // Calculate initial stats from all data
-      const totalBilled = allData.reduce((sum, row) => sum + row.total_billed, 0)
-      const totalCollected = allData.reduce((sum, row) => sum + row.total_paid, 0)
-      setStats({
-        totalBilled,
-        totalCollected,
-        outstanding: totalBilled - totalCollected
-      })
-
-      // Calculate yearly totals
-      calculateYearlyTotals(allData, allYears as string[])
-
-      // Set initial filtered data (all data)
-      setPivotData(allData)
+      setYears(reportSummary.years)
+      setPivotData(reportSummary.rows)
+      setStats(reportSummary.stats)
+      setYearlyTotals(reportSummary.yearlyTotals)
     } catch (error) {
       console.error('Failed to fetch report data:', error)
       message.error('Failed to load report data')
     } finally {
       setLoading(false)
     }
-  }, [selectedProject])
-
-  const calculateYearlyTotals = (data: PivotData[], yearsToCalculate: string[]): void => {
-    const totals: YearlyTotal[] = yearsToCalculate.map((year) => {
-      const billed = data.reduce((sum, row) => {
-        const yearData = row[year] as YearlyData
-        return sum + (yearData?.billed || 0)
-      }, 0)
-
-      const paid = data.reduce((sum, row) => {
-        const yearData = row[year] as YearlyData
-        return sum + (yearData?.paid || 0)
-      }, 0)
-
-      const balance = data.reduce((sum, row) => {
-        const yearData = row[year] as YearlyData
-        return sum + (yearData?.balance || 0)
-      }, 0)
-
-      const unitCount = data.filter((row) => {
-        const yearData = row[year] as YearlyData
-        return yearData?.billed && yearData.billed > 0
-      }).length
-
-      // Validate yearly calculations
-      const calculatedBalance = billed - paid
-      if (Math.abs(calculatedBalance - balance) > 0.01) {
-        console.warn(`Year ${year} balance mismatch: Expected ${calculatedBalance}, Got ${balance}`)
-      }
-
-      return {
-        year,
-        billed,
-        paid,
-        balance,
-        unitCount
-      }
-    })
-
-    setYearlyTotals(totals)
-  }
-
-  // Apply filters whenever filter states change
-  useEffect(() => {
-    if (allPivotData.length === 0) return
-
-    // Always show all available years
-    setYears(availableYears)
-
-    const filteredData = allPivotData.filter((row) => {
-      // Search filter
-      const matchSearch =
-        !searchText ||
-        row.unit_number.toLowerCase().includes(searchText.toLowerCase()) ||
-        row.owner_name.toLowerCase().includes(searchText.toLowerCase()) ||
-        row.project_name.toLowerCase().includes(searchText.toLowerCase())
-
-      // Project filter
-      const matchProject =
-        !selectedProject || row.project_name === selectedProjectRecord?.name
-
-      // Unit type filter
-      const matchUnitType = !selectedUnitType || row.unit_type === selectedUnitType
-
-      // Status filter
-      const matchStatus = !selectedStatus || row.unit_status === selectedStatus
-
-      // Show all years data - no year filtering
-      const matchYears = true
-
-      // Outstanding range filter
-      const matchMinOutstanding =
-        outstandingRange[0] === null || row.outstanding >= outstandingRange[0]
-      const matchMaxOutstanding =
-        outstandingRange[1] === null || row.outstanding <= outstandingRange[1]
-
-      return (
-        matchSearch &&
-        matchProject &&
-        matchUnitType &&
-        matchStatus &&
-        matchYears &&
-        matchMinOutstanding &&
-        matchMaxOutstanding
-      )
-    })
-
-    setPivotData(filteredData)
-
-    // Update stats based on filtered data
-    const totalBilled = filteredData.reduce((sum, row) => sum + row.total_billed, 0)
-    const totalCollected = filteredData.reduce((sum, row) => sum + row.total_paid, 0)
-    setStats({
-      totalBilled,
-      totalCollected,
-      outstanding: totalBilled - totalCollected
-    })
-
-    // Calculate yearly totals for all available years
-    calculateYearlyTotals(filteredData, availableYears)
-  }, [
-    allPivotData,
-    searchText,
-    selectedProject,
-    selectedUnitType,
-    selectedStatus,
-    outstandingRange,
-    projects,
-    selectedProjectRecord,
-    availableYears
-  ])
+  }, [outstandingRange, searchText, selectedProject, selectedStatus, selectedUnitType])
 
   useEffect(() => {
     fetchData()
@@ -487,7 +283,7 @@ const Reports: React.FC = () => {
 
       // Validate yearly totals calculation
       yearlyTotals.forEach((total) => {
-        const collectionRate = total.billed > 0 ? (total.paid / total.billed) * 100 : 0
+      const collectionRate = total.billed > 0 ? (total.paid / total.billed) * 100 : 0
         summarySheet.addRow({
           year: total.year,
           unitCount: total.unitCount,
@@ -507,7 +303,7 @@ const Reports: React.FC = () => {
 
       // Validate that totals match the expected calculations
       const calculatedTotalBalance = totalBilled - totalPaid
-      if (Math.abs(calculatedTotalBalance - totalBalance) > 0.01) {
+      if (calculatedTotalBalance !== totalBalance) {
         console.warn(
           `Balance calculation mismatch: Expected ${calculatedTotalBalance}, Got ${totalBalance}`
         )
@@ -1101,8 +897,7 @@ const Reports: React.FC = () => {
                   <Table.Summary.Cell index={0} colSpan={5}>
                     <Text strong>
                       {hasActiveFilters ? 'APPLIED TOTAL' : 'GRAND TOTAL'}
-                      {pivotData.length < allPivotData.length &&
-                        ` (${pivotData.length} of ${allPivotData.length} units)`}
+                      {hasActiveFilters && ` (${pivotData.length} units)`}
                     </Text>
                   </Table.Summary.Cell>
                   {years.map((year, index) => {

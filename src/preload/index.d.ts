@@ -8,12 +8,15 @@ import {
   StandardWorkbookProjectImportResult,
   Unit,
   MaintenanceLetter,
+  BatchLetterResult,
   MaintenanceRate,
   MaintenanceSlab,
   Payment,
   RepairResult,
   LetterAddOn,
-  LetterCalculation
+  LetterCalculation,
+  FinancialReportSummary,
+  FinancialReportFilters
 } from './types'
 
 export * from './types'
@@ -89,7 +92,7 @@ declare global {
           letterDate: string
           dueDate: string
           addOns?: { addon_name: string; addon_amount: number }[]
-        }) => Promise<boolean>
+        }) => Promise<BatchLetterResult>
         delete: (id: number) => Promise<boolean>
         bulkDelete: (ids: number[]) => Promise<boolean>
         generatePdf: (id: number) => Promise<string>
@@ -130,6 +133,10 @@ declare global {
         delete: (id: number) => Promise<boolean>
         bulkDelete: (ids: number[]) => Promise<boolean>
         generateReceiptPdf: (id: number) => Promise<string>
+      }
+      reports: {
+        getFinancialSummary: (projectId?: number, filters?: FinancialReportFilters) => Promise<FinancialReportSummary>
+        getAvailableFinancialYears: (projectId?: number) => Promise<string[]>
       }
       shell: {
         showItemInFolder: (path: string) => void

@@ -6,12 +6,7 @@ import {
   Statistic,
   Typography,
   Skeleton,
-  Select,
-  Space,
-  Tag,
-  Button,
-  Tooltip,
-  Spin
+  Tooltip
 } from 'antd'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -19,15 +14,14 @@ import {
   UserOutlined,
   FileTextOutlined,
   ArrowRightOutlined,
-  ProjectOutlined,
   QuestionCircleOutlined
 } from '@ant-design/icons'
-import { MaintenanceLetter, Project } from '@preload/types'
+import { Project } from '@preload/types'
 import { useAsyncOperation } from '../hooks/useAsyncOperation'
-import dayjs from 'dayjs'
+import { getCurrentFinancialYear } from '../utils/financialYear'
+import FilterPanel, { createSelectFilter } from '../components/shared/FilterPanel'
 
 const { Title, Text } = Typography
-const { Option } = Select
 
 const UNIT_TYPE_OPTIONS = ['Plot', 'Bungalow', 'Garden'] as const
 
@@ -50,9 +44,7 @@ const Dashboard: React.FC = () => {
   const [selectedUnitType, setSelectedUnitType] = useState<string | undefined>(undefined)
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>(undefined)
 
-  // Default to current financial year
-  const currentYear = dayjs().month() < 3 ? dayjs().year() - 1 : dayjs().year()
-  const defaultFY = `${currentYear}-${(currentYear + 1).toString().slice(2)}`
+  const defaultFY = getCurrentFinancialYear()
   const [selectedFY, setSelectedFY] = useState<string>(defaultFY)
   const [availableFYs, setAvailableFYs] = useState<string[]>([])
 
@@ -85,12 +77,7 @@ const Dashboard: React.FC = () => {
     const fetchYears = async (): Promise<void> => {
       await executeAsync(
         async () => {
-          const letters: MaintenanceLetter[] = await window.api.letters.getAll()
-          const yearSet = new Set(letters.map((l) => l.financial_year).filter(Boolean))
-          yearSet.add(defaultFY)
-          const nextFY = `${currentYear + 1}-${(currentYear + 2).toString().slice(2)}`
-          yearSet.add(nextFY)
-          const years = Array.from(yearSet).sort().reverse()
+          const years = await window.api.reports.getAvailableFinancialYears(selectedProject)
           setAvailableFYs(years)
         },
         {
@@ -100,7 +87,7 @@ const Dashboard: React.FC = () => {
       )
     }
     fetchYears()
-  }, [currentYear, defaultFY])
+  }, [defaultFY, executeAsync, selectedProject])
 
   useEffect(() => {
     const fetchDashboardData = async (): Promise<void> => {
@@ -129,18 +116,7 @@ const Dashboard: React.FC = () => {
     fetchDashboardData()
   }, [selectedProject, selectedFY, selectedUnitType, selectedStatus])
 
-  // Generate a range of financial years for the filter
-  const fallbackFinancialYears = useMemo(() => {
-    const years: string[] = []
-    const startYear = 2024 // Application start year
-    const endYear = currentYear + 1
-    for (let y = startYear; y <= endYear; y++) {
-      years.push(`${y}-${(y + 1).toString().slice(2)}`)
-    }
-    return years
-  }, [currentYear])
-
-  const financialYears = availableFYs.length > 0 ? availableFYs : fallbackFinancialYears
+  const financialYears = availableFYs
 
   // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
@@ -160,12 +136,101 @@ const Dashboard: React.FC = () => {
     setSelectedFY(defaultFY)
   }, [defaultFY])
 
-  // Get selected project name
-  const selectedProjectName = useMemo(() => {
-    if (!selectedProject) return ''
-    const project = projects.find((p) => p.id === selectedProject)
-    return project?.name || ''
-  }, [selectedProject, projects])
+  const dashboardFilterFields = useMemo(
+    () => [
+      createSelectFilter(
+        'selectedProject',
+        'Project',
+        projects.flatMap((project) =>
+          project.id !== undefined
+            ? [
+                {
+                  value: project.id,
+                  label: project.project_code
+                    ? `${project.project_code} - ${project.name}`
+                    : project.name
+                }
+              ]
+            : []
+        ),
+        'All Projects',
+        {
+          emptyValue: undefined,
+          formatValue: (value) => {
+            const project = projects.find((item) => item.id === value)
+            return project?.name || ''
+          }
+        }
+      ),
+      createSelectFilter(
+        'selectedFY',
+        'Financial Year',
+        financialYears.map((fy) => ({
+          value: fy,
+          label: fy === defaultFY ? `${fy} (Current)` : fy
+        })),
+        'Select Year',
+        {
+          emptyValue: defaultFY,
+          isActive: (value) => value !== undefined && value !== defaultFY
+        }
+      ),
+      createSelectFilter(
+        'selectedUnitType',
+        'Unit Type',
+        UNIT_TYPE_OPTIONS.map((unitType) => ({ value: unitType, label: unitType })),
+        'All Types',
+        {
+          emptyValue: undefined
+        }
+      ),
+      createSelectFilter(
+        'selectedStatus',
+        'Status',
+        [
+          { value: 'Active', label: 'Active' },
+          { value: 'Inactive', label: 'Inactive' }
+        ],
+        'All Status',
+        {
+          emptyValue: undefined
+        }
+      )
+    ],
+    [defaultFY, financialYears, projects]
+  )
+
+  const dashboardFilterValues = useMemo(
+    () => ({
+      selectedProject,
+      selectedFY,
+      selectedUnitType,
+      selectedStatus
+    }),
+    [selectedFY, selectedProject, selectedStatus, selectedUnitType]
+  )
+
+  const handleDashboardFilterChange = useCallback(
+    (key: string, value: unknown) => {
+      switch (key) {
+        case 'selectedProject':
+          setSelectedProject((value as number | undefined) ?? undefined)
+          break
+        case 'selectedFY':
+          setSelectedFY((value as string | undefined) ?? defaultFY)
+          break
+        case 'selectedUnitType':
+          setSelectedUnitType((value as string | undefined) ?? undefined)
+          break
+        case 'selectedStatus':
+          setSelectedStatus((value as string | undefined) ?? undefined)
+          break
+        default:
+          break
+      }
+    },
+    [defaultFY]
+  )
 
   const statCards: StatCard[] = [
     {
@@ -228,186 +293,16 @@ const Dashboard: React.FC = () => {
       </div>
 
       <Card className="page-toolbar-card dashboard-filter-card" variant="borderless">
-        <div className="app-filter-panel-fields">
-          <div className="app-filter-panel-label">
-            <ProjectOutlined />
-            <span>Refine overview</span>
-            {loading && <Spin size="small" />}
-          </div>
-          <Space
-            size="middle"
-            wrap
-            className="responsive-filters app-filter-row"
-            direction="horizontal"
-            style={{
-              width: '100%',
-              opacity: loading ? 0.7 : 1,
-              pointerEvents: loading ? 'none' : 'auto'
-            }}
-          >
-            <Space orientation="vertical" align="start">
-              <Text type="secondary" strong style={{ fontSize: 12 }}>
-                Project
-              </Text>
-              <Select
-                className="app-filter-select"
-                placeholder="All Projects"
-                style={{ width: '100%', minWidth: 180 }}
-                allowClear
-                onChange={(value) => setSelectedProject(value)}
-                value={selectedProject}
-                suffixIcon={<ProjectOutlined />}
-                disabled={loading}
-              >
-                {projects.map((p) => (
-                  <Option key={p.id} value={p.id}>
-                    {p.project_code ? `${p.project_code} - ${p.name}` : p.name}
-                  </Option>
-                ))}
-              </Select>
-            </Space>
-            <Space orientation="vertical" align="start">
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Text type="secondary" strong style={{ fontSize: 12 }}>
-                  Financial Year
-                </Text>
-                {selectedFY === defaultFY && <Tag color="blue">Current</Tag>}
-              </div>
-              <Select
-                className="app-filter-select"
-                placeholder="Select Year"
-                style={{ width: '100%', minWidth: 180 }}
-                popupMatchSelectWidth={false}
-                onChange={(value) => setSelectedFY(value)}
-                value={selectedFY}
-                disabled={loading}
-                popupRender={(menu) => (
-                  <>
-                    <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0' }}>
-                      <Space size="small">
-                        <Button
-                          size="small"
-                          type="primary"
-                          ghost
-                          onClick={() => {
-                            const prevYear = currentYear - 1
-                            setSelectedFY(`${prevYear}-${(prevYear + 1).toString().slice(2)}`)
-                          }}
-                        >
-                          Previous Year
-                        </Button>
-                        <Button
-                          size="small"
-                          type="primary"
-                          ghost
-                          onClick={() => setSelectedFY(defaultFY)}
-                        >
-                          Current Year
-                        </Button>
-                      </Space>
-                    </div>
-                    {menu}
-                  </>
-                )}
-              >
-                {financialYears.map((fy) => (
-                  <Option key={fy} value={fy}>
-                    {fy === defaultFY ? `${fy} (Current)` : fy}
-                  </Option>
-                ))}
-              </Select>
-            </Space>
-            <Space orientation="vertical" align="start">
-              <Text type="secondary" strong style={{ fontSize: 12 }}>
-                Unit Type
-              </Text>
-              <Select
-                className="app-filter-select"
-                placeholder="All Types"
-                style={{ width: '100%', minWidth: 140 }}
-                allowClear
-                onChange={setSelectedUnitType}
-                value={selectedUnitType}
-                disabled={loading}
-              >
-                {UNIT_TYPE_OPTIONS.map((unitType) => (
-                  <Option key={unitType} value={unitType}>
-                    {unitType}
-                  </Option>
-                ))}
-              </Select>
-            </Space>
-            <Space orientation="vertical" align="start">
-              <Text type="secondary" strong style={{ fontSize: 12 }}>
-                Status
-              </Text>
-              <Select
-                className="app-filter-select"
-                placeholder="All Status"
-                style={{ width: '100%', minWidth: 140 }}
-                allowClear
-                onChange={setSelectedStatus}
-                value={selectedStatus}
-                disabled={loading}
-              >
-                <Option value="Active">Active</Option>
-                <Option value="Inactive">Inactive</Option>
-              </Select>
-            </Space>
-          </Space>
-        </div>
+        <FilterPanel
+          filters={dashboardFilterFields}
+          values={dashboardFilterValues}
+          onChange={handleDashboardFilterChange}
+          onClear={clearAllFilters}
+          showActiveFilters={hasActiveFilters}
+          variant="plain"
+          loading={loading}
+        />
       </Card>
-
-      {hasActiveFilters && (
-        <div className="page-chip-bar">
-          <Space wrap align="center" className="responsive-action-bar">
-            <Text type="secondary" style={{ fontSize: '12px', fontWeight: 500 }}>
-              Active filters:
-            </Text>
-            {selectedProject !== undefined && (
-              <Tag
-                closable
-                onClose={() => setSelectedProject(undefined)}
-                style={{ fontSize: '12px' }}
-              >
-                Project: {selectedProjectName}
-              </Tag>
-            )}
-            {selectedUnitType !== undefined && (
-              <Tag
-                closable
-                onClose={() => setSelectedUnitType(undefined)}
-                style={{ fontSize: '12px' }}
-              >
-                Type: {selectedUnitType}
-              </Tag>
-            )}
-            {selectedStatus !== undefined && (
-              <Tag
-                closable
-                onClose={() => setSelectedStatus(undefined)}
-                style={{ fontSize: '12px' }}
-              >
-                Status: {selectedStatus}
-              </Tag>
-            )}
-            {selectedFY !== defaultFY && (
-              <Tag closable onClose={() => setSelectedFY(defaultFY)} style={{ fontSize: '12px' }}>
-                FY: {selectedFY}
-              </Tag>
-            )}
-            <Button
-              type="default"
-              className="app-filter-clear-button"
-              size="small"
-              onClick={clearAllFilters}
-              style={{ fontSize: '12px' }}
-            >
-              Clear all
-            </Button>
-          </Space>
-        </div>
-      )}
 
       <Row gutter={[20, 20]} className="dashboard-stats-row">
         {statCards.map((card, index) => (

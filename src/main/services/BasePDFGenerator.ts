@@ -1,13 +1,13 @@
-import { PDFDocument, rgb, StandardFonts, RGB } from 'pdf-lib'
+import { PDFDocument, PDFPage, PDFFont, rgb, StandardFonts, RGB } from 'pdf-lib'
 import { CONFIG } from '../config/constants'
 import fs from 'fs'
 import path from 'path'
 import { app } from 'electron'
 
-export interface PDFFont {
-  regular: any
-  bold: any
-  italic?: any
+export interface PDFFontSet {
+  regular: PDFFont
+  bold: PDFFont
+  italic?: PDFFont
 }
 
 export interface PDFLayout {
@@ -78,9 +78,9 @@ export abstract class BasePDFGenerator {
   }
 
   protected layout: PDFLayout
-  protected fonts: PDFFont = {} as PDFFont
+  protected fonts: PDFFontSet = {} as PDFFontSet
   protected pdfDoc: PDFDocument = {} as PDFDocument
-  protected page: any = null
+  protected page!: PDFPage
 
   constructor() {
     this.layout = this.initializeLayout()
@@ -113,7 +113,7 @@ export abstract class BasePDFGenerator {
   /**
    * Load standard fonts
    */
-  protected async loadFonts(): Promise<PDFFont> {
+  protected async loadFonts(): Promise<PDFFontSet> {
     return {
       regular: await this.pdfDoc.embedFont(StandardFonts.Helvetica),
       bold: await this.pdfDoc.embedFont(StandardFonts.HelveticaBold),
@@ -629,7 +629,8 @@ export abstract class BasePDFGenerator {
    * Format currency consistently
    */
   protected formatCurrency(amount: number): string {
-    return `Rs.${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    const normalizedAmount = Math.round(Number(amount || 0))
+    return `Rs. ${normalizedAmount.toLocaleString('en-IN')}`
   }
 
   /**

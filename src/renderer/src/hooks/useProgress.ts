@@ -14,7 +14,17 @@ export interface ProgressOptions {
   onCancel?: () => void
 }
 
-export const useProgress = (options: ProgressOptions = {}) => {
+export interface UseProgressResult {
+  progress: ProgressState
+  startProgress: (total: number, title?: string) => void
+  updateProgress: (current: number, status?: string) => void
+  completeProgress: (successMessage?: string) => void
+  failProgress: (errorMessage?: string) => void
+  cancelProgress: () => void
+}
+
+export const useProgress = (options: ProgressOptions = {}): UseProgressResult => {
+  const { title: defaultTitle, onCancel } = options
   const [progress, setProgress] = useState<ProgressState>({
     current: 0,
     total: 100,
@@ -29,7 +39,7 @@ export const useProgress = (options: ProgressOptions = {}) => {
       setProgress({
         current: 0,
         total,
-        status: title || options.title || 'Processing...',
+        status: title || defaultTitle || 'Processing...',
         isVisible: true
       })
 
@@ -37,11 +47,11 @@ export const useProgress = (options: ProgressOptions = {}) => {
         message.destroy(progressKeyRef.current)
       }
       progressKeyRef.current = message.loading(
-        `${title || options.title || 'Processing...'}`,
+        `${title || defaultTitle || 'Processing...'}`,
         0
       ) as unknown as string
     },
-    [options.title]
+    [defaultTitle]
   )
 
   const updateProgress = useCallback(
@@ -101,7 +111,7 @@ export const useProgress = (options: ProgressOptions = {}) => {
     // logger.error('Progress failed', new Error(errorMessage), 'Progress')
   }, [])
 
-  const cancelProgress = useCallback(() => {
+  const cancelProgress = (): void => {
     setProgress((prev) => ({
       ...prev,
       status: 'Cancelled',
@@ -112,12 +122,12 @@ export const useProgress = (options: ProgressOptions = {}) => {
       message.destroy(progressKeyRef.current)
     }
 
-    if (options.onCancel) {
-      options.onCancel()
+    if (onCancel) {
+      onCancel()
     }
 
     // logger.warn('Progress cancelled by user', 'Progress')
-  }, [options.onCancel])
+  }
 
   return {
     progress,

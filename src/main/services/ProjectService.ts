@@ -1,5 +1,6 @@
 import { dbService } from '../db/database'
 import { unitService } from './UnitService'
+import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/dateUtils'
 
 export interface Project {
   id?: number
@@ -85,6 +86,30 @@ export interface StandardWorkbookImportYear {
   add_ons?: { name: string; amount: number }[]
 }
 
+export interface StandardWorkbookRateRow {
+  financial_year: string
+  unit_type: string
+  rate_per_sqft: number
+  gst_percent?: number
+  penalty_percent?: number
+  penalty_percentage?: number
+  discount_percent?: number
+  discount_percentage?: number
+  due_date?: string
+}
+
+export interface StandardWorkbookPaymentRow {
+  unit_number: string
+  sector_code?: string
+  payment_date: string
+  financial_year: string
+  amount_paid: number
+  payment_mode?: string
+  cheque_number?: string
+  receipt_number?: string
+  remarks?: string
+}
+
 export interface StandardWorkbookImportRow {
   unit_number: string
   sector_code?: string
@@ -102,8 +127,8 @@ export interface StandardWorkbookProjectImportPayload {
   project: Project
   sector_configs?: Partial<ProjectSectorPaymentConfig>[]
   rows: StandardWorkbookImportRow[]
-  rates?: any[]
-  payments?: any[]
+  rates?: StandardWorkbookRateRow[]
+  payments?: StandardWorkbookPaymentRow[]
 }
 
 export interface StandardWorkbookProjectImportResult {
@@ -269,6 +294,24 @@ class ProjectService {
     return String(unitType || '').trim() || 'Bungalow'
   }
 
+  private toFiniteNumber(value: unknown, fallback = 0): number {
+    const numeric = Number(value)
+    return Number.isFinite(numeric) ? numeric : fallback
+  }
+
+  private normalizeOptionalPercentage(
+    ...values: unknown[]
+  ): number | null {
+    for (const value of values) {
+      if (value === null || value === undefined || value === '') continue
+      const numeric = Number(value)
+      if (Number.isFinite(numeric)) {
+        return numeric
+      }
+    }
+    return null
+  }
+
   private logDebug(message: string, ...args: unknown[]): void {
     const isDevelopment =
       process.env.NODE_ENV === 'development' || process.env.ELECTRON_IS_DEV === '1'
@@ -279,52 +322,46 @@ class ProjectService {
 
   public getAll(): Project[] {
     try {
-      console.log('[PROJECT_SERVICE] getAll: Querying all projects...')
-      
-      // Add debug info about database connection
-      console.log('[PROJECT_SERVICE] getAll: Database connection status: Active')
-      
+      this.logDebug('getAll: Querying all projects...')
+      this.logDebug('getAll: Database connection status: Active')
+
       const projects = dbService.query<Project>(`
         SELECT p.*, 0 as unit_count
         FROM projects p 
         ORDER BY p.name ASC
       `)
-      
-      console.log(`[PROJECT_SERVICE] getAll: Found ${projects.length} projects`)
-      
-      // Log the actual query results for debugging
+
+      this.logDebug(`getAll: Found ${projects.length} projects`)
+
       if (projects.length === 0) {
-        console.log('[PROJECT_SERVICE] getAll: No projects found. Checking if table exists...')
-        
-        // Check if projects table exists
+        this.logDebug('getAll: No projects found. Checking if table exists...')
         const tableCheck = dbService.query(`
           SELECT name FROM sqlite_master 
           WHERE type='table' AND name='projects'
         `)
-        console.log(`[PROJECT_SERVICE] getAll: Projects table exists: ${tableCheck.length > 0}`)
-        
+        this.logDebug(`getAll: Projects table exists: ${tableCheck.length > 0}`)
+
         if (tableCheck.length > 0) {
-          // Check table structure
           const tableInfo = dbService.query(`PRAGMA table_info(projects)`)
-          console.log('[PROJECT_SERVICE] getAll: Projects table structure:', tableInfo)
-          
-          // Check row count with raw query
+          this.logDebug('getAll: Projects table structure', { tableInfo })
           const rawCount = dbService.query(`SELECT COUNT(*) as count FROM projects`)
-          console.log('[PROJECT_SERVICE] getAll: Raw count query result:', rawCount)
+          this.logDebug('getAll: Raw count query result', { rawCount })
         }
       }
-      
-      // Debug logging for projects without codes
+
       const projectsWithoutCodes = projects.filter(p => !p.project_code)
       if (projectsWithoutCodes.length > 0) {
-        console.log(`[PROJECT_SERVICE] Found ${projectsWithoutCodes.length} projects without codes:`, projectsWithoutCodes.map(p => ({ id: p.id, name: p.name })))
+        this.logDebug(`Found ${projectsWithoutCodes.length} projects without codes`, {
+          projects: projectsWithoutCodes.map(p => ({ id: p.id, name: p.name }))
+        })
       }
-      
-      // Log first few projects for debugging
+
       if (projects.length > 0) {
-        console.log('[PROJECT_SERVICE] getAll: First few projects:', projects.slice(0, 3).map(p => ({ id: p.id, name: p.name, code: p.project_code })))
+        this.logDebug('getAll: First few projects', {
+          projects: projects.slice(0, 3).map(p => ({ id: p.id, name: p.name, code: p.project_code }))
+        })
       }
-      
+
       return projects
     } catch (error) {
       console.error('[PROJECT_SERVICE] getAll: Error querying projects:', error)
@@ -910,26 +947,52 @@ class ProjectService {
         if (!fy) continue
 
         const unitType = this.normalizeUnitType(rateRow.unit_type)
-        const ratePerSqft = Number(rateRow.rate_per_sqft || 0)
-        const gstPercent = Number(rateRow.gst_percent || 0)
+        const ratePerSqft = this.toFiniteNumber(rateRow.rate_per_sqft, 0)
+        const gstPercent = this.toFiniteNumber(rateRow.gst_percent, 0)
+        const penaltyPercentage = this.normalizeOptionalPercentage(
+          rateRow.penalty_percentage,
+          rateRow.penalty_percent
+        )
+        const dueDate = String(rateRow.due_date || '').trim()
+        const discountPercentage =
+          this.normalizeOptionalPercentage(
+            rateRow.discount_percentage,
+            rateRow.discount_percent
+          ) ?? 0
 
         const existingRate = dbService.get<{ id: number }>(
           'SELECT id FROM maintenance_rates WHERE project_id = ? AND financial_year = ? AND unit_type = ?',
           [projectId, fy, unitType]
         )
 
+        let rateId: number
         if (existingRate) {
           dbService.run(
-            `UPDATE maintenance_rates SET rate_per_sqft = ?, gst_percent = ?, updated_at = CURRENT_TIMESTAMP
+            `UPDATE maintenance_rates SET rate_per_sqft = ?, gst_percent = ?, penalty_percentage = ?, updated_at = CURRENT_TIMESTAMP
              WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
-            [ratePerSqft, gstPercent, projectId, fy, unitType]
+            [ratePerSqft, gstPercent, penaltyPercentage, projectId, fy, unitType]
           )
+          rateId = existingRate.id
         } else {
-          dbService.run(
-            `INSERT INTO maintenance_rates (project_id, financial_year, unit_type, rate_per_sqft, gst_percent)
-             VALUES (?, ?, ?, ?, ?)`,
-            [projectId, fy, unitType, ratePerSqft, gstPercent]
+          const rateInsert = dbService.run(
+            `INSERT INTO maintenance_rates (project_id, financial_year, unit_type, rate_per_sqft, gst_percent, penalty_percentage)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [projectId, fy, unitType, ratePerSqft, gstPercent, penaltyPercentage]
           )
+          rateId = rateInsert.lastInsertRowid as number
+        }
+
+        if (rateId) {
+          if (dueDate && discountPercentage > 0) {
+            dbService.run('DELETE FROM maintenance_slabs WHERE rate_id = ?', [rateId])
+            dbService.run(
+              `INSERT INTO maintenance_slabs (rate_id, due_date, discount_percentage, is_early_payment)
+               VALUES (?, ?, ?, 1)`,
+              [rateId, dueDate, discountPercentage]
+            )
+          } else if (existingRate) {
+            dbService.run('DELETE FROM maintenance_slabs WHERE rate_id = ?', [rateId])
+          }
         }
         importedRateCount += 1
       }
@@ -1126,6 +1189,15 @@ class ProjectService {
         projectId
       ])?.count || 0
 
+    const unitsWithoutSectorCode =
+      dbService.get<{ count: number }>(
+        `SELECT COUNT(*) as count
+         FROM units
+         WHERE project_id = ?
+           AND (sector_code IS NULL OR TRIM(sector_code) = '')`,
+        [projectId]
+      )?.count || 0
+
     const sectorCodes = dbService
       .query<{ sector_code: string }>(
         `
@@ -1179,7 +1251,14 @@ class ProjectService {
     )
 
     const configuredSectorCodes = sectorConfigRows
-      .filter((row) => row.has_qr === 1)
+      .filter(
+        (row) =>
+          row.has_qr === 1 ||
+          (!!String(row.account_name || '').trim() &&
+            !!String(row.bank_name || '').trim() &&
+            !!String(row.account_no || '').trim() &&
+            !!String(row.ifsc_code || '').trim())
+      )
       .map((row) => row.sector_code)
       .filter((value, index, arr) => value && arr.indexOf(value) === index)
       .sort((a, b) => a.localeCompare(b))
@@ -1204,13 +1283,18 @@ class ProjectService {
       !!String(project.account_no || '').trim() &&
       !!String(project.ifsc_code || '').trim()
 
-    // If the project has default details OR all sectors have details, it's ready.
-    // For simpler logic: if project has default, it's fine. 
-    // If not, check if every detected sector in 'sectorCodes' has a corresponding config in 'sectorsWithBankDetails'
     const allSectorsConfigured = sectorCodes.length > 0 && 
       sectorCodes.every(sc => sectorsWithBankDetails.some(swb => swb.sector_code === sc))
 
-    const isBankDetailsReady = hasDefaultPaymentDetails || allSectorsConfigured
+    const sectorsMissingCorePaymentConfig = sectorCodes.filter(
+      (sectorCode) => !sectorsWithBankDetails.some((row) => row.sector_code === sectorCode)
+    )
+
+    const isBankDetailsReady =
+      unitCount > 0 &&
+      unitsWithoutSectorCode === 0 &&
+      sectorCodes.length > 0 &&
+      allSectorsConfigured
     const hasDefaultQr = !!String(project.qr_code_path || '').trim()
 
     const sectorsWithoutQrCoverage = sectorCodes.filter(
@@ -1230,11 +1314,7 @@ class ProjectService {
       .map((row) => row.financial_year)
 
     const effectiveFinancialYear = String(financialYear || '').trim()
-    const currentYear = new Date().getFullYear()
-    const currentMonth = new Date().getMonth() // 0-indexed
-    const computedFY = currentMonth < 3 
-      ? `${currentYear - 1}-${String(currentYear).slice(2)}`
-      : `${currentYear}-${String(currentYear + 1).slice(2)}`
+    const computedFY = getCurrentFinancialYear()
     
     const targetFY = effectiveFinancialYear || computedFY
     const hasRateForTargetFY = rateYears.includes(targetFY)
@@ -1268,8 +1348,14 @@ class ProjectService {
       blockers.push('Import units before generating maintenance letters.')
     }
 
+    if (unitCount > 0 && unitsWithoutSectorCode > 0) {
+      blockers.push('Assign a sector code to every unit before generating maintenance letters.')
+    }
+
     if (!hasRateForTargetFY) {
-      blockers.push(`Add maintenance rates for FY ${targetFY}.`)
+      blockers.push(
+        `Add maintenance rates for FY ${targetFY}. Current FY: ${computedFY}. Upcoming FY: ${getUpcomingFinancialYear(computedFY)}.`
+      )
     } else if (missingRateUnitTypes.length > 0) {
       blockers.push(
         `Add FY ${targetFY} rates for unit types: ${missingRateUnitTypes.join(', ')}.`
@@ -1278,9 +1364,13 @@ class ProjectService {
 
     // Validate required bank details
     if (!isBankDetailsReady) {
-      blockers.push(
-        'Bank details are incomplete - Account Name, Bank Name, Account Number, and IFSC Code are required (at Project or Sector level)'
-      )
+      if (sectorCodes.length === 0 && unitCount > 0 && unitsWithoutSectorCode === 0) {
+        blockers.push('Detected units are missing sector grouping. Add sector codes to units first.')
+      } else if (sectorsMissingCorePaymentConfig.length > 0) {
+        blockers.push(
+          `Complete sector bank details for: ${sectorsMissingCorePaymentConfig.join(', ')}.`
+        )
+      }
     }
 
     if (!project.import_profile_key) {
@@ -1293,9 +1383,9 @@ class ProjectService {
       )
     }
 
-    if (sectorCodes.length > 1 && configuredSectorCodes.length === 0) {
+    if (hasDefaultPaymentDetails) {
       warnings.push(
-        'Multiple sectors detected. Add sector payment configs if different sectors use different bank accounts or barcodes.'
+        'Project-level bank details are treated as legacy data. New maintenance letters use sector bank details only.'
       )
     }
 
@@ -1313,7 +1403,7 @@ class ProjectService {
       unit_count: unitCount,
       sector_codes: sectorCodes,
       configured_sector_codes: configuredSectorCodes,
-      sectors_missing_core_payment_config: [],
+      sectors_missing_core_payment_config: sectorsMissingCorePaymentConfig,
       sectors_without_qr_coverage: sectorsWithoutQrCoverage,
       unit_types: unitTypes,
       rate_years: rateYears,

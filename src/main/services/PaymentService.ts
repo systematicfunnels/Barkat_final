@@ -5,6 +5,8 @@ import { app } from 'electron'
 import { rgb } from 'pdf-lib'
 import { BasePDFGenerator } from './BasePDFGenerator'
 import { MaintenanceLetter } from './MaintenanceLetterService'
+import { normalizeMoney } from '../utils/money'
+import { getCurrentFinancialYear } from '../utils/dateUtils'
 
 export interface Payment {
   id?: number
@@ -37,6 +39,12 @@ export interface Receipt {
   payment_id: number
   receipt_number: string
   receipt_date: string
+}
+
+type ReceiptAddon = {
+  addon_name: string
+  addon_amount: number
+  remarks?: string
 }
 
 class PaymentService extends BasePDFGenerator {
@@ -95,14 +103,19 @@ class PaymentService extends BasePDFGenerator {
       }
 
       // Parse addons JSON if it exists
-      let addons: Array<{ addon_name: string; addon_amount: number }> = []
+      let addons: ReceiptAddon[] = []
       if (letterAndAddons && letterAndAddons.addons) {
         try {
           const parsed = JSON.parse(letterAndAddons.addons)
           // Validate parsed is an array before filtering
           if (Array.isArray(parsed)) {
             // Filter out null entries (when no addons exist)
-            addons = parsed.filter(item => item && item.addon_name !== null)
+            addons = parsed.filter(
+              (item): item is ReceiptAddon =>
+                Boolean(item) &&
+                typeof item.addon_name === 'string' &&
+                typeof item.addon_amount === 'number'
+            )
           }
         } catch (e) {
           if (process.env.NODE_ENV !== 'production') {
@@ -239,24 +252,36 @@ class PaymentService extends BasePDFGenerator {
 
         // Base maintenance amount
         if (letterAndAddons.base_amount > 0) {
-          drawReceiptRow('Maintenance Charges', `Rs. ${letterAndAddons.base_amount.toLocaleString('en-IN')}`)
+          drawReceiptRow(
+            'Maintenance Charges',
+            `Rs. ${normalizeMoney(letterAndAddons.base_amount).toLocaleString('en-IN')}`
+          )
         }
 
         // Add-ons (filter out zero amounts)
-        addons.forEach((addon: any) => {
+        addons.forEach((addon: ReceiptAddon) => {
           if (addon.addon_amount > 0) {
-            drawReceiptRow(addon.addon_name, `Rs. ${addon.addon_amount.toLocaleString('en-IN')}`)
+            drawReceiptRow(
+              addon.addon_name,
+              `Rs. ${normalizeMoney(addon.addon_amount).toLocaleString('en-IN')}`
+            )
           }
         })
 
         // Arrears if any
         if (letterAndAddons.arrears && letterAndAddons.arrears > 0) {
-          drawReceiptRow('Arrears (Previous Outstanding)', `Rs. ${letterAndAddons.arrears.toLocaleString('en-IN')}`)
+          drawReceiptRow(
+            'Arrears (Previous Outstanding)',
+            `Rs. ${normalizeMoney(letterAndAddons.arrears).toLocaleString('en-IN')}`
+          )
         }
 
         // Discount if any
         if (letterAndAddons.discount_amount && letterAndAddons.discount_amount > 0) {
-          drawReceiptRow('Early Payment Discount', `-Rs. ${letterAndAddons.discount_amount.toLocaleString('en-IN')}`)
+          drawReceiptRow(
+            'Early Payment Discount',
+            `-Rs. ${normalizeMoney(letterAndAddons.discount_amount).toLocaleString('en-IN')}`
+          )
         }
 
         // Separator line before total
@@ -272,7 +297,7 @@ class PaymentService extends BasePDFGenerator {
 
       // ── Amount Received Box (green highlight) ──
       const amountLabel = 'Amount Received'
-      const safeAmount = payment.payment_amount ?? 0
+      const safeAmount = normalizeMoney(payment.payment_amount ?? 0)
       const amountValue = `Rs. ${safeAmount.toLocaleString('en-IN')}`
       
       const amountLabelWidth = this.fonts.bold.widthOfTextAtSize(amountLabel, 12)
@@ -358,17 +383,17 @@ class PaymentService extends BasePDFGenerator {
         unit_id: payment.unit_id ?? existingPayment.unit_id,
         letter_id: payment.letter_id ?? existingPayment.letter_id,
         payment_date: payment.payment_date ?? existingPayment.payment_date,
-        payment_amount: payment.payment_amount ?? existingPayment.payment_amount,
+        payment_amount: normalizeMoney(payment.payment_amount ?? existingPayment.payment_amount),
         payment_mode: payment.payment_mode ?? existingPayment.payment_mode,
         cheque_number: payment.cheque_number ?? existingPayment.cheque_number,
         remarks: payment.remarks ?? existingPayment.remarks,
         financial_year: payment.financial_year ?? existingPayment.financial_year
-      };
+      }
 
       // Validate required fields
-      if (!updateData.project_id || !updateData.unit_id || !updateData.payment_date || 
+      if (!updateData.project_id || !updateData.unit_id || !updateData.payment_date ||
           !updateData.payment_amount || !updateData.payment_mode || !updateData.financial_year) {
-        throw new Error('Missing required fields for payment update');
+        throw new Error('Missing required fields for payment update')
       }
 
       // Update payment record
@@ -383,13 +408,8 @@ class PaymentService extends BasePDFGenerator {
         updateData.remarks,
         updateData.financial_year,
         id
-      ];
+      ]
 
-      if (process.env.NODE_ENV !== 'production') {
-        console.log('SQL Parameters:', params);
-        console.log('Parameter count:', params.length);
-      }
-      
       dbService.run(
         'UPDATE payments SET project_id = ?, unit_id = ?, letter_id = ?, payment_date = ?, payment_amount = ?, payment_mode = ?, cheque_number = ?, remarks = ?, financial_year = ? WHERE id = ?',
         params
@@ -445,6 +465,15 @@ class PaymentService extends BasePDFGenerator {
 
   public create(payment: Payment): number {
     return dbService.transaction(() => {
+      const unitExists = dbService.get<{ id: number }>(
+        'SELECT id FROM units WHERE id = ? AND project_id = ?',
+        [payment.unit_id, payment.project_id]
+      )
+
+      if (!unitExists) {
+        throw new Error('Selected unit does not belong to the selected project')
+      }
+
       let resolvedLetterId = payment.letter_id
       let resolvedFinancialYear = payment.financial_year
 
@@ -468,9 +497,7 @@ class PaymentService extends BasePDFGenerator {
 
         // If still no financial year, use current financial year
         if (!resolvedFinancialYear) {
-          const currentYear =
-            new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear()
-          resolvedFinancialYear = `${currentYear}-${(currentYear + 1).toString().slice(2)}`
+          resolvedFinancialYear = getCurrentFinancialYear()
         }
       }
 
@@ -500,7 +527,7 @@ class PaymentService extends BasePDFGenerator {
           resolvedLetterId,
           resolvedFinancialYear,
           payment.payment_date,
-          payment.payment_amount,
+          normalizeMoney(payment.payment_amount),
           payment.payment_mode,
           payment.cheque_number,
           payment.remarks,
@@ -515,7 +542,7 @@ class PaymentService extends BasePDFGenerator {
         const receiptNumber = payment.receipt_number || `REC-${paymentId}`
         try {
           if (process.env.NODE_ENV !== 'production') {
-            console.log('🧾 Creating receipt record:', receiptNumber)
+            console.log('[PAYMENTS] Creating receipt record')
           }
           dbService.run(
             `INSERT INTO receipts (payment_id, receipt_number, receipt_date)
@@ -523,11 +550,11 @@ class PaymentService extends BasePDFGenerator {
             [paymentId, receiptNumber, payment.payment_date]
           )
           if (process.env.NODE_ENV !== 'production') {
-            console.log('✅ Receipt record created successfully:', receiptNumber)
+            console.log('[PAYMENTS] Receipt record created successfully')
           }
         } catch (error) {
           if (process.env.NODE_ENV !== 'production') {
-            console.error('❌ Failed to create receipt record:', error)
+            console.error('[PAYMENTS] Failed to create receipt record:', error)
           }
           // Don't fail the payment, just log the error
         }
@@ -566,3 +593,4 @@ class PaymentService extends BasePDFGenerator {
 }
 
 export const paymentService = new PaymentService()
+

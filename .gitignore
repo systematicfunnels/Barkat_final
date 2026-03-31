@@ -4,3 +4,11 @@ out
 .DS_Store
 .eslintcache
 *.log*
+coverage
+playwright-report
+test-results
+.test-production-smoke
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*

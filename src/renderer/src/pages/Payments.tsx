@@ -33,6 +33,11 @@ import {
 import dayjs from 'dayjs'
 import { Project, Unit, Payment, MaintenanceLetter } from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
+import {
+  formatFinancialYear,
+  getCurrentFinancialYear,
+  getUpcomingFinancialYear
+} from '../utils/financialYear'
 import FilterPanel, {
   createSearchFilter,
   createSelectFilter
@@ -71,47 +76,9 @@ const Payments: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedMode, setSelectedMode] = useState<string | null>(null)
 
-  // Default to current financial year
-  const currentYear = dayjs().month() < 3 ? dayjs().year() - 1 : dayjs().year()
-  const defaultFY = `${currentYear}-${(currentYear + 1).toString().slice(2)}`
+  const defaultFY = getCurrentFinancialYear()
+  const upcomingFY = getUpcomingFinancialYear(defaultFY)
   const [selectedFY, setSelectedFY] = useState<string | null>(defaultFY)
-
-  // Auto-format financial year input
-  const formatFinancialYear = (input: string): string => {
-    if (!input) return input
-    
-    // Remove extra spaces and non-digit characters except hyphen
-    const clean = input.trim().replace(/[^\d-]/g, '')
-    
-    // Handle different input formats
-    if (clean.includes('-')) {
-      const parts = clean.split('-')
-      if (parts.length === 2) {
-        const year = parts[0].slice(0, 4)
-        const yearPart = parts[1].slice(0, 2)
-        
-        // If second part has 4 digits, take last 2
-        const finalYearPart = yearPart.length === 4 ? yearPart.slice(-2) : yearPart
-        
-        return `${year}-${finalYearPart}`
-      }
-    } else {
-      // Handle pure number input
-      if (clean.length === 6) { // 202526
-        return `${clean.slice(0,4)}-${clean.slice(4,6)}`
-      }
-      if (clean.length === 8) { // 20252026
-        return `${clean.slice(0,4)}-${clean.slice(6,8)}`
-      }
-      if (clean.length >= 4) { // 2025 or more
-        const year = clean.slice(0,4)
-        const nextYear = (parseInt(year) + 1).toString().slice(-2)
-        return `${year}-${nextYear}`
-      }
-    }
-    
-    return input // Return as-is if can't format
-  }
 
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [searchText, setSearchText] = useState('')
@@ -130,15 +97,11 @@ const Payments: React.FC = () => {
   const fetchData = async (): Promise<void> => {
     setLoading(true)
     try {
-      const [paymentsData, unitsData, lettersData, projectsData] = await Promise.all([
+      const [paymentsData, projectsData] = await Promise.all([
         window.api.payments.getAll(),
-        window.api.units.getAll(),
-        window.api.letters.getAll(),
         window.api.projects.getAll()
       ])
       setPayments(paymentsData)
-      setUnits(unitsData)
-      setLetters(lettersData)
       setProjects(projectsData)
       setSelectedRowKeys([])
     } catch (error) {
@@ -151,6 +114,24 @@ const Payments: React.FC = () => {
 
   useEffect(() => {
     fetchData()
+  }, [])
+
+  useEffect(() => {
+    const loadReferenceData = async (): Promise<void> => {
+      try {
+        const [unitsData, lettersData] = await Promise.all([
+          window.api.units.getAll(),
+          window.api.letters.getAll()
+        ])
+        setUnits(unitsData)
+        setLetters(lettersData)
+      } catch (error) {
+        console.error('Failed to fetch payment reference data:', error)
+        message.error('Failed to load project unit data')
+      }
+    }
+
+    void loadReferenceData()
   }, [])
 
   useEffect(() => {
@@ -189,8 +170,11 @@ const Payments: React.FC = () => {
     if (!years.includes(defaultFY)) {
       years.unshift(defaultFY)
     }
-    return years
-  }, [payments, defaultFY])
+    if (!years.includes(upcomingFY)) {
+      years.unshift(upcomingFY)
+    }
+    return Array.from(new Set(years)).sort().reverse()
+  }, [payments, defaultFY, upcomingFY])
 
   // Check if any filters are active
   const hasActiveFilters = useMemo(() => {
@@ -307,6 +291,7 @@ const Payments: React.FC = () => {
         (payment.receipt_number || '').toLowerCase().includes(searchText.toLowerCase())
       const matchProject =
         !selectedProject ||
+        payment.project_id === selectedProject ||
         projects.find((s) => s.id === selectedProject)?.name === payment.project_name
       const matchMode = !selectedMode || payment.payment_mode === selectedMode
       const matchFY = !selectedFY || payment.financial_year === selectedFY
@@ -410,15 +395,22 @@ const Payments: React.FC = () => {
 
   const calculateAmountsFromLetters = useCallback(() => {
     if (!bulkProject) return
+    const selectedBulkFY = bulkForm.getFieldValue('financial_year')
+    let matchedCount = 0
 
     const updatedPayments = bulkPayments.map((payment) => {
-      // Find the latest maintenance letter for this unit
       const unitLetters = letters
-        .filter((l) => l.unit_id === payment.unit_id && l.status !== 'Paid')
+        .filter(
+          (l) =>
+            l.unit_id === payment.unit_id &&
+            l.status !== 'Paid' &&
+            (!selectedBulkFY || l.financial_year === selectedBulkFY)
+        )
         .sort((a, b) => b.financial_year.localeCompare(a.financial_year))
 
       if (unitLetters.length > 0) {
         const latestLetter = unitLetters[0]
+        matchedCount += 1
         return {
           ...payment,
           payment_amount: latestLetter.final_amount
@@ -428,8 +420,12 @@ const Payments: React.FC = () => {
     })
 
     setBulkPayments(updatedPayments)
-    message.success('Calculated amounts from maintenance letters')
-  }, [bulkProject, bulkPayments, letters])
+    message.success(
+      selectedBulkFY
+        ? `Calculated amounts from FY ${selectedBulkFY} maintenance letters for ${matchedCount} unit(s)`
+        : `Calculated amounts from maintenance letters for ${matchedCount} unit(s)`
+    )
+  }, [bulkForm, bulkProject, bulkPayments, letters])
 
   const handleBulkModalOk = async (): Promise<void> => {
     try {
@@ -838,6 +834,7 @@ const Payments: React.FC = () => {
       (payment.receipt_number || '').toLowerCase().includes(searchText.toLowerCase())
     const matchProject =
       !selectedProject ||
+      payment.project_id === selectedProject ||
       projects.find((s) => s.id === selectedProject)?.name === payment.project_name
     const matchMode = !selectedMode || payment.payment_mode === selectedMode
     const matchFY = !selectedFY || payment.financial_year === selectedFY
@@ -1176,6 +1173,13 @@ const Payments: React.FC = () => {
                   <Divider orientation={'left' as DividerProps['orientation']} plain>
                     Maintenance Letter
                   </Divider>
+                  <Alert
+                    type="info"
+                    showIcon
+                    style={{ marginBottom: 12 }}
+                    message="Recommended payment flow"
+                    description="For billed units, select the maintenance letter first. That will align the financial year and suggested amount automatically."
+                  />
                   <Row gutter={[16, 8]}>
                     <Col xs={24} md={12}>
                       <Form.Item
@@ -1241,13 +1245,13 @@ const Payments: React.FC = () => {
                         extra={
                           <div style={{ fontSize: '12px' }}>
                             <Text type="secondary">
-                              Format: YYYY-YY (e.g., 2024-25, 2025-26)
+                              Current FY: {defaultFY}. Upcoming FY: {upcomingFY}. The current financial year is selected automatically by default.
                             </Text>
                             {selectedLetter && (
                               <>
                                 <br />
                                 <Text type="warning">
-                                  Pre-filled from letter - can be edited if needed
+                                  Locked to the selected maintenance letter. Clear the letter to change FY.
                                 </Text>
                               </>
                             )}
@@ -1257,7 +1261,7 @@ const Payments: React.FC = () => {
                         <Select
                           className="app-combobox"
                           placeholder="Select Financial Year"
-                          disabled={false}
+                          disabled={Boolean(selectedLetter)}
                           showSearch
                           filterOption={(input, option) => {
                             const optionText = option?.children?.toString() || ''
@@ -1274,7 +1278,11 @@ const Payments: React.FC = () => {
                             .reverse()
                             .map((fy) => (
                               <Option key={fy} value={fy}>
-                                {fy}
+                                {fy === defaultFY
+                                  ? `${fy} (Current)`
+                                  : fy === upcomingFY
+                                    ? `${fy} (Upcoming)`
+                                    : fy}
                               </Option>
                             ))}
                         </Select>
@@ -1417,6 +1425,7 @@ const Payments: React.FC = () => {
                 }
               ]}
               style={{ flex: 1 }}
+              extra={`Current FY: ${defaultFY}. Upcoming FY: ${upcomingFY}. The current financial year is selected automatically by default.`}
             >
               <Select
                 placeholder="Select Year"
@@ -1428,7 +1437,11 @@ const Payments: React.FC = () => {
                   .reverse()
                   .map((fy) => (
                     <Option key={fy} value={fy}>
-                      {fy}
+                      {fy === defaultFY
+                        ? `${fy} (Current)`
+                        : fy === upcomingFY
+                          ? `${fy} (Upcoming)`
+                          : fy}
                     </Option>
                   ))}
               </Select>

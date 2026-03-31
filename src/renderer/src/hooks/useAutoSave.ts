@@ -18,7 +18,19 @@ export interface AutoSaveOptions<T> {
   debounce?: number
 }
 
-export const useAutoSave = <T extends Record<string, unknown>>(options: AutoSaveOptions<T>) => {
+export interface AutoSaveResult<T> {
+  formState: FormState<T>
+  updateData: (newData: Partial<T>) => void
+  resetForm: () => void
+  forceSave: () => Promise<void>
+  discardChanges: () => void
+  hasUnsavedChanges: boolean
+  lastSaved?: Date
+}
+
+export const useAutoSave = <T extends Record<string, unknown>>(
+  options: AutoSaveOptions<T>
+): AutoSaveResult<T> => {
   const {
     initialData,
     saveFunction,
@@ -38,21 +50,6 @@ export const useAutoSave = <T extends Record<string, unknown>>(options: AutoSave
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const lastSaveRef = useRef<Date | null>(null)
-
-  // Auto-save interval
-  useEffect(() => {
-    intervalRef.current = setInterval(() => {
-      if (formState.isDirty && formState.isValid) {
-        performSave()
-      }
-    }, interval)
-
-    return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
-      }
-    }
-  }, [formState.isDirty, formState.isValid, interval])
 
   const performSave = useCallback(async () => {
     if (!formState.isDirty || !formState.isValid) {
@@ -94,6 +91,21 @@ export const useAutoSave = <T extends Record<string, unknown>>(options: AutoSave
     onSaveError
   ])
 
+  // Auto-save interval
+  useEffect(() => {
+    intervalRef.current = setInterval(() => {
+      if (formState.isDirty && formState.isValid) {
+        void performSave()
+      }
+    }, interval)
+
+    return () => {
+      if (intervalRef.current) {
+        clearInterval(intervalRef.current)
+      }
+    }
+  }, [formState.isDirty, formState.isValid, interval, performSave])
+
   const updateData = useCallback(
     (newData: Partial<T>) => {
       const updatedData = { ...formState.data, ...newData }
@@ -113,7 +125,7 @@ export const useAutoSave = <T extends Record<string, unknown>>(options: AutoSave
 
       saveTimeoutRef.current = setTimeout(() => {
         if (isValid) {
-          performSave()
+          void performSave()
         }
       }, debounce)
     },

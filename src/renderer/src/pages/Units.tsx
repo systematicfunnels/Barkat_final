@@ -742,7 +742,8 @@ const Units: React.FC = () => {
             restoreFn: async (deletedUnits) => {
               // Restore each deleted unit by recreating it
               for (const unit of deletedUnits) {
-                const { id, ...unitData } = unit
+                const unitData = { ...unit }
+                delete unitData.id
                 await window.api.units.create(unitData)
               }
             }
@@ -1184,24 +1185,6 @@ const Units: React.FC = () => {
       width: 100,
       align: 'right' as const,
       sorter: (a: Unit, b: Unit) => a.area_sqft - b.area_sqft
-    },
-    {
-      title: 'Penalty',
-      dataIndex: 'penalty',
-      key: 'penalty',
-      responsive: ['md' as const],
-      align: 'right' as const,
-      render: (val: number) => (val ? `Rs. ${val}` : '-'),
-      sorter: (a: Unit, b: Unit) => (a.penalty || 0) - (b.penalty || 0)
-    },
-    {
-      title: 'Late Payment %',
-      dataIndex: 'penalty_percentage',
-      key: 'penalty_percentage',
-      responsive: ['md' as const],
-      align: 'right' as const,
-      render: (val: number) => (val !== null && val !== undefined ? `${val}%` : 'Default'),
-      sorter: (a: Unit, b: Unit) => (a.penalty_percentage || 0) - (b.penalty_percentage || 0)
     },
     {
       title: 'Status',
@@ -1879,7 +1862,7 @@ const Units: React.FC = () => {
                       )
                     },
                     {
-                      title: 'Penalty',
+                      title: 'Legacy Penalty',
                       dataIndex: 'penalty',
                       key: 'penalty',
                       width: 100,
@@ -1990,7 +1973,10 @@ const Units: React.FC = () => {
             <Divider orientation={'left' as DividerProps['orientation']} plain style={{ marginTop: 0 }}>
               Unit Information
             </Divider>
-            <Row gutter={[16, 8]}>
+            <Text type="secondary" className="page-helper-text">
+              Late-payment penalty is managed in Project Rates, not at unit level.
+            </Text>
+            <Row gutter={[16, 8]} className="unit-info-row">
             <Col span={24}>
               <Form.Item
                 name="project_id"

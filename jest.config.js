@@ -7,7 +7,7 @@ module.exports = {
     '**/__tests__/**/*.test.tsx'
   ],
   transform: {
-    '^.+\\.tsx?$': 'ts-jest'
+    '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.node.json' }]
   },
   collectCoverageFrom: [
     'src/**/*.ts',
@@ -20,10 +20,5 @@ module.exports = {
   coverageReporters: ['text', 'lcov', 'html'],
   setupFilesAfterEnv: ['<rootDir>/src/__tests__/setup.ts'],
   moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx', 'json'],
-  testTimeout: 10000,
-  globals: {
-    'ts-jest': {
-      tsconfig: 'tsconfig.node.json'
-    }
-  }
+  testTimeout: 10000
 }

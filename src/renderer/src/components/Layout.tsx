@@ -161,8 +161,14 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   useEffect(() => {
     if (isMobile) {
-      setMobileDrawerOpen(false)
+      const closeTimer = window.setTimeout(() => {
+        setMobileDrawerOpen(false)
+      }, 0)
+
+      return () => window.clearTimeout(closeTimer)
     }
+
+    return undefined
   }, [isMobile, location.pathname])
 
   const handleMenuClick = useCallback((key: string) => {

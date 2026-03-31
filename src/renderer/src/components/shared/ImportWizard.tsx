@@ -128,11 +128,39 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
       setRawData(data.slice(0, maxPreviewRows))
       setCurrentStep(1)
       return false // Prevent auto-upload
-    } catch (error) {
+    } catch {
       message.error('Failed to read file')
       return false
     }
   }, [onUpload, maxPreviewRows])
+
+  async function handleMap() {
+    try {
+      let mapped: ImportPreview[]
+      if (onMap) {
+        mapped = await onMap(rawData)
+      } else {
+        // Default mapping
+        mapped = rawData.map((row, idx) => ({
+          id: `row-${idx}`,
+          rowNumber: idx + 2,
+          data: row,
+          mappedData: row,
+          errors: validationErrors.filter((e) => e.row === idx + 2 && e.severity === 'error'),
+          warnings: validationErrors.filter((e) => e.row === idx + 2 && e.severity === 'warning'),
+          status: validationErrors.some((e) => e.row === idx + 2 && e.severity === 'error')
+            ? 'invalid'
+            : validationErrors.some((e) => e.row === idx + 2)
+              ? 'warning'
+              : 'valid'
+        }))
+      }
+      setPreviewData(mapped)
+      setSelectedRows(mapped.filter((p) => p.status !== 'invalid').map((p) => p.id))
+    } catch {
+      message.error('Data mapping failed')
+    }
+  }
 
   const handleValidate = useCallback(async () => {
     try {
@@ -159,44 +187,16 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
       setValidationErrors(errors)
       
       // Auto-advance if no errors, or go to preview
-      if (errors.filter(e => e.severity === 'error').length === 0) {
+      if (errors.filter((e) => e.severity === 'error').length === 0) {
         await handleMap()
         setCurrentStep(2)
       } else {
         setCurrentStep(1)
       }
-    } catch (error) {
+    } catch {
       message.error('Validation failed')
     }
-  }, [rawData, columns, onValidate])
-
-  const handleMap = useCallback(async () => {
-    try {
-      let mapped: ImportPreview[]
-      if (onMap) {
-        mapped = await onMap(rawData)
-      } else {
-        // Default mapping
-        mapped = rawData.map((row, idx) => ({
-          id: `row-${idx}`,
-          rowNumber: idx + 2,
-          data: row,
-          mappedData: row,
-          errors: validationErrors.filter(e => e.row === idx + 2 && e.severity === 'error'),
-          warnings: validationErrors.filter(e => e.row === idx + 2 && e.severity === 'warning'),
-          status: validationErrors.some(e => e.row === idx + 2 && e.severity === 'error') 
-            ? 'invalid' 
-            : validationErrors.some(e => e.row === idx + 2) 
-              ? 'warning' 
-              : 'valid'
-        }))
-      }
-      setPreviewData(mapped)
-      setSelectedRows(mapped.filter(p => p.status !== 'invalid').map(p => p.id))
-    } catch (error) {
-      message.error('Data mapping failed')
-    }
-  }, [rawData, validationErrors, onMap])
+  }, [rawData, columns, onValidate, handleMap])
 
   const handleImport = useCallback(async () => {
     const validRows = previewData.filter(p => selectedRows.includes(p.id) && p.status !== 'invalid')

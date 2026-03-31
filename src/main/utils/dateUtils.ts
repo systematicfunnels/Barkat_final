@@ -24,6 +24,15 @@ export function getCurrentFinancialYear(): string {
 }
 
 /**
+ * Returns the upcoming financial year after the supplied/current FY.
+ */
+export function getUpcomingFinancialYear(financialYear?: string): string {
+  const baseFY = financialYear || getCurrentFinancialYear()
+  const startYear = getFYStartYear(baseFY)
+  return `${startYear + 1}-${String(startYear + 2).slice(-2)}`
+}
+
+/**
  * Returns the start year of a financial year string.
  * @param fy Financial year string in YYYY-YY or YYYY format.
  */

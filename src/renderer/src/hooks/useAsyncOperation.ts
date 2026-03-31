@@ -1,3 +1,4 @@
+import { useCallback } from 'react'
 import { message } from 'antd'
 
 export interface AsyncOperationResult<T> {
@@ -9,7 +10,9 @@ export interface AsyncOperationResult<T> {
 export class AsyncOperationManager {
   private static instance: AsyncOperationManager
 
-  private constructor() {}
+  private constructor() {
+    return
+  }
 
   public static getInstance(): AsyncOperationManager {
     if (!AsyncOperationManager.instance) {
@@ -72,7 +75,12 @@ export class AsyncOperationManager {
 export const asyncOperationManager = AsyncOperationManager.getInstance()
 
 // Custom hook for async operations
-export const useAsyncOperation = () => {
-  const execute = asyncOperationManager.execute.bind(asyncOperationManager)
+export const useAsyncOperation = (): {
+  execute: typeof asyncOperationManager.execute
+} => {
+  const execute = useCallback(
+    asyncOperationManager.execute.bind(asyncOperationManager),
+    []
+  )
   return { execute }
 }

@@ -83,6 +83,60 @@ export interface MaintenanceLetter {
   add_ons_total?: number
 }
 
+export interface BatchLetterResult {
+  success: boolean
+  createdCount: number
+  skippedCount: number
+  createdLetterIds: number[]
+  skippedUnitIds: number[]
+}
+
+export interface FinancialReportYearlyData {
+  billed: number
+  paid: number
+  balance: number
+}
+
+export interface FinancialReportRow {
+  key: string
+  unit_id: number
+  unit_number: string
+  owner_name: string
+  project_name: string
+  unit_type: string
+  unit_status: string
+  total_billed: number
+  total_paid: number
+  outstanding: number
+  [year: string]: string | number | FinancialReportYearlyData
+}
+
+export interface FinancialReportYearlyTotal {
+  year: string
+  billed: number
+  paid: number
+  balance: number
+  unitCount: number
+}
+
+export interface FinancialReportSummary {
+  rows: FinancialReportRow[]
+  years: string[]
+  stats: {
+    totalBilled: number
+    totalCollected: number
+    outstanding: number
+  }
+  yearlyTotals: FinancialReportYearlyTotal[]
+}
+
+export interface FinancialReportFilters {
+  searchText?: string
+  selectedUnitType?: string | null
+  selectedStatus?: string | null
+  outstandingRange?: [number | null, number | null]
+}
+
 export interface MaintenanceRate {
   id?: number
   project_id: number
@@ -90,6 +144,7 @@ export interface MaintenanceRate {
   unit_type?: string
   rate_per_sqft: number
   gst_percent?: number
+  penalty_percentage?: number | null
   billing_frequency?: string
   project_name?: string
 }
@@ -104,6 +159,29 @@ export interface ProjectAddonTemplate {
   sort_order: number
   created_at?: string
   updated_at?: string
+}
+
+export interface ProjectChargesConfig {
+  project_id: number
+  na_tax_per_sqft?: number
+  road_maintenance_charge?: number
+  cable_per_month?: number
+  gst_percent?: number
+  penalty_percent?: number
+}
+
+export interface ProjectAddonTemplateInput {
+  project_id: number
+  addon_name: string
+  addon_type: 'fixed' | 'rate_per_sqft'
+  amount: number
+  is_enabled: boolean
+  sort_order?: number
+}
+
+export interface ProjectAddonTemplateReorderItem {
+  id: number
+  sort_order: number
 }
 
 export interface ProjectSectorPaymentConfig {
@@ -160,7 +238,9 @@ export interface StandardWorkbookRateRow {
   cable_flat?: number
   gst_percent?: number
   penalty_percent?: number
+  penalty_percentage?: number
   discount_percent?: number
+  discount_percentage?: number
   due_date?: string
 }
 
@@ -253,6 +333,19 @@ export interface ChargeEntry {
   amount: number
 }
 
+export interface DetailedLetterPreviewRow {
+  key: string
+  particulars: string
+  plot_area: number | null
+  rate: number | null
+  amount: number | null
+  penalty: number | null
+  discount: number | null
+  before_due: number | null
+  after_due: number | null
+  isTotal?: boolean
+}
+
 export interface LetterCalculation {
   unit_details: {
     unit_number: string
@@ -271,6 +364,7 @@ export interface LetterCalculation {
     cable_charges: number
   }
   charges_breakdown: ChargeEntry[]
+  preview_rows: DetailedLetterPreviewRow[]
   totals: {
     total_arrears_with_penalty: number
     total_current_charges: number
@@ -278,6 +372,7 @@ export interface LetterCalculation {
     early_payment_discount: number
     amount_payable_before_due: number
     amount_payable_after_due: number
+    penalty_percentage?: number
   }
   bank_details: {
     name: string
@@ -333,14 +428,14 @@ declare global {
           totalBilled: number
           totalOutstanding: number
         }>
-        getChargesConfig: (projectId: number) => Promise<Record<string, unknown> | null>
-        saveChargesConfig: (config: Record<string, unknown>) => Promise<boolean>
+        getChargesConfig: (projectId: number) => Promise<ProjectChargesConfig | null>
+        saveChargesConfig: (config: ProjectChargesConfig) => Promise<boolean>
         getAddonTemplates: (projectId: number) => Promise<ProjectAddonTemplate[]>
         getEnabledAddonTemplates: (projectId: number) => Promise<ProjectAddonTemplate[]>
-        createAddonTemplate: (template: Omit<ProjectAddonTemplate, 'id' | 'created_at' | 'updated_at'>) => Promise<ProjectAddonTemplate>
-        updateAddonTemplate: (id: number, template: Partial<Omit<ProjectAddonTemplate, 'id' | 'created_at' | 'updated_at'>>) => Promise<ProjectAddonTemplate>
+        createAddonTemplate: (template: ProjectAddonTemplateInput) => Promise<ProjectAddonTemplate>
+        updateAddonTemplate: (id: number, template: Partial<ProjectAddonTemplateInput>) => Promise<ProjectAddonTemplate>
         deleteAddonTemplate: (id: number) => Promise<boolean>
-        reorderAddonTemplates: (templates: Array<{ id: number; sort_order: number }>) => Promise<boolean>
+        reorderAddonTemplates: (templates: ProjectAddonTemplateReorderItem[]) => Promise<boolean>
         initializeDefaultAddonTemplates: (projectId: number) => Promise<boolean>
         migrateAddonTemplates: (projectId: number) => Promise<{ migrated: number; templates: ProjectAddonTemplate[] }>
       }
@@ -369,7 +464,7 @@ declare global {
           letterDate: string
           dueDate: string
           addOns?: { addon_name: string; addon_amount: number }[]
-        }) => Promise<boolean>
+        }) => Promise<BatchLetterResult>
         delete: (id: number) => Promise<boolean>
         bulkDelete: (ids: number[]) => Promise<boolean>
         generatePdf: (id: number) => Promise<string>
@@ -411,6 +506,13 @@ declare global {
         bulkDelete: (ids: number[]) => Promise<boolean>
         generateReceiptPdf: (id: number) => Promise<string>
       }
+      reports: {
+        getFinancialSummary: (
+          projectId?: number,
+          filters?: FinancialReportFilters
+        ) => Promise<FinancialReportSummary>
+        getAvailableFinancialYears: (projectId?: number) => Promise<string[]>
+      }
       shell: {
         showItemInFolder: (path: string) => void
       }
@@ -443,11 +545,27 @@ declare global {
           backupPath?: string
           error?: string
         }>
+        exportBackup: (destinationPath: string) => Promise<{
+          success: boolean
+          backupPath?: string
+          error?: string
+          size?: number
+          timestamp?: string
+        }>
         restoreBackup: (backupPath: string) => Promise<{
           success: boolean
           error?: string
+          requiresRestart?: boolean
+          criticalFailure?: boolean
         }>
-        listBackups: () => Promise<string[]>
+        listBackups: () => Promise<
+          Array<{
+            name: string
+            path: string
+            timestamp: string
+            size: number
+          }>
+        >
         startAutoBackup: (intervalDays?: number) => Promise<{
           enabled: boolean
           intervalDays: number
@@ -458,6 +576,13 @@ declare global {
         getConfig: () => Promise<{
           enabled: boolean
           intervalDays: number
+        }>
+      }
+      system: {
+        getAppInfo: () => Promise<{
+          version: string
+          isPackaged: boolean
+          platform: string
         }>
       }
       settings: {

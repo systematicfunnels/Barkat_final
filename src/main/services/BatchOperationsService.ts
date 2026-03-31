@@ -5,6 +5,7 @@
 
 import { dbService } from '../db/database'
 import { Payment } from './PaymentService'
+import { getCurrentFinancialYear } from '../utils/dateUtils'
 
 export interface BulkPaymentResult {
   successful: number
@@ -58,9 +59,7 @@ class BatchOperationsService {
         }
 
         if (!resolvedFinancialYear) {
-          const currentYear =
-            new Date().getMonth() < 3 ? new Date().getFullYear() - 1 : new Date().getFullYear()
-          resolvedFinancialYear = `${currentYear}-${(currentYear + 1).toString().slice(2)}`
+          resolvedFinancialYear = getCurrentFinancialYear()
         }
 
         if (!resolvedLetterId && resolvedFinancialYear) {

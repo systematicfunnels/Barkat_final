@@ -19,7 +19,9 @@ export class Logger {
   private maxLogSize = 1000
   private currentLogLevel = process.env.NODE_ENV === 'production' ? LogLevel.INFO : LogLevel.DEBUG
 
-  private constructor() {}
+  private constructor() {
+    return
+  }
 
   public static getInstance(): Logger {
     if (!Logger.instance) {

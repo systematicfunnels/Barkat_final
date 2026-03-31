@@ -36,13 +36,23 @@ class BackupService {
     retentionDays: 90
   }
   private scheduleId: NodeJS.Timeout | null = null
+  private readonly isDevelopment =
+    process.env.NODE_ENV === 'development' || process.env.ELECTRON_IS_DEV === '1'
+
+  private logInfo(message: string, ...args: unknown[]): void {
+    if (this.isDevelopment) {
+      console.log(message, ...args)
+    }
+  }
+
+  private logError(message: string, ...args: unknown[]): void {
+    if (this.isDevelopment) {
+      console.error(message, ...args)
+    }
+  }
 
   constructor() {
-    // Use electron-log if available, fallback to console
-    const log = (global as { log?: { info: (...args: unknown[]) => void; error: (...args: unknown[]) => void } }).log || console
-    log.info?.('[BACKUP] Backup service initialized') ?? console.log('[BACKUP] Backup service initialized')
-    log.info?.(`[BACKUP] Database path: ${this.dbPath}`) ?? console.log(`[BACKUP] Database path: ${this.dbPath}`)
-    log.info?.(`[BACKUP] Backup directory: ${this.backupDir}`) ?? console.log(`[BACKUP] Backup directory: ${this.backupDir}`)
+    this.logInfo('[BACKUP] Backup service initialized')
   }
 
   private async ensureBackupDir(): Promise<void> {
@@ -58,7 +68,7 @@ class BackupService {
    */
   async createBackup(): Promise<BackupResult> {
     try {
-      console.log('[BACKUP] Starting backup creation...')
+      this.logInfo('[BACKUP] Starting backup creation...')
       await this.ensureBackupDir()
 
       // Check if database exists before attempting backup
@@ -71,11 +81,11 @@ class BackupService {
         }
       }
 
-      const timestamp = new Date().toISOString().replace(/[:\-]/g, '').slice(0, 15)
+      const timestamp = new Date().toISOString().replace(/[:-]/g, '').slice(0, 15)
       const backupName = `barkat_${timestamp}.db.bak`
       const backupPath = path.join(this.backupDir, backupName)
 
-      console.log('[BACKUP] Creating backup:', backupPath)
+      this.logInfo('[BACKUP] Creating backup:', backupPath)
 
       // Copy the DB file
       const result = await copyFileAsync(this.dbPath, backupPath)
@@ -132,8 +142,7 @@ class BackupService {
       }
 
       // Close DB connection before restore (required on Windows to release file lock)
-      const log = (global as { log?: { info: (...args: unknown[]) => void } }).log || console
-      log.info?.('[BACKUP] Closing database connection for restore...') ?? console.log('[BACKUP] Closing database connection for restore...')
+      this.logInfo('[BACKUP] Closing database connection for restore...')
       dbService.close()
       dbWasClosed = true
 
@@ -158,8 +167,7 @@ class BackupService {
       const message = error instanceof Error ? error.message : String(error)
       // If DB was closed but restore failed, we can't recover here - requires manual intervention
       if (dbWasClosed) {
-        const logErr = (global as { log?: { error: (...args: unknown[]) => void } }).log || { error: (...args: unknown[]) => console.error(...args) }
-        logErr.error?.('[BACKUP] Database was closed but restore failed. Manual restart required:', message) ?? console.error('[BACKUP] Database was closed but restore failed. Manual restart required:', message)
+        this.logError('[BACKUP] Database was closed but restore failed. Manual restart required:', message)
         return {
           success: false,
           error: `Restore failed: ${message}. CRITICAL: Database connection was closed. Application restart required.`,
@@ -170,6 +178,43 @@ class BackupService {
       return {
         success: false,
         error: `Restore failed: ${message}`
+      }
+    }
+  }
+
+  async exportBackup(destinationPath: string): Promise<BackupResult> {
+    try {
+      if (!destinationPath) {
+        return { success: false, error: 'Destination path is required' }
+      }
+
+      const backupResult = await this.createBackup()
+      if (!backupResult.success || !backupResult.backupPath) {
+        return {
+          success: false,
+          error: backupResult.error || 'Failed to create temporary backup'
+        }
+      }
+
+      const result = await copyFileAsync(backupResult.backupPath, destinationPath)
+      if (!result.success) {
+        return {
+          success: false,
+          error: result.error
+        }
+      }
+
+      return {
+        success: true,
+        backupPath: destinationPath,
+        size: result.size,
+        timestamp: new Date().toISOString()
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        success: false,
+        error: `Export failed: ${message}`
       }
     }
   }
@@ -213,8 +258,7 @@ class BackupService {
       )
       return results.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     } catch (error) {
-      const logErr = (global as { log?: { error: (msg: string, err: unknown) => void } }).log || { error: (msg: string) => console.error(msg) }
-      logErr.error?.('Error listing backups:', error) ?? console.error('Error listing backups:', error)
+      this.logError('Error listing backups:', error)
       return []
     }
   }
@@ -255,7 +299,7 @@ class BackupService {
         }
       }
     } catch (error) {
-      console.error('Error cleaning up backups:', error)
+      this.logError('Error cleaning up backups:', error)
     }
   }
 
@@ -271,11 +315,11 @@ class BackupService {
     const intervalMs = intervalDays * 24 * 60 * 60 * 1000
 
     // Run first backup immediately (async, non-blocking)
-    this.createBackup().catch((e) => console.error('Initial backup failed:', e))
+    this.createBackup().catch((e) => this.logError('Initial backup failed:', e))
 
     // Then schedule recurring backups
     this.scheduleId = setInterval(() => {
-      this.createBackup().catch((e) => console.error('Scheduled backup failed:', e))
+      this.createBackup().catch((e) => this.logError('Scheduled backup failed:', e))
     }, intervalMs)
   }
 

@@ -1,0 +1,240 @@
+import fs from 'fs'
+import path from 'path'
+
+const TEST_DATA_DIR = path.join(process.cwd(), '.test-production-smoke')
+process.env.BARKAT_DB_PATH = path.join(TEST_DATA_DIR, 'barkat.test.db')
+
+jest.mock('electron', () => ({
+  app: {
+    getPath: jest.fn().mockReturnValue(TEST_DATA_DIR),
+    isPackaged: false,
+    getVersion: jest.fn().mockReturnValue('1.1.0')
+  },
+  ipcMain: {
+    handle: jest.fn(),
+    on: jest.fn()
+  },
+  shell: {
+    openPath: jest.fn(),
+    showItemInFolder: jest.fn()
+  },
+  dialog: {
+    showMessageBox: jest.fn().mockResolvedValue({ response: 1 })
+  },
+  BrowserWindow: {
+    getAllWindows: jest.fn(() => [])
+  }
+}))
+
+import { backupService } from '../../main/services/BackupService'
+import { dbService } from '../../main/db/database'
+import { projectService } from '../../main/services/ProjectService'
+import { unitService } from '../../main/services/UnitService'
+import { maintenanceRateService } from '../../main/services/MaintenanceRateService'
+import { maintenanceLetterService } from '../../main/services/MaintenanceLetterService'
+import { paymentService } from '../../main/services/PaymentService'
+
+describe('Barkat production smoke integration', () => {
+  beforeAll(() => {
+    if (!fs.existsSync(TEST_DATA_DIR)) {
+      fs.mkdirSync(TEST_DATA_DIR, { recursive: true })
+    }
+  })
+
+  afterAll(() => {
+    dbService.close()
+    if (fs.existsSync(TEST_DATA_DIR)) {
+      fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true })
+    }
+  })
+
+  test('completes the production workflow from project setup to receipt PDF and backup export', async () => {
+    const projectId = projectService.create({
+      name: `Prod Smoke ${Date.now()}`,
+      city: 'Ahmedabad',
+      status: 'Active',
+      template_type: 'standard',
+      import_profile_key: 'standard_normalized',
+      account_name: 'Barkat Welfare Fund',
+      bank_name: 'Test Bank',
+      account_no: '123456789012',
+      ifsc_code: 'TEST0001234',
+      branch: 'Main Branch',
+      branch_address: 'Test Branch Address',
+      contact_email: 'office@example.com',
+      contact_phone: '+91-9000000000'
+    } as any)
+
+    expect(projectId).toBeGreaterThan(0)
+
+    const unitId = unitService.create({
+      project_id: projectId,
+      unit_number: 'A-101',
+      sector_code: 'A',
+      owner_name: 'Ravi Shah',
+      area_sqft: 1200,
+      unit_type: 'Bungalow',
+      status: 'Sold',
+      billing_address: '123 Billing Street',
+      resident_address: '123 Billing Street'
+    } as any)
+
+    expect(unitId).toBeGreaterThan(0)
+
+    const rateId = maintenanceRateService.create({
+      project_id: projectId,
+      financial_year: '2025-26',
+      unit_type: 'Bungalow',
+      rate_per_sqft: 10,
+      gst_percent: 5,
+      billing_frequency: 'YEARLY'
+    } as any)
+
+    expect(rateId).toBeGreaterThan(0)
+
+    const slabId = maintenanceRateService.addSlab({
+      rate_id: rateId,
+      due_date: '2025-06-30',
+      discount_percentage: 10,
+      is_early_payment: true
+    } as any)
+
+    expect(slabId).toBeGreaterThan(0)
+
+    const batchCreated = maintenanceLetterService.createBatch(
+      projectId,
+      '2025-26',
+      '2025-04-01',
+      '2025-06-30',
+      [unitId],
+      [{ addon_name: 'Cable Charges', addon_amount: 1000 }]
+    )
+
+    expect(batchCreated).toBe(true)
+
+    const letter = maintenanceLetterService
+      .getAll()
+      .find((item) => item.project_id === projectId && item.unit_id === unitId && item.financial_year === '2025-26')
+
+    expect(letter).toBeDefined()
+    expect(letter?.base_amount).toBe(12000)
+    expect(letter?.discount_amount).toBeCloseTo(1200, 1)
+    expect(letter?.final_amount).toBeCloseTo(12400, 1)
+    expect(letter?.status).toBe('Generated')
+
+    const addOns = maintenanceLetterService.getAddOns(letter!.id!)
+    expect(addOns.some((addon) => addon.addon_name === 'GST (5%)')).toBe(true)
+    expect(addOns.some((addon) => addon.addon_name === 'Cable Charges')).toBe(true)
+
+    const letterPdfPath = await maintenanceLetterService.generatePdf(letter!.id!)
+    expect(fs.existsSync(letterPdfPath)).toBe(true)
+
+    const partialPaymentId = paymentService.create({
+      project_id: projectId,
+      unit_id: unitId,
+      letter_id: letter!.id,
+      payment_date: '2025-05-01',
+      payment_amount: 4000,
+      payment_mode: 'Transfer',
+      financial_year: '2025-26',
+      payment_status: 'Received'
+    } as any)
+
+    expect(partialPaymentId).toBeGreaterThan(0)
+    expect(maintenanceLetterService.getById(letter!.id!)?.status).toBe('Generated')
+
+    const finalPaymentId = paymentService.create({
+      project_id: projectId,
+      unit_id: unitId,
+      letter_id: letter!.id,
+      payment_date: '2025-05-15',
+      payment_amount: letter!.final_amount - 4000,
+      payment_mode: 'UPI',
+      financial_year: '2025-26',
+      payment_status: 'Received'
+    } as any)
+
+    expect(finalPaymentId).toBeGreaterThan(0)
+
+    const paidLetter = maintenanceLetterService.getById(letter!.id!)
+    expect(paidLetter?.is_paid).toBeFalsy()
+    expect(paidLetter?.status).toBe('Generated')
+
+    const receiptPdfPath = await paymentService.generateReceiptPdf(finalPaymentId)
+    expect(fs.existsSync(receiptPdfPath)).toBe(true)
+
+    const exportedBackupPath = path.join(TEST_DATA_DIR, 'exports', 'prod-smoke-backup.db')
+    const exportResult = await backupService.exportBackup(exportedBackupPath)
+    expect(exportResult.success).toBe(true)
+    expect(exportResult.backupPath).toBe(exportedBackupPath)
+    expect(fs.existsSync(exportedBackupPath)).toBe(true)
+
+    const availableBackups = await backupService.listBackups()
+    expect(availableBackups.length).toBeGreaterThan(0)
+
+    const backupConfig = backupService.getConfig()
+    expect(backupConfig.enabled).toBe(true)
+    expect(backupConfig.intervalDays).toBeGreaterThan(0)
+  }, 30000)
+
+  test('fails billing when no maintenance rate exists for the selected unit type and year', () => {
+    const projectId = projectService.create({
+      name: `Missing Rate ${Date.now()}`,
+      city: 'Surat',
+      status: 'Active'
+    } as any)
+
+    const unitId = unitService.create({
+      project_id: projectId,
+      unit_number: 'P-001',
+      owner_name: 'Plot Owner',
+      area_sqft: 800,
+      unit_type: 'Plot',
+      status: 'Sold'
+    } as any)
+
+    maintenanceRateService.create({
+      project_id: projectId,
+      financial_year: '2026-27',
+      unit_type: 'Bungalow',
+      rate_per_sqft: 8
+    } as any)
+
+    expect(() =>
+      maintenanceLetterService.createBatch(
+        projectId,
+        '2026-27',
+        '2026-04-01',
+        '2026-06-30',
+        [unitId],
+        []
+      )
+    ).toThrow()
+  })
+
+  test('fails payment creation when the project and unit relationship is invalid', () => {
+    const projectA = projectService.create({ name: `Project A ${Date.now()}`, status: 'Active' } as any)
+    const projectB = projectService.create({ name: `Project B ${Date.now()}`, status: 'Active' } as any)
+
+    const unitId = unitService.create({
+      project_id: projectA,
+      unit_number: 'X-001',
+      owner_name: 'Mismatch Owner',
+      area_sqft: 900,
+      unit_type: 'Bungalow',
+      status: 'Sold'
+    } as any)
+
+    expect(() =>
+      paymentService.create({
+        project_id: projectB,
+        unit_id: unitId,
+        payment_date: '2026-05-01',
+        payment_amount: 2500,
+        payment_mode: 'Cash',
+        financial_year: '2026-27',
+        payment_status: 'Received'
+      } as any)
+    ).toThrow()
+  })
+})

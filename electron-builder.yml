@@ -1,5 +1,5 @@
-appId: com.electron.app
-productName: barkat
+appId: com.barkat.desktop
+productName: Barkat
 directories:
   buildResources: build
 files:
@@ -13,7 +13,7 @@ asarUnpack:
   - resources/**
   - node_modules/better-sqlite3/**
 win:
-  executableName: barkat
+  executableName: Barkat
   icon: resources/icon.png
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
@@ -36,11 +36,8 @@ linux:
   target:
     - AppImage
     - deb
-  maintainer: electronjs.org
+  maintainer: Barkat
   category: Utility
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
-publish:
-  provider: generic
-  url: https://example.com/auto-updates

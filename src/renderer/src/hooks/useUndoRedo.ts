@@ -15,7 +15,20 @@ export interface UndoRedoOptions<T> {
   onRedo?: (operation: OperationHistory<T>) => void
 }
 
-export const useUndoRedo = <T extends Record<string, unknown>>(options: UndoRedoOptions<T> = {}) => {
+export interface UseUndoRedoResult<T> {
+  addToHistory: (operation: string, data: T, type?: OperationHistory<T>['type']) => void
+  undo: () => void
+  redo: () => void
+  canUndo: boolean
+  canRedo: boolean
+  clearHistory: () => void
+  history: OperationHistory<T>[]
+  currentIndex: number
+}
+
+export const useUndoRedo = <T extends Record<string, unknown>>(
+  options: UndoRedoOptions<T> = {}
+): UseUndoRedoResult<T> => {
   const { maxHistory = 50, onUndo, onRedo } = options
 
   const [history, setHistory] = useState<OperationHistory<T>[]>([])
@@ -57,7 +70,7 @@ export const useUndoRedo = <T extends Record<string, unknown>>(options: UndoRedo
         setCurrentIndex(previousIndex)
         // logger.info(`Undid: ${operation.operation}`, 'UndoRedo')
         message.success(`Undid: ${operation.operation}`)
-      } catch (error) {
+      } catch {
         // logger.error('Undo operation failed', error as Error, 'UndoRedo')
         message.error('Failed to undo operation')
       }
@@ -79,7 +92,7 @@ export const useUndoRedo = <T extends Record<string, unknown>>(options: UndoRedo
         setCurrentIndex(nextIndex)
         // logger.info(`Redid: ${operation.operation}`, 'UndoRedo')
         message.success(`Redid: ${operation.operation}`)
-      } catch (error) {
+      } catch {
         // logger.error('Redo operation failed', error as Error, 'UndoRedo')
         message.error('Failed to redo operation')
       }

@@ -23,7 +23,11 @@ import {
   Row,
   Col
 } from 'antd'
-import { isValidFinancialYear } from '../utils/financialYear'
+import {
+  getCurrentFinancialYear,
+  getUpcomingFinancialYear,
+  isValidFinancialYear
+} from '../utils/financialYear'
 import {
   FilePdfOutlined,
   PlusOutlined,
@@ -36,9 +40,16 @@ import {
   CopyOutlined,
   SearchOutlined
 } from '@ant-design/icons'
-import dayjs from 'dayjs'
+import dayjs, { Dayjs } from 'dayjs'
 
-import { MaintenanceLetter, Project, LetterAddOn, Unit, ProjectSetupSummary } from '@preload/types'
+import {
+  MaintenanceLetter,
+  Project,
+  LetterAddOn,
+  Unit,
+  ProjectSetupSummary,
+  MaintenanceRate
+} from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import { UNIT_TYPE_FILTER_OPTIONS } from '../constants/unitTypes'
 import FilterPanel, {
@@ -62,6 +73,18 @@ interface PdfProgress {
   }>
 }
 
+interface BatchLetterConfigSnapshot {
+  project_id: number
+  financial_year: string
+  letter_date: Dayjs
+  due_date: Dayjs
+  add_ons?: Array<{
+    addon_name: string
+    addon_amount: number
+    remarks?: string
+  }>
+}
+
 const Billing: React.FC = () => {
   const [letters, setLetters] = useState<MaintenanceLetter[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -70,9 +93,8 @@ const Billing: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
 
-  // Default to current financial year
-  const currentYear = dayjs().month() < 3 ? dayjs().year() - 1 : dayjs().year()
-  const defaultFY = `${currentYear}-${(currentYear + 1).toString().slice(2)}`
+  const defaultFY = getCurrentFinancialYear()
+  const upcomingFY = getUpcomingFinancialYear(defaultFY)
   const [selectedYear, setSelectedYear] = useState<string | null>(defaultFY)
 
   const [selectedUnitType, setSelectedUnitType] = useState<string | null>('All')
@@ -97,10 +119,13 @@ const Billing: React.FC = () => {
   const [projectUnits, setProjectUnits] = useState<Unit[]>([])
   const [unitsLoading, setUnitsLoading] = useState(false)
   const [unitSearchText, setUnitSearchText] = useState('')
-  const batchProjectId = Form.useWatch('project_id', form)
-  const batchFinancialYear = Form.useWatch('financial_year', form)
+  const [batchProjectId, setBatchProjectId] = useState<number | null>(null)
+  const [batchFinancialYear, setBatchFinancialYear] = useState<string | null>(defaultFY)
+  const [batchConfigSnapshot, setBatchConfigSnapshot] = useState<BatchLetterConfigSnapshot | null>(null)
   const [projectSetupSummary, setProjectSetupSummary] = useState<ProjectSetupSummary | null>(null)
   const [setupSummaryLoading, setSetupSummaryLoading] = useState(false)
+  const [rateDueDateHint, setRateDueDateHint] = useState<string | null>(null)
+  const [lastAutoSyncedDueDate, setLastAutoSyncedDueDate] = useState<string | null>(null)
 
   const [copyingAddOns, setCopyingAddOns] = useState(false)
 
@@ -200,22 +225,37 @@ const Billing: React.FC = () => {
       setUnitsLoading(false)
       setUnitSearchText('')
       setProjectSetupSummary(null)
+      setRateDueDateHint(null)
+      setLastAutoSyncedDueDate(null)
+      setSelectedUnitIds([])
       return
     }
     if (!batchProjectId) {
       setProjectUnits([])
+      if (passedUnitIds.length === 0) {
+        setSelectedUnitIds([])
+      }
       return
     }
     setUnitsLoading(true)
     window.api.units
       .getByProject(batchProjectId)
-      .then((data) => setProjectUnits(data))
+      .then((data) => {
+        setProjectUnits(data)
+
+        if (passedUnitIds.length > 0) {
+          const validPassedIds = new Set(data.map((unit) => unit.id as number))
+          setSelectedUnitIds(passedUnitIds.filter((id) => validPassedIds.has(id)))
+        } else {
+          setSelectedUnitIds([])
+        }
+      })
       .catch(() => {
         message.error('Failed to load units for selected project')
         setProjectUnits([])
       })
       .finally(() => setUnitsLoading(false))
-  }, [batchProjectId, isModalOpen])
+  }, [batchProjectId, isModalOpen, passedUnitIds])
 
   useEffect(() => {
     if (!isModalOpen || !batchProjectId || !batchFinancialYear) {
@@ -250,11 +290,90 @@ const Billing: React.FC = () => {
   }, [batchFinancialYear, batchProjectId, isModalOpen])
 
   useEffect(() => {
-    if (!isModalOpen) return
-    if (passedUnitIds.length === 0) return
-    if (selectedUnitIds.length > 0) return
-    setSelectedUnitIds(passedUnitIds)
-  }, [isModalOpen, passedUnitIds, selectedUnitIds])
+    if (!isModalOpen || !batchProjectId || !batchFinancialYear || !!currentLetter) {
+      setRateDueDateHint(null)
+      return
+    }
+
+    let isCancelled = false
+
+    const syncDueDateFromRate = async (): Promise<void> => {
+      try {
+        const rates = (await window.api.rates.getByProject(batchProjectId)).filter(
+          (rate: MaintenanceRate) => rate.financial_year === batchFinancialYear
+        )
+
+        if (rates.length === 0) {
+          if (!isCancelled) {
+            setRateDueDateHint(null)
+          }
+          return
+        }
+
+        const slabGroups = await Promise.all(
+          rates
+            .filter((rate) => rate.id)
+            .map(async (rate) => ({
+              slabs: await window.api.rates.getSlabs(rate.id as number)
+            }))
+        )
+
+        const dueDates = Array.from(
+          new Set(
+            slabGroups
+              .flatMap(({ slabs }) => slabs)
+              .filter((slab) => slab.is_early_payment && slab.due_date)
+              .map((slab) => slab.due_date)
+          )
+        ).sort()
+
+        if (isCancelled || dueDates.length === 0) {
+          if (!isCancelled) {
+            setRateDueDateHint(null)
+          }
+          return
+        }
+
+        const selectedDueDate = dueDates[0]
+        const existingDueDateValue = form.getFieldValue('due_date') as Dayjs | undefined
+        const existingDueDate = existingDueDateValue?.isValid()
+          ? existingDueDateValue.format('YYYY-MM-DD')
+          : null
+        const canAutoApply =
+          !existingDueDate || !lastAutoSyncedDueDate || existingDueDate === lastAutoSyncedDueDate
+
+        if (canAutoApply) {
+          form.setFieldValue('due_date', dayjs(selectedDueDate))
+          setLastAutoSyncedDueDate(selectedDueDate)
+        }
+
+        if (dueDates.length === 1) {
+          setRateDueDateHint(
+            canAutoApply
+              ? `Due date synced from rate setup: ${dayjs(selectedDueDate).format('DD MMM YYYY')}`
+              : `Rate setup suggests due date ${dayjs(selectedDueDate).format('DD MMM YYYY')}. Your manually chosen due date was kept.`
+          )
+        } else {
+          setRateDueDateHint(
+            canAutoApply
+              ? `Multiple due dates exist for ${batchFinancialYear}. The earliest configured due date (${dayjs(selectedDueDate).format('DD MMM YYYY')}) was applied.`
+              : `Multiple due dates exist for ${batchFinancialYear}. The earliest configured due date is ${dayjs(selectedDueDate).format('DD MMM YYYY')}, but your manual due date was kept.`
+          )
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Failed to sync due date from maintenance rate:', error)
+          setRateDueDateHint(null)
+        }
+      }
+    }
+
+    syncDueDateFromRate()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [batchFinancialYear, batchProjectId, currentLetter, form, isModalOpen, lastAutoSyncedDueDate])
 
   const getDisplayStatus = useCallback(
     (letter: MaintenanceLetter): 'Generated' | 'Modified' | 'Paid' | 'Pending' | 'Overdue' => {
@@ -342,8 +461,12 @@ const Billing: React.FC = () => {
     setPassedUnitIds([])
     setSelectedUnitIds([])
     setBatchModalStep('config')
+    setBatchProjectId(null)
+    setBatchFinancialYear(selectedYear || defaultFY)
+    setBatchConfigSnapshot(null)
     form.resetFields()
     setProjectSetupSummary(null)
+    setRateDueDateHint(null)
     setCurrentLetter(null) // Clear any existing letter when creating new
     
     // Set default add-ons for new letters
@@ -435,12 +558,27 @@ const Billing: React.FC = () => {
     if (batchModalStep === 'config') {
       // Validate configuration step
       try {
-        await form.validateFields(['project_id', 'financial_year', 'letter_date', 'due_date'])
-        const projectId = form.getFieldValue('project_id')
-        const financialYear = form.getFieldValue('financial_year')
+        const values = await form.validateFields([
+          'project_id',
+          'financial_year',
+          'letter_date',
+          'due_date',
+          'add_ons'
+        ])
+        const projectId = values.project_id
+        const financialYear = values.financial_year
         if (projectId && financialYear) {
           const isReady = await ensureProjectReadyForLetters(projectId, financialYear)
           if (!isReady) return
+          setBatchProjectId(projectId)
+          setBatchFinancialYear(financialYear)
+          setBatchConfigSnapshot({
+            project_id: projectId,
+            financial_year: financialYear,
+            letter_date: values.letter_date,
+            due_date: values.due_date,
+            add_ons: values.add_ons || []
+          })
           // Move to unit selection step
           setBatchModalStep('units')
         }
@@ -450,7 +588,14 @@ const Billing: React.FC = () => {
     } else {
       // Generate letters or update existing letter
       try {
-        const values = await form.validateFields()
+        const values = currentLetter
+          ? await form.validateFields()
+          : batchConfigSnapshot
+
+        if (!values?.letter_date || !values?.due_date) {
+          throw new Error('Letter configuration is missing. Please go back to step 1 and recheck the dates.')
+        }
+
         const { project_id, financial_year, letter_date, due_date, add_ons } = values
 
         const letterDate = letter_date.format('YYYY-MM-DD')
@@ -484,10 +629,11 @@ const Billing: React.FC = () => {
           // Now handle addons - get existing addons and compare with new ones
           const existingAddons = await window.api.letters.getAddOns(currentLetter.id)
           const newAddons = add_ons || []
+          type EditableAddon = Pick<LetterAddOn, 'addon_name' | 'addon_amount'>
           
           // Delete addons that are no longer present
           for (const existingAddon of existingAddons) {
-            const stillExists = newAddons.find((newAddOn: any) => 
+            const stillExists = newAddons.find((newAddOn: EditableAddon) => 
               newAddOn.addon_name === existingAddon.addon_name && 
               newAddOn.addon_amount === existingAddon.addon_amount
             )
@@ -540,7 +686,7 @@ const Billing: React.FC = () => {
           // Create new letters
           const isReady = await ensureProjectReadyForLetters(project_id, financial_year)
           if (!isReady) return
-          await window.api.letters.createBatch({
+          const batchResult = await window.api.letters.createBatch({
             projectId: project_id,
             unitIds: selectedUnitIds.length > 0 ? selectedUnitIds : undefined,
             financialYear: financial_year,
@@ -551,15 +697,18 @@ const Billing: React.FC = () => {
               addon_amount: ao.addon_amount
             }))
           })
-          showCompletionWithNextStep(
-            'billing',
-            'Maintenance letters generated successfully',
-            navigate
-          )
+          const completionMessage =
+            batchResult.skippedCount > 0
+              ? `Generated ${batchResult.createdCount} letter(s); skipped ${batchResult.skippedCount} existing record(s)`
+              : `Generated ${batchResult.createdCount} maintenance letter(s) successfully`
+          showCompletionWithNextStep('billing', completionMessage, navigate)
         }
         
         setIsModalOpen(false)
         setBatchModalStep('config')
+        setBatchProjectId(null)
+        setBatchFinancialYear(selectedYear || defaultFY)
+        setBatchConfigSnapshot(null)
         setCurrentLetter(null) // Clear current letter
         fetchData()
       } catch (error: unknown) {
@@ -654,6 +803,15 @@ const Billing: React.FC = () => {
       setPassedUnitIds([record.unit_id])
       setSelectedUnitIds([])
       setBatchModalStep('config')
+      setBatchProjectId(record.project_id)
+      setBatchFinancialYear(record.financial_year)
+      setBatchConfigSnapshot({
+        project_id: record.project_id,
+        financial_year: record.financial_year,
+        letter_date: formValues.letter_date,
+        due_date: formValues.due_date,
+        add_ons: formValues.add_ons
+      })
       setCurrentLetter(record)
       
       // Open modal with form values ready
@@ -856,10 +1014,10 @@ const Billing: React.FC = () => {
   const uniqueYears = useMemo(() => {
     const yearSet = new Set(letters.map((l) => l.financial_year).filter(Boolean))
     yearSet.add(defaultFY)
-    const nextFY = `${currentYear + 1}-${(currentYear + 2).toString().slice(2)}`
+    const nextFY = getUpcomingFinancialYear(defaultFY)
     yearSet.add(nextFY)
     return Array.from(yearSet).sort().reverse()
-  }, [letters, defaultFY, currentYear])
+  }, [letters, defaultFY])
 
   const filteredProjectUnits = useMemo(() => {
     const q = unitSearchText.trim().toLowerCase()
@@ -883,13 +1041,6 @@ const Billing: React.FC = () => {
         .map((l) => l.unit_id)
     )
   }, [letters, batchProjectId, batchFinancialYear])
-
-  // Get selected project name
-  const selectedProjectName = useMemo(() => {
-    if (!selectedProject) return ''
-    const project = projects.find((p) => p.id === selectedProject)
-    return project?.name || ''
-  }, [selectedProject, projects])
 
   const billingStatusOptions = useMemo(
     () => [
@@ -1162,7 +1313,7 @@ const Billing: React.FC = () => {
           message="No maintenance letters yet"
           description={
             <span>
-              Click "Generate Maintenance Letters" to create letters for your units, or check that your projects have units and rates configured.{' '}
+              Click &quot;Generate Maintenance Letters&quot; to create letters for your units, or check that your projects have units and rates configured.{` `}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/projects')}>
                 Check project setup {'->'}
               </Button>
@@ -1238,58 +1389,6 @@ const Billing: React.FC = () => {
             showClearButton={true}
             variant="plain"
           />
-
-          {/* Filter Summary Chips - showing active filter tags */}
-          {hasActiveFilters && (
-            <div
-              style={{
-                marginTop: 16,
-                padding: '12px 16px',
-                background: '#fafafa',
-                borderRadius: 6
-              }}
-            >
-              <Space wrap align="center">
-                <Text type="secondary" style={{ fontSize: '12px', fontWeight: 500 }}>
-                  Active filters:
-                </Text>
-                {searchText && (
-                  <Tag closable onClose={() => setSearchText('')}>
-                    Search: &quot;{searchText}&quot;
-                  </Tag>
-                )}
-                {selectedProject !== null && (
-                  <Tag closable onClose={() => setSelectedProject(null)}>
-                    Project: {selectedProjectName}
-                  </Tag>
-                )}
-                {(selectedYear === null ||
-                  (selectedYear !== null && selectedYear !== defaultFY)) && (
-                  <Tag closable onClose={() => setSelectedYear(defaultFY)}>
-                    Year: {selectedYear ?? 'All'}
-                  </Tag>
-                )}
-                {selectedStatus && (
-                  <Tag closable onClose={() => setSelectedStatus(null)}>
-                    Status: {selectedStatus}
-                  </Tag>
-                )}
-                {selectedUnitType && selectedUnitType !== 'All' && (
-                  <Tag closable onClose={() => setSelectedUnitType('All')}>
-                    Type: {selectedUnitType}
-                  </Tag>
-                )}
-                <Button
-                  type="link"
-                  size="small"
-                  onClick={clearAllFilters}
-                  style={{ fontSize: '12px', padding: 0, height: 'auto' }}
-                >
-                  Clear all filters
-                </Button>
-              </Space>
-            </div>
-          )}
         </Space>
       </Card>
 
@@ -1445,12 +1544,15 @@ const Billing: React.FC = () => {
         onCancel={() => {
           setIsModalOpen(false)
           setBatchModalStep('config')
+          setBatchProjectId(null)
+          setBatchFinancialYear(selectedYear || defaultFY)
+          setBatchConfigSnapshot(null)
           setProjectSetupSummary(null)
         }}
         width={720}
         confirmLoading={loading}
         okText={batchModalStep === 'config' ? 'Next: Select Units' : 'Generate Maintenance Letters'}
-        className="mobile-fullscreen-modal mobile-single-column"
+        className="billing-generate-modal mobile-fullscreen-modal mobile-single-column"
       >
         {passedUnitIds.length > 0 && (
           <Alert
@@ -1498,6 +1600,14 @@ const Billing: React.FC = () => {
             key={currentLetter ? `edit-${currentLetter.id}` : 'create'}
             form={form}
             layout="vertical"
+            onValuesChange={(changedValues, allValues) => {
+              if (Object.prototype.hasOwnProperty.call(changedValues, 'project_id')) {
+                setBatchProjectId((allValues.project_id as number | undefined) ?? null)
+              }
+              if (Object.prototype.hasOwnProperty.call(changedValues, 'financial_year')) {
+                setBatchFinancialYear((allValues.financial_year as string | undefined) ?? null)
+              }
+            }}
             initialValues={
               currentLetter 
                 ? {
@@ -1533,9 +1643,10 @@ const Billing: React.FC = () => {
               <Col xs={24} md={12}>
                 <Form.Item
                   name="financial_year"
-                  label="Financial Year (e.g., 2024-25)"
+                  label="Financial Year"
+                  extra={`Current FY: ${defaultFY}. Upcoming FY: ${upcomingFY}. The current financial year is selected automatically by default.`}
                   rules={[
-                    { required: true, message: 'Please enter financial year' },
+                    { required: true, message: 'Please select financial year' },
                     {
                       validator: (_, value) => {
                         if (!value || isValidFinancialYear(value)) {
@@ -1554,7 +1665,11 @@ const Billing: React.FC = () => {
                   >
                     {uniqueYears.map((year) => (
                       <Option key={year} value={year}>
-                        {year}
+                        {year === defaultFY
+                          ? `${year} (Current)`
+                          : year === upcomingFY
+                            ? `${year} (Upcoming)`
+                            : year}
                       </Option>
                     ))}
                   </Select>
@@ -1583,6 +1698,14 @@ const Billing: React.FC = () => {
                       ) : null
                     }
                   />
+                  {rateDueDateHint && (
+                    <Alert
+                      type="info"
+                      showIcon
+                      message={rateDueDateHint}
+                      style={{ marginTop: 8 }}
+                    />
+                  )}
                 </Col>
               )}
 
@@ -1604,6 +1727,16 @@ const Billing: React.FC = () => {
                 >
                   <DatePicker style={{ width: '100%' }} />
                 </Form.Item>
+              </Col>
+
+              <Col span={24}>
+                <Alert
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 8 }}
+                  message="Recommended manual flow"
+                  description="Select a project, choose a financial year that shows project setup ready, review the letter and due dates, add optional charges if needed, then move to unit selection."
+                />
               </Col>
 
               <Col span={24}>
@@ -1694,6 +1827,15 @@ const Billing: React.FC = () => {
               showIcon
               style={{ marginBottom: 16 }}
             />
+            {!unitsLoading && projectUnits.length === 0 && (
+              <Alert
+                message="No units available for this project"
+                description="Add units to the selected project before generating maintenance letters."
+                type="warning"
+                showIcon
+                style={{ marginBottom: 12 }}
+              />
+            )}
             {alreadyBilledUnitIds.size > 0 && (
               <Alert
                 message={`${alreadyBilledUnitIds.size} unit${alreadyBilledUnitIds.size !== 1 ? 's' : ''} already have a letter for FY ${batchFinancialYear} - shown as "Already billed" and disabled below.`}
@@ -1733,36 +1875,38 @@ const Billing: React.FC = () => {
                 Selected: {selectedUnitIds.length} / {projectUnits.length}
               </Text>
             </Space>
-            <Table
-              size="small"
-              loading={unitsLoading}
-              dataSource={filteredProjectUnits}
-              rowKey="id"
-              pagination={{ pageSize: 4, simple: true }}
-              scroll={undefined}
-              rowSelection={{
-                selectedRowKeys: selectedUnitIds,
-                onChange: (keys) => setSelectedUnitIds(keys as number[]),
-                getCheckboxProps: (record) => ({
-                  disabled: alreadyBilledUnitIds.has(record.id as number)
-                })
-              }}
-              columns={[
-                { title: 'Unit', dataIndex: 'unit_number', key: 'unit_number', width: 90 },
-                { title: 'Owner', dataIndex: 'owner_name', key: 'owner_name', ellipsis: true },
-                {
-                  title: 'Status',
-                  key: 'billed_status',
-                  width: 70,
-                  render: (_: unknown, record: Unit) =>
-                    alreadyBilledUnitIds.has(record.id as number) ? (
-                      <Tag color="green" style={{ fontSize: 9, padding: '0 2px' }}>Billed</Tag>
-                    ) : (
-                      <Tag color="default" style={{ fontSize: 9, padding: '0 2px' }}>Pending</Tag>
-                    )
-                }
-              ]}
-            />
+            <div className="billing-unit-selection-table">
+              <Table
+                size="small"
+                loading={unitsLoading}
+                dataSource={filteredProjectUnits}
+                rowKey="id"
+                pagination={{ pageSize: 4, simple: true }}
+                scroll={{ y: 240 }}
+                rowSelection={{
+                  selectedRowKeys: selectedUnitIds,
+                  onChange: (keys) => setSelectedUnitIds(keys as number[]),
+                  getCheckboxProps: (record) => ({
+                    disabled: alreadyBilledUnitIds.has(record.id as number)
+                  })
+                }}
+                columns={[
+                  { title: 'Unit', dataIndex: 'unit_number', key: 'unit_number', width: 90 },
+                  { title: 'Owner', dataIndex: 'owner_name', key: 'owner_name', ellipsis: true },
+                  {
+                    title: 'Status',
+                    key: 'billed_status',
+                    width: 70,
+                    render: (_: unknown, record: Unit) =>
+                      alreadyBilledUnitIds.has(record.id as number) ? (
+                        <Tag color="green" style={{ fontSize: 9, padding: '0 2px' }}>Billed</Tag>
+                      ) : (
+                        <Tag color="default" style={{ fontSize: 9, padding: '0 2px' }}>Pending</Tag>
+                      )
+                  }
+                ]}
+              />
+            </div>
           </>
         )}
       </Modal>

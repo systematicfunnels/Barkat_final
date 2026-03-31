@@ -1,4 +1,5 @@
 import { dbService } from '../db/database'
+import { normalizeMoney } from '../utils/money'
 
 export interface Unit {
   id?: number
@@ -370,23 +371,26 @@ class UnitService {
               }
 
               const normalizedFinancialYear = String(financial_year || '').trim()
-              const normalizedBaseAmount = Number(base_amount) || 0
-              const normalizedArrears = Number(arrears) || 0
-              const normalizedDiscountAmount =
-                Number((yearData as { discount_amount?: number }).discount_amount) || 0
+              const normalizedBaseAmount = normalizeMoney(base_amount)
+              const normalizedArrears = normalizeMoney(arrears)
+              const normalizedDiscountAmount = normalizeMoney(
+                (yearData as { discount_amount?: number }).discount_amount
+              )
               const normalizedFinalAmountInput = Number(
                 (yearData as { final_amount?: number }).final_amount
               )
               const normalizedDueDate = this.normalizeIsoDate(
                 (yearData as { due_date?: string }).due_date
               )
-              const normalizedYearPenalty = Number((yearData as { penalty?: number }).penalty) || 0
+              const normalizedYearPenalty = normalizeMoney(
+                (yearData as { penalty?: number }).penalty
+              )
 
               const normalizedAddOns = Array.isArray(add_ons)
                 ? add_ons
                     .map((addon) => ({
                       name: String(addon.name || 'Add-on').trim() || 'Add-on',
-                      amount: Number(addon.amount) || 0
+                      amount: normalizeMoney(addon.amount)
                     }))
                     .filter((addon) => addon.amount > 0)
                 : []
@@ -412,11 +416,12 @@ class UnitService {
                 continue
               }
 
-              const calculatedFinalAmount =
+              const calculatedFinalAmount = normalizeMoney(
                 normalizedBaseAmount + normalizedArrears + totalAddons - normalizedDiscountAmount
+              )
               const finalAmount =
                 Number.isFinite(normalizedFinalAmountInput) && normalizedFinalAmountInput > 0
-                  ? normalizedFinalAmountInput
+                  ? normalizeMoney(normalizedFinalAmountInput)
                   : Math.max(calculatedFinalAmount, 0)
 
               // Upsert one maintenance letter per unit + financial year.

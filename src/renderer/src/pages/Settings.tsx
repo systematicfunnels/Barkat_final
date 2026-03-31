@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { Card, Button, Typography, Space, Divider, message, Alert, Modal, List, Tag } from 'antd'
 import { DownloadOutlined, UploadOutlined, ToolOutlined, DatabaseOutlined } from '@ant-design/icons'
 
@@ -15,26 +15,65 @@ type DatabaseRepairResult = {
   logs: string[]
 }
 
+type BackupConfigState = {
+  enabled: boolean
+  intervalDays: number
+}
+
+type BackupListItem = {
+  name: string
+  path: string
+  timestamp: string
+  size: number
+}
+
+type AppInfo = {
+  version: string
+  isPackaged: boolean
+  platform: string
+}
+
 const Settings: React.FC = () => {
-  const [loading, setLoading] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const [repairing, setRepairing] = useState(false)
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(true)
   const [repairResults, setRepairResults] = useState<DatabaseRepairResult | null>(null)
   const [isRepairModalOpen, setIsRepairModalOpen] = useState(false)
+  const [backupConfig, setBackupConfig] = useState<BackupConfigState | null>(null)
+  const [backups, setBackups] = useState<BackupListItem[]>([])
+  const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
+
+  const loadDiagnostics = async (): Promise<void> => {
+    setDiagnosticsLoading(true)
+    try {
+      const [config, backupList, info] = await Promise.all([
+        window.api.backup.getConfig(),
+        window.api.backup.listBackups(),
+        window.api.system.getAppInfo()
+      ])
+      setBackupConfig(config)
+      setBackups(backupList)
+      setAppInfo(info)
+    } catch (error) {
+      console.error('Failed to load settings diagnostics:', error)
+      message.error('Failed to load system diagnostics')
+    } finally {
+      setDiagnosticsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    void loadDiagnostics()
+  }, [])
 
   const handleExport = async (): Promise<void> => {
     try {
-      setLoading(true)
-      
-      // Step 1: Create backup in temp location
-      const result = await window.api.backup.createBackup()
-      if (!result.success || !result.backupPath) {
-        message.error(`Export failed: ${result.error}`)
-        return
-      }
+      setExporting(true)
 
-      // Step 2: Show save dialog to let user choose download location
       const timestamp = new Date().toISOString().replace(/[:.-]/g, '').slice(0, 15)
       const defaultFileName = `barkat_backup_${timestamp}.db`
-      
+
       const savePath = await window.api.dialog.saveFile({
         title: 'Save Database Backup',
         defaultPath: defaultFileName,
@@ -49,24 +88,25 @@ const Settings: React.FC = () => {
         return
       }
 
-      // Step 3: Copy the backup file to user's chosen location
-      const copyResult = await window.api.files.copyAssetFile(result.backupPath, savePath)
-      if (!copyResult.success) {
-        message.error(`Failed to save file: ${copyResult.error}`)
+      const result = await window.api.backup.exportBackup(savePath)
+      if (!result.success || !result.backupPath) {
+        message.error(`Export failed: ${result.error}`)
         return
       }
 
-      message.success(`Database exported successfully to: ${savePath}`)
+      message.success('Database exported successfully')
+      void loadDiagnostics()
     } catch (err: unknown) {
       const error = err as Error
       message.error('Export failed: ' + error.message)
     } finally {
-      setLoading(false)
+      setExporting(false)
     }
   }
 
   const handleImport = async (): Promise<void> => {
     try {
+      setImporting(true)
       const result = await window.api.dialog.selectLocalFile({
         title: 'Select Database Backup File',
         filters: [
@@ -76,11 +116,14 @@ const Settings: React.FC = () => {
       })
 
       if (result) {
-        setLoading(true)
         const importResult = await window.api.backup.restoreBackup(result)
 
         if (importResult.success) {
-          message.success('Database imported successfully. Please restart the application.')
+          message.success(
+            importResult.requiresRestart
+              ? 'Database imported successfully. Restart is required to complete restore.'
+              : 'Database imported successfully.'
+          )
         } else {
           message.error(`Import failed: ${importResult.error}`)
         }
@@ -89,12 +132,12 @@ const Settings: React.FC = () => {
       const error = err as Error
       message.error('Import failed: ' + error.message)
     } finally {
-      setLoading(false)
+      setImporting(false)
     }
   }
 
   const handleDatabaseRepair = async (): Promise<void> => {
-    setLoading(true)
+    setRepairing(true)
     try {
       const results = await window.api.database.repair()
       setRepairResults(results)
@@ -108,7 +151,7 @@ const Settings: React.FC = () => {
       const error = err as Error
       message.error('Database repair failed: ' + error.message)
     } finally {
-      setLoading(false)
+      setRepairing(false)
     }
   }
 
@@ -137,35 +180,35 @@ const Settings: React.FC = () => {
       </div>
 
       <div className="page-info-grid">
-        <Card title="Export Database" className="page-action-card">
+        <Card title="Create Backup" className="page-action-card">
           <Paragraph>
-            Download a backup copy before migrations, system changes, or moving to another machine.
+            Save a backup copy before major changes, before moving to another machine, or before trying a restore.
           </Paragraph>
-          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={loading}>
-            Backup Database
+          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
+            Save Backup Copy
           </Button>
         </Card>
 
         <Card title="Restore Backup" className="page-action-card">
           <Paragraph>
-            Restore a previously exported backup file to recover or move your workspace data.
+            Restore a previously saved backup file when you need to recover an older copy of your workspace data.
           </Paragraph>
           <Text type="secondary" className="page-helper-text">
-            This replaces the current local database with the selected backup.
+            This replaces the current local database with the selected backup file.
           </Text>
-          <Button icon={<UploadOutlined />} onClick={handleImport} loading={loading}>
+          <Button icon={<UploadOutlined />} onClick={handleImport} loading={importing}>
             Restore from Backup
           </Button>
         </Card>
 
-        <Card title="Repair Database" className="page-action-card">
+        <Card title="Repair Data" className="page-action-card">
           <Paragraph>
-            Run integrity checks and repair common foreign-key or relational consistency issues.
+            Check the local database for broken links or consistency problems and try to repair common issues.
           </Paragraph>
           <Text type="secondary" className="page-helper-text">
-            Use this when records look inconsistent or after a failed import or restore.
+            Use this only when records look inconsistent, or after a failed import or restore.
           </Text>
-          <Button icon={<ToolOutlined />} onClick={handleDatabaseRepair} loading={loading}>
+          <Button icon={<ToolOutlined />} onClick={handleDatabaseRepair} loading={repairing}>
             Check & Repair
           </Button>
         </Card>
@@ -174,13 +217,35 @@ const Settings: React.FC = () => {
       <Card title="System Diagnostics" className="page-toolbar-card settings-diagnostics-card">
         <div className="page-soft-panel">
           <Space direction="vertical">
-            <Text>Version: 1.0.0</Text>
+            <Text>Version: {appInfo?.version || 'Loading...'}</Text>
             <Text>Database Type: SQLite 3 (better-sqlite3)</Text>
-            <Text>Environment: Desktop Application (Electron)</Text>
+            <Text>
+              Environment:{' '}
+              {appInfo
+                ? appInfo.isPackaged
+                  ? `Production Desktop App (${appInfo.platform})`
+                  : `Development Desktop App (${appInfo.platform})`
+                : 'Loading...'}
+            </Text>
+            <Text>
+              Auto Backup:{' '}
+              {backupConfig
+                ? backupConfig.enabled
+                  ? `Enabled every ${backupConfig.intervalDays} day(s)`
+                  : 'Disabled'
+                : 'Loading...'}
+            </Text>
+            <Text>Available Backups: {diagnosticsLoading ? 'Loading...' : backups.length}</Text>
             <Alert
-              message="Foreign Key Support"
-              description="Foreign key constraints are enabled to ensure data integrity."
-              type="success"
+              message="Backup Readiness"
+              description={
+                diagnosticsLoading
+                  ? 'Loading backup status...'
+                  : backups.length > 0
+                    ? `Latest backup available: ${new Date(backups[0].timestamp).toLocaleString()}`
+                    : 'No backups found yet. Export a backup before doing restores or major data operations.'
+              }
+              type={backups.length > 0 ? 'success' : 'warning'}
               showIcon
             />
           </Space>

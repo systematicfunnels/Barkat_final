@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   Modal,
   Form,
@@ -14,7 +14,14 @@ import {
   Alert
 } from 'antd'
 import { PlusOutlined, FilePdfOutlined } from '@ant-design/icons'
-import { Project, Unit, LetterCalculation } from '@preload/types'
+import {
+  Project,
+  Unit,
+  LetterCalculation,
+  MaintenanceLetter,
+  MaintenanceRate
+} from '@preload/types'
+import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/financialYear'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -42,28 +49,68 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
   const [loading, setLoading] = useState(false)
   const [calculation, setCalculation] = useState<LetterCalculation | null>(null)
   const [pdfGenerating, setPdfGenerating] = useState(false)
+  const [financialYearOptions, setFinancialYearOptions] = useState<string[]>([])
+
+  const selectedProjectId = Form.useWatch('projectId', form)
 
   const projectOptions = projects.map((project) => ({
     value: project.id,
     label: `${project.name} (${project.project_code || 'No Code'})`
   }))
 
-  const getUnitsForProject = (projectId: number) => {
-    return units.filter((unit) => unit.project_id === projectId)
-  }
+  const selectedProjectUnits = useMemo(() => {
+    return units.filter((unit) => unit.project_id === selectedProjectId)
+  }, [selectedProjectId, units])
 
-  const financialYearOptions = [
-    '2025-26',
-    '2024-25',
-    '2023-24',
-    '2022-23',
-    '2021-22',
-    '2020-21',
-    '2019-20',
-    '2018-19'
-  ]
+  useEffect(() => {
+    if (!visible || !selectedProjectId) {
+      setFinancialYearOptions([])
+      return
+    }
 
-  const handleGenerateCalculation = async (values: FormValues) => {
+    let isCancelled = false
+
+    const loadFinancialYears = async (): Promise<void> => {
+      try {
+        const [rates, letters] = await Promise.all([
+          window.api.rates.getByProject(selectedProjectId) as Promise<MaintenanceRate[]>,
+          window.api.letters.getByProject(selectedProjectId) as Promise<MaintenanceLetter[]>
+        ])
+
+        const defaultFY = getCurrentFinancialYear()
+        const nextFY = getUpcomingFinancialYear(defaultFY)
+
+        const years = Array.from(
+          new Set([
+            ...rates.map((rate) => rate.financial_year),
+            ...letters.map((letter) => letter.financial_year),
+            defaultFY,
+            nextFY
+          ])
+        )
+          .filter((year): year is string => /^\d{4}-\d{2}$/.test(String(year)))
+          .sort()
+          .reverse()
+
+        if (!isCancelled) {
+          setFinancialYearOptions(years)
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          console.error('Failed to load financial years for detailed letter:', error)
+          setFinancialYearOptions([])
+        }
+      }
+    }
+
+    void loadFinancialYears()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [selectedProjectId, visible])
+
+  const handleGenerateCalculation = async (values: FormValues): Promise<void> => {
     setLoading(true)
     try {
       const result = await window.api.detailedLetters.generateLetter(
@@ -81,7 +128,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
     }
   }
 
-  const handleGeneratePdf = async () => {
+  const handleGeneratePdf = async (): Promise<void> => {
     if (!calculation) return
 
     const formValues = form.getFieldsValue()
@@ -102,29 +149,38 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
     }
   }
 
-  const handleCancel = () => {
+  const handleCancel = (): void => {
     setCalculation(null)
     form.resetFields()
+    setFinancialYearOptions([])
     onCancel()
   }
 
-  const arrearsColumns = [
+  const formatCurrency = (value: number | null | undefined): string => {
+    if (value === null || value === undefined) return '-'
+    return `Rs. ${value.toLocaleString('en-IN')}`
+  }
+
+  const previewColumns = [
     {
       title: 'Particulars',
       dataIndex: 'particulars',
       key: 'particulars',
       width: '25%',
-      render: (_: any, record: any) => {
-        const text = record.isBase ? (
-          <div>
-            <div>Current Maintenance</div>
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              @ Rs. {calculation?.unit_details.rate_per_sqft.toFixed(2)} / sqft
-            </Text>
-          </div>
-        ) : record.description;
+      render: (value: string, record: { rate: number | null; isTotal?: boolean }): React.ReactNode => {
+        const content =
+          record.rate !== null ? (
+            <div>
+              <div>{value}</div>
+              <Text type="secondary" style={{ fontSize: '12px' }}>
+                Rate-linked line item
+              </Text>
+            </div>
+          ) : (
+            value
+          )
 
-        return record.isTotal ? <Text strong>{text}</Text> : text;
+        return record.isTotal ? <Text strong>{content}</Text> : content
       }
     },
     {
@@ -133,15 +189,15 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
       key: 'plot_area',
       align: 'center' as const,
       width: '10%',
-      render: (val: any) => val || '—'
+      render: (value: number | null): string => (value !== null ? String(value) : '-')
     },
     {
-      title: 'Rate per year / per sqft',
+      title: 'Rate per sqft',
       dataIndex: 'rate',
       key: 'rate',
       align: 'right' as const,
       width: '13%',
-      render: (val: any) => (val ? `Rs. ${val.toFixed(2)}` : '—')
+      render: (value: number | null): string => (value !== null ? formatCurrency(value) : '-')
     },
     {
       title: 'Amount (Rs.)',
@@ -149,104 +205,50 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
       key: 'amount',
       align: 'right' as const,
       width: '11%',
-      render: (val: number, record: any) => {
-        const text = val ? `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '—';
-        return record.isTotal ? <Text strong>{text}</Text> : text;
+      render: (value: number | null, record: { isTotal?: boolean }): React.ReactNode => {
+        const text = formatCurrency(value)
+        return record.isTotal ? <Text strong>{text}</Text> : text
       }
     },
     {
-      title: `${calculation?.penalty_percentage}% Penalty`,
+      title: `${calculation?.penalty_percentage ?? 0}% Penalty`,
       dataIndex: 'penalty',
       key: 'penalty',
       align: 'right' as const,
       width: '11%',
-      render: (val: any) => (val ? `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '—')
+      render: (value: number | null): string => formatCurrency(value)
     },
     {
-      title: `Discount ${calculation?.discount_percentage}%`,
+      title: `Discount ${calculation?.discount_percentage ?? 0}%`,
       dataIndex: 'discount',
       key: 'discount',
       align: 'right' as const,
       width: '11%',
-      render: (val: any) => (val ? `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}` : '—')
+      render: (value: number | null): string => formatCurrency(value)
     },
     {
-      title: `Before ${calculation?.due_date}`,
-      dataIndex: 'before',
-      key: 'before',
+      title: `Before ${calculation?.due_date ?? '-'}`,
+      dataIndex: 'before_due',
+      key: 'before_due',
       align: 'right' as const,
       width: '11%',
-      render: (val: number, record: any) => {
-        const text = `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
-        return record.isTotal ? <Text strong>{text}</Text> : text;
+      render: (value: number | null, record: { isTotal?: boolean }): React.ReactNode => {
+        const text = formatCurrency(value)
+        return record.isTotal ? <Text strong>{text}</Text> : text
       }
     },
     {
-      title: `After ${calculation?.due_date}`,
-      dataIndex: 'after',
-      key: 'after',
+      title: `After ${calculation?.due_date ?? '-'}`,
+      dataIndex: 'after_due',
+      key: 'after_due',
       align: 'right' as const,
       width: '11%',
-      render: (val: number, record: any) => {
-        const text = `Rs. ${val.toLocaleString('en-IN', { minimumFractionDigits: 0 })}`;
-        return record.isTotal ? <Text strong>{text}</Text> : text;
+      render: (value: number | null, record: { isTotal?: boolean }): React.ReactNode => {
+        const text = formatCurrency(value)
+        return record.isTotal ? <Text strong>{text}</Text> : text
       }
     }
   ]
-
-  const tableData = calculation ? [
-    // Base Maintenance Row
-    {
-      key: 'base',
-      isBase: true,
-      description: 'Current Maintenance',
-      plot_area: calculation.unit_details.plot_area,
-      rate: calculation.unit_details.rate_per_sqft,
-      amount: calculation.current_year_charges.base_amount,
-      penalty: calculation.current_year_charges.base_amount * (calculation.penalty_percentage / 100),
-      discount: calculation.current_year_charges.base_amount * (calculation.discount_percentage / 100),
-      before: calculation.current_year_charges.base_amount - (calculation.current_year_charges.base_amount * (calculation.discount_percentage / 100)),
-      after: calculation.current_year_charges.base_amount + (calculation.current_year_charges.base_amount * (calculation.penalty_percentage / 100))
-    },
-    // Add-on Rows
-    ...calculation.charges_breakdown.filter(c => c.description !== `Current ${calculation.due_date.split(' ')[2]}`).map((charge, idx) => ({
-      key: `charge-${idx}`,
-      description: charge.description,
-      plot_area: null,
-      rate: null,
-      amount: charge.amount,
-      penalty: null,
-      discount: null,
-      before: charge.amount,
-      after: charge.amount
-    })),
-    // Arrears Rows
-    ...calculation.arrears_breakdown.map((arrears, idx) => ({
-      key: `arrears-${idx}`,
-      description: `Arrears (${arrears.financial_year})`,
-      plot_area: null,
-      rate: null,
-      amount: arrears.amount,
-      penalty: null,
-      discount: null,
-      before: arrears.total_with_penalty, // Arrears already include penalty in "Before" if that's how it's handled, or matches Amount
-      after: arrears.total_with_penalty
-    })),
-    // Total Row
-    {
-      key: 'total',
-      isBase: false,
-      isTotal: true,
-      description: 'Total Amount Payable',
-      plot_area: null,
-      rate: null,
-      amount: null,
-      penalty: null,
-      discount: null,
-      before: calculation.totals.amount_payable_before_due,
-      after: calculation.totals.amount_payable_after_due
-    }
-  ] : [] as any[]
 
   return (
     <Modal
@@ -275,6 +277,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
             options={projectOptions}
             onChange={() => {
               form.setFieldValue('unitId', undefined)
+              form.setFieldValue('financialYear', undefined)
               setCalculation(null)
             }}
           />
@@ -285,8 +288,8 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
           label="Unit"
           rules={[{ required: true, message: 'Please select a unit' }]}
         >
-          <Select placeholder="Select a unit" disabled={!form.getFieldValue('projectId')}>
-            {getUnitsForProject(form.getFieldValue('projectId') || 0).map((unit) => (
+          <Select placeholder="Select a unit" disabled={!selectedProjectId}>
+            {selectedProjectUnits.map((unit) => (
               <Option key={unit.id} value={unit.id}>
                 {unit.unit_number} - {unit.owner_name}
               </Option>
@@ -294,17 +297,22 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
           </Select>
         </Form.Item>
 
-        <Form.Item
-          name="financialYear"
-          label="Financial Year"
-          rules={[{ required: true, message: 'Please select a financial year' }]}
-        >
-          <Select placeholder="Select financial year">
-            {financialYearOptions.map((fy) => (
-              <Option key={fy} value={fy}>
-                {fy}
-              </Option>
-            ))}
+            <Form.Item
+              name="financialYear"
+              label="Financial Year"
+              extra={`Current FY: ${getCurrentFinancialYear()}. Upcoming FY: ${getUpcomingFinancialYear()}. The current financial year is the recommended default.`}
+              rules={[{ required: true, message: 'Please select a financial year' }]}
+            >
+              <Select placeholder="Select financial year" disabled={!selectedProjectId}>
+                {financialYearOptions.map((fy) => (
+                  <Option key={fy} value={fy}>
+                    {fy === getCurrentFinancialYear()
+                      ? `${fy} (Current)`
+                      : fy === getUpcomingFinancialYear()
+                        ? `${fy} (Upcoming)`
+                        : fy}
+                  </Option>
+                ))}
           </Select>
         </Form.Item>
 
@@ -329,13 +337,12 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
         <div>
           <Alert
             message="Letter Calculation Generated"
-            description="The detailed maintenance letter calculation has been generated successfully."
+            description="This preview is rendered from backend-prepared values for the selected project, unit, and financial year."
             type="success"
             showIcon
             style={{ marginBottom: 16 }}
           />
 
-          {/* Unit Details */}
           <div style={{ marginBottom: 16 }}>
             <Title level={4}>Unit Details</Title>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
@@ -349,31 +356,32 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
               </div>
               <div>
                 <Text strong>Plot Area: </Text>
-                <Text>{calculation.unit_details.plot_area.toFixed(2)} sqft</Text>
+                <Text>{calculation.unit_details.plot_area.toLocaleString('en-IN')} sqft</Text>
               </div>
               <div>
                 <Text strong>Rate per sqft: </Text>
-                <Text>Rs. {calculation.unit_details.rate_per_sqft.toFixed(2)}</Text>
+                <Text>{formatCurrency(calculation.unit_details.rate_per_sqft)}</Text>
               </div>
             </div>
           </div>
 
-          {/* Redesigned 8-Column Table */}
           <div className="maintenance-table-container" style={{ marginBottom: 24 }}>
-            <div style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center', 
-              marginBottom: 12,
-              borderBottom: '2px solid #1d4e89',
-              paddingBottom: 8
-            }}>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 12,
+                borderBottom: '2px solid #1d4e89',
+                paddingBottom: 8
+              }}
+            >
               <Title level={4} style={{ margin: 0, color: '#1d4e89' }}>
-                Maintenance Demand Notice — FY {calculation.due_date.split(' ')[2]}
+                Maintenance Demand Notice
               </Title>
             </div>
-            
-            <style dangerouslySetInnerHTML={{ __html: `
+
+            <style>{`
               .maintenance-table .ant-table-thead > tr > th {
                 background-color: #e6e9ef !important;
                 color: #1d4e89 !important;
@@ -391,54 +399,47 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
                 border-top: 2px solid #d9d9d9 !important;
                 border-bottom: 2px solid #d9d9d9 !important;
               }
-            `}} />
+            `}</style>
 
             <Table
               className="maintenance-table"
-              dataSource={tableData}
-              columns={arrearsColumns}
+              dataSource={calculation.preview_rows}
+              columns={previewColumns}
               pagination={false}
               size="middle"
               bordered
-              rowClassName={(record) => record.isTotal ? 'total-row' : ''}
+              rowClassName={(record) => (record.isTotal ? 'total-row' : '')}
               summary={() => null}
             />
           </div>
 
           <Divider />
 
-          {/* Totals */}
           <div style={{ marginBottom: 16 }}>
             <Title level={4}>Payment Summary</Title>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
               <div>
                 <Text>Total Arrears with Penalty: </Text>
-                <Tag color="red">
-                  Rs. {calculation.totals.total_arrears_with_penalty.toFixed(2)}
-                </Tag>
+                <Tag color="red">{formatCurrency(calculation.totals.total_arrears_with_penalty)}</Tag>
               </div>
               <div>
                 <Text>Total Current Charges: </Text>
-                <Tag color="blue">Rs. {calculation.totals.total_current_charges.toFixed(2)}</Tag>
+                <Tag color="blue">{formatCurrency(calculation.totals.total_current_charges)}</Tag>
               </div>
               <div>
                 <Text>Grand Total (Before Discount): </Text>
-                <Tag color="orange">
-                  Rs. {calculation.totals.grand_total_before_discount.toFixed(2)}
-                </Tag>
+                <Tag color="orange">{formatCurrency(calculation.totals.grand_total_before_discount)}</Tag>
               </div>
               <div>
-                <Text>Early Payment Discount (10%): </Text>
-                <Tag color="green">
-                  - Rs. {calculation.totals.early_payment_discount.toFixed(2)}
-                </Tag>
+                <Text>Early Payment Discount ({calculation.discount_percentage}%): </Text>
+                <Tag color="green">- {formatCurrency(calculation.totals.early_payment_discount)}</Tag>
               </div>
               <div>
                 <Text strong style={{ fontSize: '16px' }}>
                   Amount Payable Before Due Date:
                 </Text>
                 <Tag color="green" style={{ fontSize: '16px', padding: '4px 8px' }}>
-                  Rs. {calculation.totals.amount_payable_before_due.toFixed(2)}
+                  {formatCurrency(calculation.totals.amount_payable_before_due)}
                 </Tag>
               </div>
               <div>
@@ -446,13 +447,12 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
                   Amount Payable After Due Date:
                 </Text>
                 <Tag color="red" style={{ fontSize: '16px', padding: '4px 8px' }}>
-                  Rs. {calculation.totals.amount_payable_after_due.toFixed(2)}
+                  {formatCurrency(calculation.totals.amount_payable_after_due)}
                 </Tag>
               </div>
             </div>
           </div>
 
-          {/* Bank Details */}
           <div style={{ marginBottom: 16 }}>
             <Title level={4}>Bank Details</Title>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
@@ -487,7 +487,6 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
 
           <Divider />
 
-          {/* Actions */}
           <div style={{ textAlign: 'right' }}>
             <Space>
               <Button

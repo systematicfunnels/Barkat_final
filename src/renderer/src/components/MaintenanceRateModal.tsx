@@ -21,10 +21,11 @@ import {
   PlusOutlined,
   DeleteOutlined,
   PercentageOutlined,
-  EditOutlined,
-  FilterOutlined
+  EditOutlined
 } from '@ant-design/icons'
 import { MaintenanceRate, MaintenanceSlab } from '@preload/types'
+import FilterPanel, { createSelectFilter } from './shared/FilterPanel'
+import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/financialYear'
 
 interface MaintenanceRateModalProps {
   projectId: number
@@ -43,6 +44,7 @@ interface RateFormValues {
   unit_type: string
   rate_per_sqft: number
   gst_percent: number
+  penalty_percentage?: number
   billing_frequency: string
   due_date?: string
   discount_percentage?: number
@@ -130,7 +132,9 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
     const years = Array.from(
       new Set(rates.map((r) => r.financial_year).filter(Boolean))
     ) as string[]
-    return years.sort().reverse()
+    const currentFY = getCurrentFinancialYear()
+    const upcomingFY = getUpcomingFinancialYear(currentFY)
+    return Array.from(new Set([...years, currentFY, upcomingFY])).sort().reverse()
   }, [rates])
 
   const formFinancialYearOptions = useMemo(() => {
@@ -154,6 +158,60 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       return fyOk && typeOk
     })
   }, [rates, filterFY, filterUnitType])
+
+  const rateFilterFields = useMemo(
+    () => [
+      createSelectFilter(
+        'filterFY',
+        'Financial Year',
+        fyOptions.map((fy) => ({
+          value: fy,
+          label:
+            fy === getCurrentFinancialYear()
+              ? `${fy} (Current)`
+              : fy === getUpcomingFinancialYear()
+                ? `${fy} (Upcoming)`
+                : fy
+        })),
+        'Financial Year',
+        {
+          emptyValue: null
+        }
+      ),
+      createSelectFilter(
+        'filterUnitType',
+        'Unit Type',
+        UNIT_TYPE_OPTIONS.map((unitType) => ({ value: unitType, label: unitType })),
+        'Unit Type',
+        {
+          emptyValue: 'All',
+          isActive: (value) => value !== null && value !== 'All'
+        }
+      )
+    ],
+    [fyOptions]
+  )
+
+  const rateFilterValues = useMemo(
+    () => ({
+      filterFY,
+      filterUnitType
+    }),
+    [filterFY, filterUnitType]
+  )
+
+  const handleRateFilterChange = useCallback((key: string, value: unknown) => {
+    switch (key) {
+      case 'filterFY':
+        setFilterFY((value as string | null | undefined) ?? null)
+        break
+      case 'filterUnitType':
+        setFilterUnitType((value as string | null | undefined) ?? 'All')
+        break
+      default:
+        break
+    }
+  }, [])
 
   // Check for duplicate rates before saving
   const checkDuplicateRate = useCallback(
@@ -190,6 +248,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           ...values,
           unit_type: values.unit_type || 'Bungalow',
           gst_percent: values.gst_percent ?? 0,
+          penalty_percentage: values.penalty_percentage ?? null,
           billing_frequency: values.billing_frequency || 'YEARLY'
         })
         
@@ -238,6 +297,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           ...values,
           unit_type: values.unit_type || 'Bungalow',
           gst_percent: values.gst_percent ?? 0,
+          penalty_percentage: values.penalty_percentage ?? null,
           billing_frequency: values.billing_frequency || 'YEARLY',
           project_id: projectId
         } as MaintenanceRate)
@@ -283,6 +343,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       unit_type: rate.unit_type || 'Bungalow',
       rate_per_sqft: rate.rate_per_sqft,
       gst_percent: rate.gst_percent ?? 0,
+      penalty_percentage: rate.penalty_percentage ?? undefined,
       billing_frequency: rate.billing_frequency || 'YEARLY'
     })
     
@@ -449,6 +510,13 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
         (val ?? 0) > 0 ? <Tag color="orange">{val}%</Tag> : <Tag>None</Tag>
     },
     {
+      title: 'Penalty %',
+      dataIndex: 'penalty_percentage',
+      key: 'penalty_percentage',
+      render: (val: number | null | undefined): React.ReactNode =>
+        val !== null && val !== undefined ? <Tag color="red">{val}%</Tag> : <Tag>Default</Tag>
+    },
+    {
       title: 'Billing Frequency',
       dataIndex: 'billing_frequency',
       key: 'billing_frequency',
@@ -570,107 +638,48 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           showIcon
           style={{ marginBottom: 16 }}
         />
+        <Alert
+          message="Penalty source of truth"
+          description="Set late-payment penalty here for each financial year and unit type. If a rate penalty is blank, the project-level charges configuration is used as the fallback. Unit-level penalty values are legacy/import fields and are not the source of truth for new maintenance letters."
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
 
         <div
           style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: 16,
-            flexWrap: 'wrap',
-            gap: '16px'
+            marginBottom: 16
           }}
         >
           <Title level={4} style={{ margin: 0 }}>
             Rates
           </Title>
-          <Space wrap>
-            <Select
-              placeholder="Financial Year"
-              style={{ width: 140 }}
-              allowClear
-              onChange={setFilterFY}
-              value={filterFY}
-              suffixIcon={<FilterOutlined />}
-              aria-label="Filter by financial year"
-            >
-              {fyOptions.map((fy) => (
-                <Option key={fy} value={fy}>
-                  {fy}
-                </Option>
-              ))}
-            </Select>
-            <Select
-              placeholder="Unit Type"
-              style={{ width: 140 }}
-              allowClear
-              onChange={(val) => setFilterUnitType(val ?? 'All')}
-              value={filterUnitType}
-              suffixIcon={<FilterOutlined />}
-              aria-label="Filter by unit type"
-            >
-              {UNIT_TYPE_OPTIONS.map((unitType) => (
-                <Option key={unitType} value={unitType}>
-                  {unitType}
-                </Option>
-              ))}
-            </Select>
-            <Button
-              type="primary"
-              icon={<PlusOutlined />}
-              onClick={() => {
-                setEditingRateId(null)
-                rateForm.resetFields()
-                rateForm.setFieldsValue({
-                  unit_type: 'Bungalow',
-                  billing_frequency: 'YEARLY'
-                })
-                setIsAddingRate(true)
-              }}
-              disabled={isAddingRate}
-            >
-              Add Rate
-            </Button>
-          </Space>
         </div>
-
-        {/* Filter Summary Chips */}
-        {hasActiveFilters && (
-          <div style={{ marginBottom: 16 }}>
-            <Space wrap>
-              <Text type="secondary" style={{ fontSize: '12px' }}>
-                Applied filters:
-              </Text>
-              {filterFY && (
-                <Tag
-                  closable
-                  onClose={() => setFilterFY(null)}
-                  aria-label={`Financial year filter: ${filterFY}`}
-                >
-                  FY: {filterFY}
-                </Tag>
-              )}
-              {filterUnitType !== 'All' && (
-                <Tag
-                  closable
-                  onClose={() => setFilterUnitType('All')}
-                  aria-label={`Unit type filter: ${filterUnitType}`}
-                >
-                  Type: {filterUnitType}
-                </Tag>
-              )}
-              <Button
-                type="link"
-                size="small"
-                onClick={clearAllFilters}
-                style={{ fontSize: '12px', padding: 0, height: 'auto' }}
-                aria-label="Clear all filters"
-              >
-                Clear all
-              </Button>
-            </Space>
-          </div>
-        )}
+        <FilterPanel
+          filters={rateFilterFields}
+          values={rateFilterValues}
+          onChange={handleRateFilterChange}
+          onClear={clearAllFilters}
+          showActiveFilters={hasActiveFilters}
+          variant="plain"
+        >
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setEditingRateId(null)
+              rateForm.resetFields()
+              rateForm.setFieldsValue({
+                unit_type: 'Bungalow',
+                billing_frequency: 'YEARLY'
+              })
+              setIsAddingRate(true)
+            }}
+            disabled={isAddingRate}
+          >
+            Add Rate
+          </Button>
+        </FilterPanel>
 
         {isAddingRate && (
           <Card size="small" style={{ marginBottom: 16, backgroundColor: '#fafafa' }}>
@@ -733,6 +742,22 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                   placeholder="0"
                   style={{ width: 90 }}
                   aria-label="GST percentage"
+                  precision={2}
+                  addonAfter="%"
+                />
+              </Form.Item>
+              <Form.Item<RateFormValues>
+                name="penalty_percentage"
+                label="Penalty %"
+                tooltip="Late payment penalty percentage for this rate and financial year"
+                style={{ marginBottom: 8 }}
+              >
+                <InputNumber
+                  min={0}
+                  max={100}
+                  placeholder="Default"
+                  style={{ width: 100 }}
+                  aria-label="Penalty percentage"
                   precision={2}
                   addonAfter="%"
                 />
