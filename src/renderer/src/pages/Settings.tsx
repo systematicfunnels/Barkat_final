@@ -71,14 +71,14 @@ const Settings: React.FC = () => {
     try {
       setExporting(true)
 
-      const timestamp = new Date().toISOString().replace(/[:.-]/g, '').slice(0, 15)
-      const defaultFileName = `barkat_backup_${timestamp}.db`
+      const defaultFileName = await window.api.backup.getExportDefaultName()
 
       const savePath = await window.api.dialog.saveFile({
-        title: 'Save Database Backup',
+        title: 'Export Barkat Backup',
         defaultPath: defaultFileName,
         filters: [
-          { name: 'Database Files', extensions: ['db'] },
+          { name: 'Barkat Backup Files', extensions: ['barkatbackup'] },
+          { name: 'SQLite Database Files', extensions: ['db', 'sqlite', 'backup'] },
           { name: 'All Files', extensions: ['*'] }
         ]
       })
@@ -94,7 +94,7 @@ const Settings: React.FC = () => {
         return
       }
 
-      message.success('Database exported successfully')
+      message.success('Backup exported successfully')
       void loadDiagnostics()
     } catch (err: unknown) {
       const error = err as Error
@@ -108,9 +108,10 @@ const Settings: React.FC = () => {
     try {
       setImporting(true)
       const result = await window.api.dialog.selectLocalFile({
-        title: 'Select Database Backup File',
+        title: 'Select Barkat Backup File',
         filters: [
-          { name: 'Database Files', extensions: ['db', 'sqlite', 'backup'] },
+          { name: 'Barkat Backup Files', extensions: ['barkatbackup'] },
+          { name: 'SQLite Database Files', extensions: ['db', 'sqlite', 'backup'] },
           { name: 'All Files', extensions: ['*'] }
         ]
       })
@@ -179,20 +180,23 @@ const Settings: React.FC = () => {
         </div>
       </div>
 
-      <div className="page-info-grid">
-        <Card title="Create Backup" className="page-action-card">
-          <Paragraph>
-            Save a backup copy before major changes, before moving to another machine, or before trying a restore.
-          </Paragraph>
-          <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
-            Save Backup Copy
-          </Button>
-        </Card>
+        <div className="page-info-grid">
+          <Card title="Export Backup" className="page-action-card">
+            <Paragraph>
+              Export a clean single-file Barkat backup before migrations, moving to another machine, or recovery work.
+            </Paragraph>
+            <Text type="secondary" className="page-helper-text">
+              Recommended format: <strong>.barkatbackup</strong>. Older SQLite backup files can still be restored.
+            </Text>
+            <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
+              Export Backup File
+            </Button>
+          </Card>
 
-        <Card title="Restore Backup" className="page-action-card">
-          <Paragraph>
-            Restore a previously saved backup file when you need to recover an older copy of your workspace data.
-          </Paragraph>
+          <Card title="Restore Backup" className="page-action-card">
+            <Paragraph>
+              Restore a previously exported Barkat backup file when you need to recover an older copy of your workspace data.
+            </Paragraph>
           <Text type="secondary" className="page-helper-text">
             This replaces the current local database with the selected backup file.
           </Text>

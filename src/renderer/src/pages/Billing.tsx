@@ -24,7 +24,6 @@ import {
   Col
 } from 'antd'
 import {
-  getCurrentFinancialYear,
   getUpcomingFinancialYear,
   isValidFinancialYear
 } from '../utils/financialYear'
@@ -56,6 +55,7 @@ import FilterPanel, {
   createSearchFilter,
   createSelectFilter
 } from '../components/shared/FilterPanel'
+import { useWorkingFinancialYear } from '../context/WorkingFinancialYearContext'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -86,6 +86,7 @@ interface BatchLetterConfigSnapshot {
 }
 
 const Billing: React.FC = () => {
+  const { workingFY } = useWorkingFinancialYear()
   const [letters, setLetters] = useState<MaintenanceLetter[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [loading, setLoading] = useState(false)
@@ -93,7 +94,7 @@ const Billing: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
 
-  const defaultFY = getCurrentFinancialYear()
+  const defaultFY = workingFY
   const upcomingFY = getUpcomingFinancialYear(defaultFY)
   const [selectedYear, setSelectedYear] = useState<string | null>(defaultFY)
 
@@ -1644,7 +1645,7 @@ const Billing: React.FC = () => {
                 <Form.Item
                   name="financial_year"
                   label="Financial Year"
-                  extra={`Current FY: ${defaultFY}. Upcoming FY: ${upcomingFY}. The current financial year is selected automatically by default.`}
+                extra={`Working FY: ${defaultFY}. Next FY: ${upcomingFY}. The selected working financial year is used by default.`}
                   rules={[
                     { required: true, message: 'Please select financial year' },
                     {
@@ -1666,7 +1667,7 @@ const Billing: React.FC = () => {
                     {uniqueYears.map((year) => (
                       <Option key={year} value={year}>
                         {year === defaultFY
-                          ? `${year} (Current)`
+                            ? `${year} (Working)`
                           : year === upcomingFY
                             ? `${year} (Upcoming)`
                             : year}

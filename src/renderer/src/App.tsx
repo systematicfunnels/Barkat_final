@@ -10,6 +10,7 @@ import Billing from './pages/Billing'
 import Payments from './pages/Payments'
 import Reports from './pages/Reports'
 import Settings from './pages/Settings'
+import { WorkingFinancialYearProvider } from './context/WorkingFinancialYearContext'
 
 const App: React.FC = () => {
   return (
@@ -46,21 +47,23 @@ const App: React.FC = () => {
         }
       }}
     >
-      <Router>
-        <Layout>
-          <ErrorBoundary>
-            <Routes>
-              <Route path="/" element={<Dashboard />} />
-              <Route path="/projects" element={<Projects />} />
-              <Route path="/units" element={<Units />} />
-              <Route path="/billing" element={<Billing />} />
-              <Route path="/payments" element={<Payments />} />
-              <Route path="/reports" element={<Reports />} />
-              <Route path="/settings" element={<Settings />} />
-            </Routes>
-          </ErrorBoundary>
-        </Layout>
-      </Router>
+      <WorkingFinancialYearProvider>
+        <Router>
+          <Layout>
+            <ErrorBoundary>
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/projects" element={<Projects />} />
+                <Route path="/units" element={<Units />} />
+                <Route path="/billing" element={<Billing />} />
+                <Route path="/payments" element={<Payments />} />
+                <Route path="/reports" element={<Reports />} />
+                <Route path="/settings" element={<Settings />} />
+              </Routes>
+            </ErrorBoundary>
+          </Layout>
+        </Router>
+      </WorkingFinancialYearProvider>
     </ConfigProvider>
   )
 }

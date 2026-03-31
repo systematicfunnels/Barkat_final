@@ -48,6 +48,7 @@ import FilterPanel, {
 } from '../components/shared/FilterPanel'
 import { parseStandardWorkbook, StandardWorkbookParseResult } from '../utils/standardWorkbook'
 import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/financialYear'
+import { useWorkingFinancialYear } from '../context/WorkingFinancialYearContext'
 
 const { Option } = Select
 
@@ -123,11 +124,9 @@ const Projects: React.FC = () => {
   const navigate = useNavigate()
   const currentFY = getCurrentFinancialYear()
   const upcomingFY = getUpcomingFinancialYear(currentFY)
+  const { workingFY, setWorkingFY } = useWorkingFinancialYear()
   const [projects, setProjects] = useState<Project[]>([])
   const [projectSetupSummaries, setProjectSetupSummaries] = useState<
-    Record<number, ProjectSetupSummary>
-  >({})
-  const [upcomingProjectSetupSummaries, setUpcomingProjectSetupSummaries] = useState<
     Record<number, ProjectSetupSummary>
   >({})
   const [loading, setLoading] = useState(false)
@@ -159,17 +158,13 @@ const Projects: React.FC = () => {
   const fetchProjects = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [data, summaries, upcomingSummaries] = await Promise.all([
+      const [data, summaries] = await Promise.all([
         window.api.projects.getAll(),
-        window.api.projects.getSetupSummaries(currentFY),
-        window.api.projects.getSetupSummaries(upcomingFY)
+        window.api.projects.getSetupSummaries(workingFY)
       ])
       setProjects(data)
       setProjectSetupSummaries(
         Object.fromEntries(summaries.map((summary) => [summary.project_id, summary]))
-      )
-      setUpcomingProjectSetupSummaries(
-        Object.fromEntries(upcomingSummaries.map((summary) => [summary.project_id, summary]))
       )
     } catch (error) {
       if (process.env.NODE_ENV === 'development') {
@@ -179,7 +174,7 @@ const Projects: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [currentFY, upcomingFY])
+  }, [workingFY])
 
   useEffect(() => {
     fetchProjects()
@@ -217,6 +212,14 @@ const Projects: React.FC = () => {
       new Set(projects.map((p) => p.city).filter((city): city is string => Boolean(city)))
     ).sort()
   }, [projects])
+
+  const workingFYOptions = useMemo(
+    () => [
+      { value: upcomingFY, label: `FY ${upcomingFY}` },
+      { value: currentFY, label: `FY ${currentFY}` }
+    ],
+    [currentFY, upcomingFY]
+  )
 
   const projectFilterFields = useMemo(
     () => [
@@ -700,46 +703,35 @@ const Projects: React.FC = () => {
       )
     },
     {
-      title: `Setup (Current ${currentFY} | Upcoming ${upcomingFY})`,
+      title: `Setup (FY ${workingFY})`,
       key: 'setup_status',
       width: 320,
       render: (_: unknown, record: Project) => {
-        const currentSummary = record.id ? projectSetupSummaries[record.id] : undefined
-        const upcomingSummary = record.id ? upcomingProjectSetupSummaries[record.id] : undefined
-        if (!currentSummary || !upcomingSummary) {
+        const summary = record.id ? projectSetupSummaries[record.id] : undefined
+        if (!summary) {
           return <Text type="secondary">Checking setup...</Text>
         }
 
-        const readyCurrent = currentSummary.ready_for_letters
-        const readyUpcoming = upcomingSummary.ready_for_letters
-        const statusColor =
-          readyCurrent || readyUpcoming
-            ? readyCurrent && readyUpcoming
-              ? 'success'
-              : 'warning'
-            : 'error'
-        const statusLabel =
-          readyCurrent && readyUpcoming
-            ? 'Ready'
-            : readyCurrent || readyUpcoming
-              ? 'Partially Ready'
-              : 'Needs Setup'
-
         return (
           <Space direction="vertical" size={4}>
-            <Tag color={statusColor}>{statusLabel}</Tag>
+            <Tag color={summary.ready_for_letters ? 'success' : 'error'}>
+              {summary.ready_for_letters ? 'Ready' : 'Needs Setup'}
+            </Tag>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Units: {currentSummary.unit_count} | Detected Sectors:{' '}
-              {currentSummary.sector_codes.length > 0 ? currentSummary.sector_codes.join(', ') : 'None'}
+              Units: {summary.unit_count} | Detected Sectors:{' '}
+              {summary.sector_codes.length > 0 ? summary.sector_codes.join(', ') : 'None'}
             </Text>
-            <Text style={{ fontSize: 12, color: readyCurrent ? '#389e0d' : '#cf1322' }}>
-              Current FY {currentFY}: {readyCurrent ? 'Ready' : currentSummary.blockers[0] || 'Needs setup'}
+            <Text
+              style={{
+                fontSize: 12,
+                color: summary.ready_for_letters ? '#389e0d' : '#cf1322'
+              }}
+            >
+              FY {workingFY}:{' '}
+              {summary.ready_for_letters ? 'Ready' : summary.blockers[0] || 'Needs setup'}
             </Text>
-            <Text style={{ fontSize: 12, color: readyUpcoming ? '#389e0d' : '#cf1322' }}>
-              Upcoming FY {upcomingFY}: {readyUpcoming ? 'Ready' : upcomingSummary.blockers[0] || 'Needs setup'}
-            </Text>
-            {!readyCurrent && !readyUpcoming && currentSummary.warnings[0] && (
-              <Text style={{ fontSize: 12, color: '#d48806' }}>{currentSummary.warnings[0]}</Text>
+            {!summary.ready_for_letters && summary.warnings[0] && (
+              <Text style={{ fontSize: 12, color: '#d48806' }}>{summary.warnings[0]}</Text>
             )}
           </Space>
         )
@@ -808,7 +800,7 @@ const Projects: React.FC = () => {
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Keep project records complete here before moving into units, rates, and billing.
+              Choose the billing financial year you want to prepare, then complete only that setup path.
             </Text>
           </div>
           <Space wrap className="responsive-action-bar">
@@ -828,6 +820,26 @@ const Projects: React.FC = () => {
           </Space>
         </div>
       </div>
+
+      <Card style={{ marginBottom: 16 }}>
+        <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space wrap align="center" size={12}>
+            <Text strong>Working Financial Year</Text>
+            <Select
+              value={workingFY}
+              onChange={setWorkingFY}
+              options={workingFYOptions}
+              style={{ minWidth: 220 }}
+            />
+          </Space>
+          <Alert
+            type="info"
+            showIcon
+            message={`Billing setup for FY ${workingFY}`}
+            description={`Choose the year you want to bill, then follow this order: add units with sector codes, configure sector bank details, add maintenance rates for ${workingFY}, then generate maintenance letters and receipts.`}
+          />
+        </Space>
+      </Card>
 
       {selectedRowKeys.length > 0 && (
         <div className="page-selection-bar">
@@ -856,14 +868,8 @@ const Projects: React.FC = () => {
       {/* Setup Checklist Banner - shown when any project has incomplete setup */}
       {(() => {
         const incompleteProjects = projects.filter((p) => {
-          const currentSummary = projectSetupSummaries[p.id!]
-          const upcomingSummary = upcomingProjectSetupSummaries[p.id!]
-          return (
-            currentSummary &&
-            upcomingSummary &&
-            !currentSummary.ready_for_letters &&
-            !upcomingSummary.ready_for_letters
-          )
+          const summary = projectSetupSummaries[p.id!]
+          return summary && !summary.ready_for_letters
         })
         if (incompleteProjects.length === 0) return null
         return (
@@ -875,28 +881,22 @@ const Projects: React.FC = () => {
             message={
               <span className="project-setup-alert-title">
                 {incompleteProjects.length === 1
-                  ? `"${incompleteProjects[0].name}" is not ready for billing`
-                  : `${incompleteProjects.length} projects are not ready for billing`}
+                  ? `"${incompleteProjects[0].name}" is not ready for ${workingFY} billing`
+                  : `${incompleteProjects.length} projects are not ready for ${workingFY} billing`}
               </span>
             }
             description={
               <div className="project-setup-alert-list">
                 {incompleteProjects.map((p) => {
-                  const currentSummary = projectSetupSummaries[p.id!]
-                  const upcomingSummary = upcomingProjectSetupSummaries[p.id!]
-                  if (!currentSummary || !upcomingSummary) return null
-                  const combinedBlockers = [...currentSummary.blockers, ...upcomingSummary.blockers]
-                  const needsBank = combinedBlockers.some((b) => {
+                  const summary = projectSetupSummaries[p.id!]
+                  if (!summary) return null
+                  const needsBank = summary.blockers.some((b) => {
                     const text = b.toLowerCase()
                     return text.includes('bank') || text.includes('sector code') || text.includes('sector grouping')
                   })
-                  const needsRate = combinedBlockers.some((b) => b.toLowerCase().includes('rate'))
-                  const needsUnits = combinedBlockers.some((b) => b.toLowerCase().includes('unit'))
-                  const s = {
-                    blockers: [
-                      `Current ${currentFY}: ${currentSummary.blockers[0] || 'Ready'} · Upcoming ${upcomingFY}: ${upcomingSummary.blockers[0] || 'Ready'}`
-                    ]
-                  }
+                  const needsRate = summary.blockers.some((b) => b.toLowerCase().includes('rate'))
+                  const needsUnits = summary.blockers.some((b) => b.toLowerCase().includes('unit'))
+                  const blockerText = `FY ${workingFY}: ${summary.blockers.join(' · ')}`
                   return (
                     <div
                       key={p.id}
@@ -906,7 +906,7 @@ const Projects: React.FC = () => {
                         {p.project_code || `PRJ-${p.id}`} - {p.name}
                       </span>
                       <span className="project-setup-alert-blockers">
-                        {s.blockers.join(' · ')}
+                        {blockerText}
                       </span>
                       <div className="project-setup-alert-actions">
                         {(needsBank || needsRate) && (
@@ -927,7 +927,7 @@ const Projects: React.FC = () => {
                             type="primary"
                             className="project-setup-alert-button"
                           >
-                            Add Rates
+                            {`Add Rates for ${workingFY}`}
                           </Button>
                         )}
                         {needsUnits && (
@@ -1010,13 +1010,15 @@ const Projects: React.FC = () => {
               message={
                 editingProjectSummary.ready_for_letters
                   ? editingProjectSummary.warnings.length > 0
-                    ? 'Project setup is usable but still has warnings.'
-                    : 'Project setup is ready for maintenance letters.'
-                  : 'Project setup is incomplete.'
+                    ? `Project setup for ${workingFY} is usable but still has warnings.`
+                    : `Project setup for ${workingFY} is ready for maintenance letters.`
+                  : `Project setup for ${workingFY} is incomplete.`
               }
               description={
                 <div>
                   <div style={{ marginBottom: 8 }}>
+                    Working FY: {workingFY}
+                    {' | '}
                     Detected sectors:{' '}
                     {editingProjectSummary.sector_codes.length > 0
                       ? editingProjectSummary.sector_codes.join(', ')
@@ -1069,7 +1071,7 @@ const Projects: React.FC = () => {
                         showIcon
                         style={{ marginBottom: 8 }}
                         message="Recommended setup order"
-                        description={`Create the project, add units with sector codes, configure sector bank details, add rates for the current FY (${currentFY}) or upcoming FY (${upcomingFY}), then generate maintenance letters.`}
+                        description={`Create the project, add units with sector codes, configure sector bank details, choose the working FY, add rates for ${workingFY}, then generate maintenance letters.`}
                       />
                     </Col>
                     <Col xs={24} md={12}>
@@ -1560,6 +1562,7 @@ const Projects: React.FC = () => {
           visible={isRateModalOpen}
           projectId={selectedProject.id!}
           projectName={selectedProject.name}
+          workingFinancialYear={workingFY}
           onCancel={() => setIsRateModalOpen(false)}
         />
       )}

@@ -18,8 +18,8 @@ import {
 } from '@ant-design/icons'
 import { Project } from '@preload/types'
 import { useAsyncOperation } from '../hooks/useAsyncOperation'
-import { getCurrentFinancialYear } from '../utils/financialYear'
 import FilterPanel, { createSelectFilter } from '../components/shared/FilterPanel'
+import { useWorkingFinancialYear } from '../context/WorkingFinancialYearContext'
 
 const { Title, Text } = Typography
 
@@ -38,13 +38,14 @@ interface StatCard {
 const Dashboard: React.FC = () => {
   const navigate = useNavigate()
   const { execute: executeAsync } = useAsyncOperation()
+  const { workingFY } = useWorkingFinancialYear()
   const [loading, setLoading] = useState(true)
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<number | undefined>(undefined)
   const [selectedUnitType, setSelectedUnitType] = useState<string | undefined>(undefined)
   const [selectedStatus, setSelectedStatus] = useState<string | undefined>(undefined)
 
-  const defaultFY = getCurrentFinancialYear()
+  const defaultFY = workingFY
   const [selectedFY, setSelectedFY] = useState<string>(defaultFY)
   const [availableFYs, setAvailableFYs] = useState<string[]>([])
 
@@ -72,6 +73,10 @@ const Dashboard: React.FC = () => {
     }
     fetchProjects()
   }, [])
+
+  useEffect(() => {
+    setSelectedFY(defaultFY)
+  }, [defaultFY])
 
   useEffect(() => {
     const fetchYears = async (): Promise<void> => {
@@ -167,7 +172,7 @@ const Dashboard: React.FC = () => {
         'Financial Year',
         financialYears.map((fy) => ({
           value: fy,
-          label: fy === defaultFY ? `${fy} (Current)` : fy
+          label: fy === defaultFY ? `${fy} (Working)` : fy
         })),
         'Select Year',
         {
@@ -283,7 +288,7 @@ const Dashboard: React.FC = () => {
             <Title level={2}>Dashboard</Title>
             <Text type="secondary" className="page-hero-subtitle">
               Welcome back! Summary for Financial Year <strong>{selectedFY}</strong>
-              {selectedFY === defaultFY && ' (Current)'}
+              {selectedFY === defaultFY && ' (Working)'}
             </Text>
             <Text type="secondary" className="page-helper-text">
               Select a summary card to open the related workspace.

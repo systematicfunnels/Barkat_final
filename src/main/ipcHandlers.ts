@@ -1019,6 +1019,10 @@ export function registerIpcHandlers(): void {
     return backupService.getConfig()
   })
 
+  ipcMain.handle('get-backup-export-default-name', () => {
+    return backupService.getDefaultExportFileName()
+  })
+
   ipcMain.handle('get-app-info', () => {
     return {
       version: app.getVersion(),

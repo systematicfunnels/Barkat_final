@@ -192,11 +192,21 @@ declare global {
       }
       backup: {
         createBackup: () => Promise<{ success: boolean; backupPath?: string; error?: string }>
+        exportBackup: (destinationPath: string) => Promise<{
+          success: boolean
+          backupPath?: string
+          error?: string
+          size?: number
+          timestamp?: string
+        }>
         restoreBackup: (backupPath: string) => Promise<{ success: boolean; error?: string }>
-        listBackups: () => Promise<string[]>
-        startAutoBackup: (intervalDays?: number) => Promise<boolean>
-        stopAutoBackup: () => Promise<boolean>
-        getConfig: () => Promise<Record<string, unknown>>
+        listBackups: () => Promise<
+          Array<{ name: string; path: string; timestamp: string; size: number }>
+        >
+        getExportDefaultName: () => Promise<string>
+        startAutoBackup: (intervalDays?: number) => Promise<{ enabled: boolean; intervalDays: number }>
+        stopAutoBackup: () => Promise<{ enabled: boolean }>
+        getConfig: () => Promise<{ enabled: boolean; intervalDays: number }>
       }
       batch: {
         createPayments: (payments: Payment[]) => Promise<boolean>

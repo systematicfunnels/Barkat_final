@@ -201,6 +201,7 @@ const api = {
     exportBackup: (destinationPath: string) => ipcRenderer.invoke('export-backup', destinationPath),
     restoreBackup: (backupPath: string) => ipcRenderer.invoke('restore-backup', backupPath),
     listBackups: () => ipcRenderer.invoke('list-backups'),
+    getExportDefaultName: () => ipcRenderer.invoke('get-backup-export-default-name'),
     startAutoBackup: (intervalDays?: number) =>
       ipcRenderer.invoke('start-auto-backup', intervalDays),
     stopAutoBackup: () => ipcRenderer.invoke('stop-auto-backup'),

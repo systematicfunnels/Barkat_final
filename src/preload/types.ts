@@ -566,6 +566,7 @@ declare global {
             size: number
           }>
         >
+        getExportDefaultName: () => Promise<string>
         startAutoBackup: (intervalDays?: number) => Promise<{
           enabled: boolean
           intervalDays: number

@@ -8,6 +8,9 @@ import fs from 'fs'
 import { copyFileAsync, deleteFileAsync } from '../utils/fileAsync'
 import { dbService } from '../db/database'
 
+const SQLITE_FILE_HEADER = 'SQLite format 3\u0000'
+const EXPORT_BACKUP_EXTENSION = '.barkatbackup'
+
 export interface BackupConfig {
   enabled: boolean
   intervalDays: number
@@ -53,6 +56,48 @@ class BackupService {
 
   constructor() {
     this.logInfo('[BACKUP] Backup service initialized')
+  }
+
+  private buildTimestamp(date: Date = new Date()): string {
+    const year = date.getFullYear()
+    const month = `${date.getMonth() + 1}`.padStart(2, '0')
+    const day = `${date.getDate()}`.padStart(2, '0')
+    const hours = `${date.getHours()}`.padStart(2, '0')
+    const minutes = `${date.getMinutes()}`.padStart(2, '0')
+    const seconds = `${date.getSeconds()}`.padStart(2, '0')
+    return `${year}${month}${day}_${hours}${minutes}${seconds}`
+  }
+
+  getDefaultExportFileName(date: Date = new Date()): string {
+    return `barkat_backup_${this.buildTimestamp(date)}${EXPORT_BACKUP_EXTENSION}`
+  }
+
+  private normalizeExportPath(destinationPath: string): string {
+    const trimmedPath = destinationPath.trim()
+    const currentExtension = path.extname(trimmedPath).toLowerCase()
+    if (!currentExtension) {
+      return `${trimmedPath}${EXPORT_BACKUP_EXTENSION}`
+    }
+    return trimmedPath
+  }
+
+  private async isSQLiteDatabaseFile(filePath: string): Promise<boolean> {
+    const handle = await fs.promises.open(filePath, 'r')
+    try {
+      const headerBuffer = Buffer.alloc(SQLITE_FILE_HEADER.length)
+      const { bytesRead } = await handle.read(
+        headerBuffer,
+        0,
+        SQLITE_FILE_HEADER.length,
+        0
+      )
+      if (bytesRead < SQLITE_FILE_HEADER.length) {
+        return false
+      }
+      return headerBuffer.toString('utf8') === SQLITE_FILE_HEADER
+    } finally {
+      await handle.close()
+    }
   }
 
   private async ensureBackupDir(): Promise<void> {
@@ -135,6 +180,15 @@ class BackupService {
         return { success: false, error: 'Backup file not found' }
       }
 
+      const isValidBackupFile = await this.isSQLiteDatabaseFile(backupPath)
+      if (!isValidBackupFile) {
+        return {
+          success: false,
+          error:
+            'Selected file is not a valid Barkat backup or SQLite database file'
+        }
+      }
+
       // Create a safety backup of current DB
       const safetyBackup = await this.createBackup()
       if (!safetyBackup.success) {
@@ -188,6 +242,8 @@ class BackupService {
         return { success: false, error: 'Destination path is required' }
       }
 
+      const normalizedDestinationPath = this.normalizeExportPath(destinationPath)
+
       const backupResult = await this.createBackup()
       if (!backupResult.success || !backupResult.backupPath) {
         return {
@@ -196,7 +252,7 @@ class BackupService {
         }
       }
 
-      const result = await copyFileAsync(backupResult.backupPath, destinationPath)
+      const result = await copyFileAsync(backupResult.backupPath, normalizedDestinationPath)
       if (!result.success) {
         return {
           success: false,
@@ -204,12 +260,12 @@ class BackupService {
         }
       }
 
-      return {
-        success: true,
-        backupPath: destinationPath,
-        size: result.size,
-        timestamp: new Date().toISOString()
-      }
+        return {
+          success: true,
+          backupPath: normalizedDestinationPath,
+          size: result.size,
+          timestamp: new Date().toISOString()
+        }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return {

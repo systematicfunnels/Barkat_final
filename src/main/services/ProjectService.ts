@@ -1,6 +1,6 @@
 import { dbService } from '../db/database'
 import { unitService } from './UnitService'
-import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/dateUtils'
+import { getCurrentFinancialYear } from '../utils/dateUtils'
 
 export interface Project {
   id?: number
@@ -1353,9 +1353,7 @@ class ProjectService {
     }
 
     if (!hasRateForTargetFY) {
-      blockers.push(
-        `Add maintenance rates for FY ${targetFY}. Current FY: ${computedFY}. Upcoming FY: ${getUpcomingFinancialYear(computedFY)}.`
-      )
+      blockers.push(`Add maintenance rates for FY ${targetFY}.`)
     } else if (missingRateUnitTypes.length > 0) {
       blockers.push(
         `Add FY ${targetFY} rates for unit types: ${missingRateUnitTypes.join(', ')}.`

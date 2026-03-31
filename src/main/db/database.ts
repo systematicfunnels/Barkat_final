@@ -6,6 +6,7 @@ import { schema } from './schema'
 
 class DatabaseService {
   private db: Database.Database
+  private readonly dbPath: string
 
   private isVerboseLoggingEnabled(): boolean {
     return process.env.NODE_ENV !== 'production' && process.env.NODE_ENV !== 'test'
@@ -96,34 +97,34 @@ class DatabaseService {
   }
 
   constructor() {
-    const dbPath =
+    this.dbPath =
       process.env.BARKAT_DB_PATH ||
       (app.isPackaged
         ? path.join(app.getPath('userData'), 'barkat.db')
         : path.join(__dirname, '../../barkat.db'))
-    const dbDir = path.dirname(dbPath)
+    const dbDir = path.dirname(this.dbPath)
 
     if (!fs.existsSync(dbDir)) {
       fs.mkdirSync(dbDir, { recursive: true })
     }
 
-    this.debug('[DATABASE] Database path:', dbPath)
+    this.debug('[DATABASE] Database path:', this.dbPath)
     this.debug('[DATABASE] App packaged:', app.isPackaged)
     this.debug('[DATABASE] User data path:', app.getPath('userData'))
     this.debug('[DATABASE] __dirname:', __dirname)
 
     // Check if database file exists
-    const dbExists = fs.existsSync(dbPath)
+    const dbExists = fs.existsSync(this.dbPath)
     this.debug('[DATABASE] Database file exists:', dbExists)
     
     if (dbExists) {
-      const stats = fs.statSync(dbPath)
+      const stats = fs.statSync(this.dbPath)
       this.debug('[DATABASE] Database file size:', stats.size, 'bytes')
       this.debug('[DATABASE] Database modified:', stats.mtime)
     }
 
     try {
-      this.db = new Database(dbPath)
+      this.db = new Database(this.dbPath)
       this.debug('[DATABASE] Database connection established successfully')
       
       // Test basic query
@@ -141,19 +142,19 @@ class DatabaseService {
       // This prevents the “database disk image is malformed” crash during setup/import.
       if (app.isPackaged && /malformed|corrupt|not a database/i.test(message)) {
         try {
-          const backupPath = `${dbPath}.corrupt.${Date.now()}`
-          if (fs.existsSync(dbPath)) {
-            fs.copyFileSync(dbPath, backupPath)
-            fs.unlinkSync(dbPath)
+          const backupPath = `${this.dbPath}.corrupt.${Date.now()}`
+          if (fs.existsSync(this.dbPath)) {
+            fs.copyFileSync(this.dbPath, backupPath)
+            fs.unlinkSync(this.dbPath)
           }
 
           // Cleanup WAL/SHM sidecars if they exist.
           for (const suffix of ['-wal', '-shm']) {
-            const sidecar = `${dbPath}${suffix}`
+            const sidecar = `${this.dbPath}${suffix}`
             if (fs.existsSync(sidecar)) fs.unlinkSync(sidecar)
           }
 
-          this.db = new Database(dbPath)
+          this.db = new Database(this.dbPath)
           this.warn(
             '[DATABASE] Corrupted sqlite db detected; backed up and recreated:',
             backupPath
@@ -1093,10 +1094,33 @@ class DatabaseService {
   }
 
   public getDb(): Database.Database {
+    this.ensureOpen()
     return this.db
   }
 
+  private reopen(): void {
+    this.debug('[DATABASE] Reopening database connection:', this.dbPath)
+    this.db = new Database(this.dbPath)
+    this.db.function('regexp', (value: string, pattern: string) => {
+      try {
+        const regex = new RegExp(pattern)
+        return regex.test(value) ? 1 : 0
+      } catch {
+        return 0
+      }
+    })
+    this.db.pragma('journal_mode = WAL')
+    this.db.pragma('foreign_keys = ON')
+  }
+
+  private ensureOpen(): void {
+    if (!this.isOpen()) {
+      this.reopen()
+    }
+  }
+
   public query<T>(sql: string, params: unknown[] = []): T[] {
+    this.ensureOpen()
     // Proactive SQL injection prevention - warn if literals are used in WHERE/VALUES instead of placeholders
     if (params.length === 0 && !sql.includes('?')) {
       const normalized = sql.toLowerCase()
@@ -1109,6 +1133,7 @@ class DatabaseService {
   }
 
   public get<T>(sql: string, params: unknown[] = []): T | undefined {
+    this.ensureOpen()
     // Proactive SQL injection prevention - warn if literals are used in WHERE/VALUES instead of placeholders
     if (params.length === 0 && !sql.includes('?')) {
       const normalized = sql.toLowerCase()
@@ -1121,6 +1146,7 @@ class DatabaseService {
   }
 
   public run(sql: string, params: unknown[] = []): Database.RunResult {
+    this.ensureOpen()
     // Proactive SQL injection prevention - warn if literals are used in WHERE/VALUES instead of placeholders
     if (params.length === 0 && !sql.includes('?')) {
       const normalized = sql.toLowerCase()
@@ -1134,6 +1160,7 @@ class DatabaseService {
 
   public transaction<T>(fn: () => T): T {
     try {
+      this.ensureOpen()
       return this.db.transaction(fn)()
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e)
@@ -1143,7 +1170,9 @@ class DatabaseService {
 
   public close(): void {
     try {
-      this.db.close()
+      if (this.isOpen()) {
+        this.db.close()
+      }
     } catch (e: unknown) {
       console.error('[DATABASE] Error closing database:', e)
     }

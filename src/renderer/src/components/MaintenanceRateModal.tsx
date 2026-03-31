@@ -30,6 +30,7 @@ import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/fina
 interface MaintenanceRateModalProps {
   projectId: number
   projectName: string
+  workingFinancialYear?: string
   visible: boolean
   onCancel: () => void
 }
@@ -62,6 +63,7 @@ type FormValidationError = {
 const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   projectId,
   projectName,
+  workingFinancialYear,
   visible,
   onCancel
 }) => {
@@ -73,7 +75,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const [selectedRate, setSelectedRate] = useState<MaintenanceRate | null>(null)
   const [slabs, setSlabs] = useState<MaintenanceSlab[]>([])
   const [isAddingSlab, setIsAddingSlab] = useState(false)
-  const [filterFY, setFilterFY] = useState<string | null>(null)
+  const [filterFY, setFilterFY] = useState<string | null>(workingFinancialYear ?? null)
   const [filterUnitType, setFilterUnitType] = useState<string>('All')
 
   const [rateForm] = Form.useForm<RateFormValues>()
@@ -122,11 +124,12 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       setIsAddingRate(false)
       setEditingRateId(null)
       setIsAddingSlab(false)
+      setFilterFY(workingFinancialYear ?? null)
       resetBillingDates()
       rateForm.resetFields()
       slabForm.resetFields()
     }
-  }, [visible, projectId, fetchRates, rateForm, slabForm])
+  }, [visible, projectId, fetchRates, rateForm, slabForm, workingFinancialYear])
 
   const fyOptions = useMemo(() => {
     const years = Array.from(
@@ -134,8 +137,14 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
     ) as string[]
     const currentFY = getCurrentFinancialYear()
     const upcomingFY = getUpcomingFinancialYear(currentFY)
-    return Array.from(new Set([...years, currentFY, upcomingFY])).sort().reverse()
-  }, [rates])
+    return Array.from(
+      new Set(
+        [workingFinancialYear, ...years, currentFY, upcomingFY].filter(
+          (fy): fy is string => Boolean(fy)
+        )
+      )
+    ).sort().reverse()
+  }, [rates, workingFinancialYear])
 
   const formFinancialYearOptions = useMemo(() => {
     const today = new Date()
@@ -146,10 +155,16 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       return `${startYear}-${endYear}`
     })
     const existingYears = rates.map((r) => r.financial_year).filter(Boolean) as string[]
-    return Array.from(new Set([...rollingYears, ...existingYears]))
+    return Array.from(
+      new Set(
+        [workingFinancialYear, ...rollingYears, ...existingYears].filter(
+          (fy): fy is string => Boolean(fy)
+        )
+      )
+    )
       .sort()
       .reverse()
-  }, [rates])
+  }, [rates, workingFinancialYear])
 
   const filteredRates = useMemo(() => {
     return rates.filter((r) => {
@@ -166,16 +181,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
         'Financial Year',
         fyOptions.map((fy) => ({
           value: fy,
-          label:
-            fy === getCurrentFinancialYear()
-              ? `${fy} (Current)`
-              : fy === getUpcomingFinancialYear()
-                ? `${fy} (Upcoming)`
-                : fy
+          label: fy === workingFinancialYear ? `${fy} (Working)` : fy
         })),
         'Financial Year',
         {
-          emptyValue: null
+          emptyValue: workingFinancialYear ?? null
         }
       ),
       createSelectFilter(
@@ -189,7 +199,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
         }
       )
     ],
-    [fyOptions]
+    [fyOptions, workingFinancialYear]
   )
 
   const rateFilterValues = useMemo(
@@ -469,9 +479,9 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
   // Clear all filters
   const clearAllFilters = useCallback(() => {
-    setFilterFY(null)
+    setFilterFY(workingFinancialYear ?? null)
     setFilterUnitType('All')
-  }, [])
+  }, [workingFinancialYear])
 
   // Format billing frequency for display
   const formatBillingFrequency = useCallback((frequency: string): string => {
@@ -629,57 +639,63 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       width={900}
       style={{ maxWidth: '95vw', maxHeight: '90vh', top: 20 }}
       bodyStyle={{ maxHeight: 'calc(90vh - 100px)', overflowY: 'auto', padding: '16px 24px' }}
+      className="maintenance-rate-modal"
       destroyOnClose
     >
-      <div style={{ marginBottom: 24 }}>
-        <Alert
-          message={`Managing rates for: ${projectName}`}
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
-        />
+      <div style={{ marginBottom: 20 }}>
+        <div style={{ marginBottom: 12 }}>
+          <Text strong style={{ fontSize: 16, display: 'block', marginBottom: 4 }}>
+            {projectName}
+          </Text>
+          <Text type="secondary">
+            {workingFinancialYear
+              ? `Working FY: ${workingFinancialYear}. Add or review rates for this billing year first, then manage early-payment slabs for the selected rate below.`
+              : 'Add rates for the financial year you want to bill, then manage early-payment slabs for the selected rate below.'}
+          </Text>
+        </div>
         <Alert
           message="Penalty source of truth"
           description="Set late-payment penalty here for each financial year and unit type. If a rate penalty is blank, the project-level charges configuration is used as the fallback. Unit-level penalty values are legacy/import fields and are not the source of truth for new maintenance letters."
           type="warning"
           showIcon
-          style={{ marginBottom: 16 }}
+          style={{ marginBottom: 12 }}
         />
-
-        <div
-          style={{
-            marginBottom: 16
-          }}
-        >
-          <Title level={4} style={{ margin: 0 }}>
-            Rates
-          </Title>
-        </div>
-        <FilterPanel
-          filters={rateFilterFields}
-          values={rateFilterValues}
-          onChange={handleRateFilterChange}
-          onClear={clearAllFilters}
-          showActiveFilters={hasActiveFilters}
-          variant="plain"
-        >
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setEditingRateId(null)
-              rateForm.resetFields()
-              rateForm.setFieldsValue({
-                unit_type: 'Bungalow',
-                billing_frequency: 'YEARLY'
-              })
-              setIsAddingRate(true)
-            }}
-            disabled={isAddingRate}
-          >
-            Add Rate
-          </Button>
-        </FilterPanel>
+        <Card size="small" style={{ marginBottom: 16 }}>
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <div>
+              <Title level={5} style={{ margin: 0 }}>
+                Rates
+              </Title>
+              <Text type="secondary">Filter existing rates or add a new one for this project.</Text>
+            </div>
+            <FilterPanel
+              filters={rateFilterFields}
+              values={rateFilterValues}
+              onChange={handleRateFilterChange}
+              onClear={clearAllFilters}
+              showActiveFilters={hasActiveFilters}
+              variant="plain"
+            >
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setEditingRateId(null)
+                  rateForm.resetFields()
+                  rateForm.setFieldsValue({
+                    financial_year: workingFinancialYear,
+                    unit_type: 'Bungalow',
+                    billing_frequency: 'YEARLY'
+                  })
+                  setIsAddingRate(true)
+                }}
+                disabled={isAddingRate}
+              >
+                {workingFinancialYear ? `Add Rate for ${workingFinancialYear}` : 'Add Rate'}
+              </Button>
+            </FilterPanel>
+          </Space>
+        </Card>
 
         {isAddingRate && (
           <Card size="small" style={{ marginBottom: 16, backgroundColor: '#fafafa' }}>

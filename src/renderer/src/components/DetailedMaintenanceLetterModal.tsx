@@ -21,7 +21,8 @@ import {
   MaintenanceLetter,
   MaintenanceRate
 } from '@preload/types'
-import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/financialYear'
+import { getUpcomingFinancialYear } from '../utils/financialYear'
+import { useWorkingFinancialYear } from '../context/WorkingFinancialYearContext'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -45,6 +46,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
   visible,
   onCancel
 }) => {
+  const { workingFY } = useWorkingFinancialYear()
   const [form] = Form.useForm<FormValues>()
   const [loading, setLoading] = useState(false)
   const [calculation, setCalculation] = useState<LetterCalculation | null>(null)
@@ -77,7 +79,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
           window.api.letters.getByProject(selectedProjectId) as Promise<MaintenanceLetter[]>
         ])
 
-        const defaultFY = getCurrentFinancialYear()
+        const defaultFY = workingFY
         const nextFY = getUpcomingFinancialYear(defaultFY)
 
         const years = Array.from(
@@ -108,7 +110,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
     return () => {
       isCancelled = true
     }
-  }, [selectedProjectId, visible])
+  }, [selectedProjectId, visible, workingFY])
 
   const handleGenerateCalculation = async (values: FormValues): Promise<void> => {
     setLoading(true)
@@ -300,15 +302,15 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
             <Form.Item
               name="financialYear"
               label="Financial Year"
-              extra={`Current FY: ${getCurrentFinancialYear()}. Upcoming FY: ${getUpcomingFinancialYear()}. The current financial year is the recommended default.`}
+              extra={`Working FY: ${workingFY}. Next FY: ${getUpcomingFinancialYear(workingFY)}. The selected working financial year is the recommended default.`}
               rules={[{ required: true, message: 'Please select a financial year' }]}
             >
               <Select placeholder="Select financial year" disabled={!selectedProjectId}>
                 {financialYearOptions.map((fy) => (
                   <Option key={fy} value={fy}>
-                    {fy === getCurrentFinancialYear()
-                      ? `${fy} (Current)`
-                      : fy === getUpcomingFinancialYear()
+                    {fy === workingFY
+                      ? `${fy} (Working)`
+                      : fy === getUpcomingFinancialYear(workingFY)
                         ? `${fy} (Upcoming)`
                         : fy}
                   </Option>

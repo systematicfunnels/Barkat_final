@@ -35,13 +35,13 @@ import { Project, Unit, Payment, MaintenanceLetter } from '@preload/types'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
 import {
   formatFinancialYear,
-  getCurrentFinancialYear,
   getUpcomingFinancialYear
 } from '../utils/financialYear'
 import FilterPanel, {
   createSearchFilter,
   createSelectFilter
 } from '../components/shared/FilterPanel'
+import { useWorkingFinancialYear } from '../context/WorkingFinancialYearContext'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -62,6 +62,7 @@ interface ReceiptProgress {
 }
 
 const Payments: React.FC = () => {
+  const { workingFY } = useWorkingFinancialYear()
   const navigate = useNavigate()
   const location = useLocation()
   const [payments, setPayments] = useState<Payment[]>([])
@@ -76,7 +77,7 @@ const Payments: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedMode, setSelectedMode] = useState<string | null>(null)
 
-  const defaultFY = getCurrentFinancialYear()
+  const defaultFY = workingFY
   const upcomingFY = getUpcomingFinancialYear(defaultFY)
   const [selectedFY, setSelectedFY] = useState<string | null>(defaultFY)
 
@@ -86,6 +87,10 @@ const Payments: React.FC = () => {
   const [bulkForm] = Form.useForm()
   // Watch project_id from payment form to filter unit dropdown
   const formProjectId = Form.useWatch('project_id', form)
+  const formUnitId = Form.useWatch('unit_id', form)
+  const formLetterId = Form.useWatch('letter_id', form)
+  const formFinancialYear = Form.useWatch('financial_year', form)
+  const formPaymentAmount = Form.useWatch('payment_amount', form)
   const filteredUnitsForForm = formProjectId
     ? units.filter((u) => u.project_id === formProjectId)
     : units
@@ -93,6 +98,101 @@ const Payments: React.FC = () => {
   const [bulkProject, setBulkProject] = useState<number | null>(null)
   const [generatingReceipts, setGeneratingReceipts] = useState(false)
   const [receiptProgress, setReceiptProgress] = useState<ReceiptProgress | null>(null)
+  const [lastAutoFilledAmount, setLastAutoFilledAmount] = useState<number | null>(null)
+  const [lastAutoFillKey, setLastAutoFillKey] = useState<string | null>(null)
+
+  const yearMatchedLetters = useMemo(() => {
+    if (!formUnitId || !formFinancialYear) {
+      return []
+    }
+
+    return letters
+      .filter(
+        (letter) =>
+          letter.unit_id === formUnitId && letter.financial_year === formFinancialYear
+      )
+      .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
+  }, [formFinancialYear, formUnitId, letters])
+
+  const autoFillPaymentLetter = useMemo(() => {
+    const unpaidLetters = yearMatchedLetters.filter((letter) => letter.status !== 'Paid')
+    if (unpaidLetters.length > 0) {
+      return unpaidLetters[0]
+    }
+    if (yearMatchedLetters.length > 0) {
+      return yearMatchedLetters[0]
+    }
+    return null
+  }, [yearMatchedLetters])
+
+  const suggestedPaymentLetter = useMemo(() => {
+    if (formLetterId) {
+      return letters.find((letter) => letter.id === formLetterId) || null
+    }
+
+    if (autoFillPaymentLetter) {
+      return autoFillPaymentLetter
+    }
+
+    const unpaidLetter =
+      yearMatchedLetters.find((letter) => letter.status !== 'Paid') || yearMatchedLetters[0]
+
+    return unpaidLetter || null
+  }, [autoFillPaymentLetter, formLetterId, letters, yearMatchedLetters])
+
+  const suggestedPaymentAmount = suggestedPaymentLetter?.final_amount ?? null
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      setLastAutoFilledAmount(null)
+      setLastAutoFillKey(null)
+      return
+    }
+  }, [isModalOpen])
+
+  useEffect(() => {
+    if (!isModalOpen || editingPayment) {
+      return
+    }
+
+    const sourceLetter = formLetterId
+      ? letters.find((letter) => letter.id === formLetterId) || null
+      : autoFillPaymentLetter
+
+    if (!sourceLetter) {
+      return
+    }
+
+    const currentAmount = form.getFieldValue('payment_amount')
+    const nextAmount = sourceLetter.final_amount
+    const nextKey = formLetterId
+      ? `letter:${sourceLetter.id ?? 'none'}`
+      : `${formUnitId ?? 'none'}:${formFinancialYear ?? 'none'}:${sourceLetter.id ?? 'none'}`
+    const shouldAutofill =
+      nextKey !== lastAutoFillKey ||
+      currentAmount === undefined ||
+      currentAmount === null ||
+      currentAmount === '' ||
+      currentAmount === 0 ||
+      currentAmount === lastAutoFilledAmount
+
+    if (shouldAutofill) {
+      form.setFieldsValue({ payment_amount: nextAmount })
+      setLastAutoFilledAmount(nextAmount)
+      setLastAutoFillKey(nextKey)
+    }
+  }, [
+    autoFillPaymentLetter,
+    editingPayment,
+    form,
+    formFinancialYear,
+    formLetterId,
+    formPaymentAmount,
+    formUnitId,
+    isModalOpen,
+    lastAutoFillKey,
+    lastAutoFilledAmount
+  ])
 
   const fetchData = async (): Promise<void> => {
     setLoading(true)
@@ -1178,7 +1278,7 @@ const Payments: React.FC = () => {
                     showIcon
                     style={{ marginBottom: 12 }}
                     message="Recommended payment flow"
-                    description="For billed units, select the maintenance letter first. That will align the financial year and suggested amount automatically."
+                    description="For billed units, select the maintenance letter first. That will align the financial year and fill the amount automatically."
                   />
                   <Row gutter={[16, 8]}>
                     <Col xs={24} md={12}>
@@ -1204,7 +1304,7 @@ const Payments: React.FC = () => {
                               if (letter) {
                                 const formattedYear = formatFinancialYear(letter.financial_year)
                                 if (!/^\d{4}-\d{2}$/.test(formattedYear)) {
-                                  message.warning('Letter has invalid financial year format, using current year')
+                                  message.warning('Letter has invalid financial year format, using the working financial year')
                                   form.setFieldsValue({
                                     financial_year: defaultFY,
                                     payment_amount: letter.final_amount
@@ -1245,7 +1345,7 @@ const Payments: React.FC = () => {
                         extra={
                           <div style={{ fontSize: '12px' }}>
                             <Text type="secondary">
-                              Current FY: {defaultFY}. Upcoming FY: {upcomingFY}. The current financial year is selected automatically by default.
+                              Working FY: {defaultFY}. Next FY: {upcomingFY}. The selected working financial year is used by default.
                             </Text>
                             {selectedLetter && (
                               <>
@@ -1279,7 +1379,7 @@ const Payments: React.FC = () => {
                             .map((fy) => (
                               <Option key={fy} value={fy}>
                                 {fy === defaultFY
-                                  ? `${fy} (Current)`
+                                  ? `${fy} (Working)`
                                   : fy === upcomingFY
                                     ? `${fy} (Upcoming)`
                                     : fy}
@@ -1318,20 +1418,22 @@ const Payments: React.FC = () => {
                 ]}
                 extra={
                   <div style={{ fontSize: '12px' }}>
-                    {(() => {
-                      const letterId = form.getFieldValue('letter_id')
-                      if (letterId) {
-                        const letter = letters.find((l) => l.id === letterId)
-                        if (letter) {
-                          return `Letter amount: Rs. ${letter.final_amount.toLocaleString()}`
-                        }
-                      }
-                      return null
-                    })()}
+                    {suggestedPaymentAmount !== null && (
+                      <Text type="secondary">
+                        {formLetterId
+                          ? `Letter amount: Rs. ${suggestedPaymentAmount.toLocaleString('en-IN')}`
+                          : `Auto-filled from FY ${formFinancialYear}: Rs. ${suggestedPaymentAmount.toLocaleString('en-IN')}`}
+                      </Text>
+                    )}
                   </div>
                 }
               >
-                <InputNumber style={{ width: '100%' }} min={1} aria-label="Enter payment amount" />
+                <InputNumber
+                  style={{ width: '100%' }}
+                  min={1}
+                  placeholder="Enter payment amount"
+                  aria-label="Enter payment amount"
+                />
               </Form.Item>
             </Col>
 
@@ -1425,7 +1527,7 @@ const Payments: React.FC = () => {
                 }
               ]}
               style={{ flex: 1 }}
-              extra={`Current FY: ${defaultFY}. Upcoming FY: ${upcomingFY}. The current financial year is selected automatically by default.`}
+              extra={`Working FY: ${defaultFY}. Next FY: ${upcomingFY}. The selected working financial year is used by default.`}
             >
               <Select
                 placeholder="Select Year"
@@ -1438,7 +1540,7 @@ const Payments: React.FC = () => {
                   .map((fy) => (
                     <Option key={fy} value={fy}>
                       {fy === defaultFY
-                        ? `${fy} (Current)`
+                        ? `${fy} (Working)`
                         : fy === upcomingFY
                           ? `${fy} (Upcoming)`
                           : fy}
