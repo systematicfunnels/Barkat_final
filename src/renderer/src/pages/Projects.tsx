@@ -127,6 +127,9 @@ const Projects: React.FC = () => {
   const [projectSetupSummaries, setProjectSetupSummaries] = useState<
     Record<number, ProjectSetupSummary>
   >({})
+  const [upcomingProjectSetupSummaries, setUpcomingProjectSetupSummaries] = useState<
+    Record<number, ProjectSetupSummary>
+  >({})
   const [loading, setLoading] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isRateModalOpen, setIsRateModalOpen] = useState(false)
@@ -156,13 +159,17 @@ const Projects: React.FC = () => {
   const fetchProjects = useCallback(async (): Promise<void> => {
     setLoading(true)
     try {
-      const [data, summaries] = await Promise.all([
+      const [data, summaries, upcomingSummaries] = await Promise.all([
         window.api.projects.getAll(),
-        window.api.projects.getSetupSummaries(currentFY)
+        window.api.projects.getSetupSummaries(currentFY),
+        window.api.projects.getSetupSummaries(upcomingFY)
       ])
       setProjects(data)
       setProjectSetupSummaries(
         Object.fromEntries(summaries.map((summary) => [summary.project_id, summary]))
+      )
+      setUpcomingProjectSetupSummaries(
+        Object.fromEntries(upcomingSummaries.map((summary) => [summary.project_id, summary]))
       )
     } catch (error) {
       if (process.env.NODE_ENV === 'development') {
@@ -172,7 +179,7 @@ const Projects: React.FC = () => {
     } finally {
       setLoading(false)
     }
-  }, [currentFY])
+  }, [currentFY, upcomingFY])
 
   useEffect(() => {
     fetchProjects()
@@ -697,36 +704,42 @@ const Projects: React.FC = () => {
       key: 'setup_status',
       width: 320,
       render: (_: unknown, record: Project) => {
-        const summary = record.id ? projectSetupSummaries[record.id] : undefined
-        if (!summary) {
+        const currentSummary = record.id ? projectSetupSummaries[record.id] : undefined
+        const upcomingSummary = record.id ? upcomingProjectSetupSummaries[record.id] : undefined
+        if (!currentSummary || !upcomingSummary) {
           return <Text type="secondary">Checking setup...</Text>
         }
 
-        const statusColor = summary.ready_for_letters
-          ? summary.warnings.length > 0
-            ? 'warning'
-            : 'success'
-          : 'error'
-        const statusLabel = summary.ready_for_letters
-          ? summary.warnings.length > 0
-            ? 'Ready with Warnings'
-            : 'Ready'
-          : 'Needs Setup'
+        const readyCurrent = currentSummary.ready_for_letters
+        const readyUpcoming = upcomingSummary.ready_for_letters
+        const statusColor =
+          readyCurrent || readyUpcoming
+            ? readyCurrent && readyUpcoming
+              ? 'success'
+              : 'warning'
+            : 'error'
+        const statusLabel =
+          readyCurrent && readyUpcoming
+            ? 'Ready'
+            : readyCurrent || readyUpcoming
+              ? 'Partially Ready'
+              : 'Needs Setup'
 
         return (
           <Space direction="vertical" size={4}>
             <Tag color={statusColor}>{statusLabel}</Tag>
             <Text type="secondary" style={{ fontSize: 12 }}>
-              Units: {summary.unit_count} | Detected Sectors:{' '}
-              {summary.sector_codes.length > 0 ? summary.sector_codes.join(', ') : 'None'}
+              Units: {currentSummary.unit_count} | Detected Sectors:{' '}
+              {currentSummary.sector_codes.length > 0 ? currentSummary.sector_codes.join(', ') : 'None'}
             </Text>
-            {summary.blockers[0] && (
-              <Text type="danger" style={{ fontSize: 12 }}>
-                {summary.blockers[0]}
-              </Text>
-            )}
-            {!summary.blockers[0] && summary.warnings[0] && (
-              <Text style={{ fontSize: 12, color: '#d48806' }}>{summary.warnings[0]}</Text>
+            <Text style={{ fontSize: 12, color: readyCurrent ? '#389e0d' : '#cf1322' }}>
+              Current FY {currentFY}: {readyCurrent ? 'Ready' : currentSummary.blockers[0] || 'Needs setup'}
+            </Text>
+            <Text style={{ fontSize: 12, color: readyUpcoming ? '#389e0d' : '#cf1322' }}>
+              Upcoming FY {upcomingFY}: {readyUpcoming ? 'Ready' : upcomingSummary.blockers[0] || 'Needs setup'}
+            </Text>
+            {!readyCurrent && !readyUpcoming && currentSummary.warnings[0] && (
+              <Text style={{ fontSize: 12, color: '#d48806' }}>{currentSummary.warnings[0]}</Text>
             )}
           </Space>
         )
@@ -843,8 +856,14 @@ const Projects: React.FC = () => {
       {/* Setup Checklist Banner - shown when any project has incomplete setup */}
       {(() => {
         const incompleteProjects = projects.filter((p) => {
-          const s = projectSetupSummaries[p.id!]
-          return s && s.blockers.length > 0
+          const currentSummary = projectSetupSummaries[p.id!]
+          const upcomingSummary = upcomingProjectSetupSummaries[p.id!]
+          return (
+            currentSummary &&
+            upcomingSummary &&
+            !currentSummary.ready_for_letters &&
+            !upcomingSummary.ready_for_letters
+          )
         })
         if (incompleteProjects.length === 0) return null
         return (
@@ -863,14 +882,21 @@ const Projects: React.FC = () => {
             description={
               <div className="project-setup-alert-list">
                 {incompleteProjects.map((p) => {
-                  const s = projectSetupSummaries[p.id!]
-                  if (!s) return null
-                  const needsBank = s.blockers.some((b) => {
+                  const currentSummary = projectSetupSummaries[p.id!]
+                  const upcomingSummary = upcomingProjectSetupSummaries[p.id!]
+                  if (!currentSummary || !upcomingSummary) return null
+                  const combinedBlockers = [...currentSummary.blockers, ...upcomingSummary.blockers]
+                  const needsBank = combinedBlockers.some((b) => {
                     const text = b.toLowerCase()
                     return text.includes('bank') || text.includes('sector code') || text.includes('sector grouping')
                   })
-                  const needsRate = s.blockers.some((b) => b.toLowerCase().includes('rate'))
-                  const needsUnits = s.blockers.some((b) => b.toLowerCase().includes('unit'))
+                  const needsRate = combinedBlockers.some((b) => b.toLowerCase().includes('rate'))
+                  const needsUnits = combinedBlockers.some((b) => b.toLowerCase().includes('unit'))
+                  const s = {
+                    blockers: [
+                      `Current ${currentFY}: ${currentSummary.blockers[0] || 'Ready'} · Upcoming ${upcomingFY}: ${upcomingSummary.blockers[0] || 'Ready'}`
+                    ]
+                  }
                   return (
                     <div
                       key={p.id}
