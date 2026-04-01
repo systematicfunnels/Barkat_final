@@ -324,6 +324,29 @@ export function registerIpcHandlers(): void {
     return unitService.bulkCreate(units)
   })
 
+  ipcMain.handle('import-units', (_, units: Unit[]): boolean => {
+    if (!Array.isArray(units) || units.length === 0) {
+      throw new Error('No units provided for import')
+    }
+
+    units.forEach((unit, index) => {
+      if (!isPositiveInteger(unit?.project_id)) {
+        throw new Error(`Row ${index + 1}: invalid project selected`)
+      }
+      if (!sanitizeText(unit?.unit_number)) {
+        throw new Error(`Row ${index + 1}: unit number is required`)
+      }
+      if (!sanitizeText(unit?.owner_name)) {
+        throw new Error(`Row ${index + 1}: owner name is required`)
+      }
+      if (!isPositiveNumber(unit?.area_sqft)) {
+        throw new Error(`Row ${index + 1}: area must be greater than 0`)
+      }
+    })
+
+    return unitService.importUnits(units)
+  })
+
   ipcMain.handle('import-ledger', (_, { projectId, rows }): boolean => {
     return unitService.importLedger(projectId, rows)
   })

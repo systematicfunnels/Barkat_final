@@ -1484,6 +1484,7 @@ const Billing: React.FC = () => {
             onClear={clearAllFilters}
             showActiveFilters={hasActiveFilters}
             showClearButton={true}
+            loading={loading}
             variant="plain"
           />
         </Space>
@@ -1651,49 +1652,50 @@ const Billing: React.FC = () => {
         okText={batchModalStep === 'config' ? 'Next: Select Units' : 'Generate Maintenance Letters'}
         className="billing-generate-modal mobile-fullscreen-modal mobile-single-column"
       >
-        {passedUnitIds.length > 0 && (
-          <Alert
-            message={`Generating letters for ${passedUnitIds.length} selected unit(s)`}
-            type="info"
-            showIcon
-            icon={<InfoCircleOutlined />}
-            style={{ marginBottom: 16 }}
-            closable
-            onClose={() => setPassedUnitIds([])}
-          />
-        )}
+        <div className="billing-generate-modal-scroll">
+          {passedUnitIds.length > 0 && (
+            <Alert
+              message={`Generating letters for ${passedUnitIds.length} selected unit(s)`}
+              type="info"
+              showIcon
+              icon={<InfoCircleOutlined />}
+              style={{ marginBottom: 16 }}
+              closable
+              onClose={() => setPassedUnitIds([])}
+            />
+          )}
 
-        {/* Breadcrumb navigation for multi-step workflow */}
-        <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fafafa', borderRadius: 10 }}>
-          <Space size="small" align="center">
-            <Button
-              type={batchModalStep === 'config' ? 'primary' : 'text'}
-              size="small"
-              onClick={() => setBatchModalStep('config')}
-              style={{ fontWeight: batchModalStep === 'config' ? 600 : 'normal' }}
-            >
-              1. Configure Letter
-            </Button>
-            <span style={{ color: '#999' }}>{'->'}</span>
-            <Button
-              type={batchModalStep === 'units' ? 'primary' : 'text'}
-              size="small"
-              disabled={!batchProjectId}
-              onClick={() => batchProjectId && setBatchModalStep('units')}
-              style={{ fontWeight: batchModalStep === 'units' ? 600 : 'normal' }}
-            >
-              2. Select Units
-            </Button>
-          </Space>
-          <div style={{ marginTop: 6, fontSize: '11.5px', color: '#666' }}>
-            {batchModalStep === 'config' 
-              ? 'Step 1 of 2: Set letter details (project, FY, dates, add-ons)' 
-              : 'Step 2 of 2: Choose which units to generate letters for'}
+          {/* Breadcrumb navigation for multi-step workflow */}
+          <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fafafa', borderRadius: 10 }}>
+            <Space size="small" align="center">
+              <Button
+                type={batchModalStep === 'config' ? 'primary' : 'text'}
+                size="small"
+                onClick={() => setBatchModalStep('config')}
+                style={{ fontWeight: batchModalStep === 'config' ? 600 : 'normal' }}
+              >
+                1. Configure Letter
+              </Button>
+              <span style={{ color: '#999' }}>{'->'}</span>
+              <Button
+                type={batchModalStep === 'units' ? 'primary' : 'text'}
+                size="small"
+                disabled={!batchProjectId}
+                onClick={() => batchProjectId && setBatchModalStep('units')}
+                style={{ fontWeight: batchModalStep === 'units' ? 600 : 'normal' }}
+              >
+                2. Select Units
+              </Button>
+            </Space>
+            <div style={{ marginTop: 6, fontSize: '11.5px', color: '#666' }}>
+              {batchModalStep === 'config' 
+                ? 'Step 1 of 2: Set letter details (project, FY, dates, add-ons)' 
+                : 'Step 2 of 2: Choose which units to generate letters for'}
+            </div>
           </div>
-        </div>
 
-        {batchModalStep === 'config' ? (
-          <Form
+          {batchModalStep === 'config' ? (
+            <Form
             key={currentLetter ? `edit-${currentLetter.id}` : 'create'}
             form={form}
             layout="vertical"
@@ -1915,9 +1917,9 @@ const Billing: React.FC = () => {
                 </Form.List>
               </Col>
             </Row>
-          </Form>
-        ) : (
-          <>
+            </Form>
+          ) : (
+            <>
             <Alert
               message="Select specific units to generate letters for, or leave empty to generate for all units in the project"
               type="info"
@@ -2048,8 +2050,9 @@ const Billing: React.FC = () => {
                 }
               />
             </div>
-          </>
-        )}
+            </>
+          )}
+        </div>
       </Modal>
 
       <Modal

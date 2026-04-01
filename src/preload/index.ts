@@ -86,6 +86,7 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('delete-unit', id),
     bulkDelete: (ids: number[]) => ipcRenderer.invoke('bulk-delete-units', ids),
     bulkCreate: (units: Unit[]) => ipcRenderer.invoke('bulk-create-units', units),
+    importUnits: (units: Unit[]) => ipcRenderer.invoke('import-units', units),
     importLedger: (params: { projectId: number; rows: Record<string, unknown>[] }) =>
       ipcRenderer.invoke('import-ledger', params)
   },

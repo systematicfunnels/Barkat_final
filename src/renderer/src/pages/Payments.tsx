@@ -1136,6 +1136,7 @@ const Payments: React.FC = () => {
           onClear={clearAllFilters}
           showActiveFilters={hasActiveFilters}
           showClearButton
+          loading={loading}
           variant="plain"
         />
       </Card>

@@ -347,30 +347,34 @@ const Reports: React.FC = () => {
 
       worksheet.columns = columns
 
-      // Add filter information if any filters are active
+      const filterSummaryRows: string[][] = []
       if (hasActiveFilters) {
-        worksheet.addRow(['FILTERED FINANCIAL REPORT'])
-        worksheet.addRow([`Generated: ${dayjs().format('DD/MM/YYYY HH:mm')}`])
+        filterSummaryRows.push(['FILTERED FINANCIAL REPORT'])
+        filterSummaryRows.push([`Generated: ${dayjs().format('DD/MM/YYYY HH:mm')}`])
 
         if (selectedProject) {
-          worksheet.addRow([`Project: ${selectedProjectName}`])
+          filterSummaryRows.push([`Project: ${selectedProjectName}`])
         }
         if (selectedUnitType) {
-          worksheet.addRow([`Unit Type: ${selectedUnitType}`])
+          filterSummaryRows.push([`Unit Type: ${selectedUnitType}`])
         }
         if (selectedStatus) {
-          worksheet.addRow([`Status: ${selectedStatus}`])
+          filterSummaryRows.push([`Status: ${selectedStatus}`])
         }
         if (searchText) {
-          worksheet.addRow([`Search: "${searchText}"`])
+          filterSummaryRows.push([`Search: "${searchText}"`])
         }
         if (outstandingRange[0] !== null || outstandingRange[1] !== null) {
-          worksheet.addRow([
+          filterSummaryRows.push([
             `Outstanding Range: ${outstandingRange[0] !== null ? `Rs. ${outstandingRange[0]}` : 'Any'} - ${outstandingRange[1] !== null ? `Rs. ${outstandingRange[1]}` : 'Any'}`
           ])
         }
 
-        worksheet.addRow([]) // Empty row
+        filterSummaryRows.push([''])
+      }
+
+      if (filterSummaryRows.length > 0) {
+        worksheet.insertRows(1, filterSummaryRows)
       }
 
       // Add rows with validation
@@ -492,7 +496,7 @@ const Reports: React.FC = () => {
       summaryRow.getCell('Total_Outstanding').font = { bold: true }
 
       // Style the headers
-      const headerRowNumber = hasActiveFilters ? 9 : 1
+      const headerRowNumber = filterSummaryRows.length + 1
       worksheet.getRow(headerRowNumber).font = { bold: true }
       worksheet.getRow(headerRowNumber).fill = {
         type: 'pattern',
@@ -516,11 +520,18 @@ const Reports: React.FC = () => {
       const anchor = document.createElement('a')
       anchor.href = url
 
+      const sanitizedProjectName = selectedProjectName
+        .split('')
+        .filter((char) => !/[<>:"/\\|?*]/.test(char) && char.charCodeAt(0) >= 32)
+        .join('')
+        .trim()
+        .replace(/\s+/g, '_')
+
       let filename = `Financial_Report_${dayjs().format('YYYY-MM-DD')}`
       if (hasActiveFilters) {
         filename = `Filtered_Report_${dayjs().format('YYYY-MM-DD')}`
-        if (selectedProjectName) {
-          filename = `${selectedProjectName.replace(/\s+/g, '_')}_Report_${dayjs().format('YYYY-MM-DD')}`
+        if (sanitizedProjectName) {
+          filename = `${sanitizedProjectName}_Report_${dayjs().format('YYYY-MM-DD')}`
         }
       }
 
@@ -545,6 +556,7 @@ const Reports: React.FC = () => {
 
   // Determine if we should collapse years on mobile
   const shouldCollapseYears = screenWidth < 768
+  const visibleYears = shouldCollapseYears ? [] : years
 
   const columns = [
     {
@@ -605,7 +617,7 @@ const Reports: React.FC = () => {
       render: (status: string) => <Tag color={status === 'Sold' ? 'green' : 'red'}>{status}</Tag>
     },
     // Yearly columns - now with all three metrics
-    ...years.map((year) => ({
+    ...visibleYears.map((year) => ({
       title: year,
       children: [
         {
@@ -738,6 +750,7 @@ const Reports: React.FC = () => {
           onChange={handleReportFilterChange}
           onClear={clearAllFilters}
           showActiveFilters={hasActiveFilters}
+          loading={loading}
           variant="plain"
         />
       </Card>
@@ -751,30 +764,30 @@ const Reports: React.FC = () => {
             </>
           }
           style={{ marginBottom: 24 }}
-          bodyStyle={{ padding: '16px 0' }}
+          bodyStyle={{ padding: '16px 16px 12px' }}
           className="page-toolbar-card report-summary-card"
         >
-          <Row gutter={[16, 16]}>
+          <div className="report-summary-grid">
             {yearlyTotals.map((total) => {
               const collectionRate = total.billed > 0 ? (total.paid / total.billed) * 100 : 0
               return (
-                <Col xs={24} sm={12} md={8} lg={6} key={total.year}>
+                <div key={total.year}>
                   <Card
                     size="small"
                     bordered
-                    className="page-stat-card"
-                    title={
-                      <Space direction="vertical" size={0} style={{ width: '100%' }}>
-                        <Text strong style={{ fontSize: '16px' }}>
+                    className="page-stat-card report-year-card"
+                  >
+                    <div className="report-year-card-header">
+                      <div className="report-year-card-meta">
+                        <Text strong className="report-year-card-title">
                           {total.year}
                         </Text>
-                        <Text type="secondary" style={{ fontSize: '12px' }}>
+                        <Text type="secondary" className="report-year-card-subtitle">
                           {total.unitCount} units billed
                         </Text>
-                      </Space>
-                    }
-                    extra={
+                      </div>
                       <Tag
+                        className="report-year-card-rate"
                         color={
                           collectionRate >= 90
                             ? 'success'
@@ -785,29 +798,35 @@ const Reports: React.FC = () => {
                       >
                         {collectionRate.toFixed(1)}%
                       </Tag>
-                    }
-                  >
-                    <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    </div>
+                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                      <div className="report-year-card-row">
                         <Text type="secondary">Billed:</Text>
-                        <Text strong>Rs. {total.billed.toLocaleString()}</Text>
+                        <Text strong className="report-year-card-value">
+                          Rs. {total.billed.toLocaleString()}
+                        </Text>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div className="report-year-card-row">
                         <Text type="secondary">Collected:</Text>
-                        <Text type="success">Rs. {total.paid.toLocaleString()}</Text>
+                        <Text type="success" className="report-year-card-value">
+                          Rs. {total.paid.toLocaleString()}
+                        </Text>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                      <div className="report-year-card-row">
                         <Text type="secondary">Outstanding:</Text>
-                        <Text type={total.balance > 0 ? 'danger' : 'success'}>
+                        <Text
+                          type={total.balance > 0 ? 'danger' : 'success'}
+                          className="report-year-card-value"
+                        >
                           Rs. {total.balance.toLocaleString()}
                         </Text>
                       </div>
                     </Space>
                   </Card>
-                </Col>
+                </div>
               )
             })}
-          </Row>
+          </div>
         </Card>
       )}
 
@@ -863,16 +882,22 @@ const Reports: React.FC = () => {
         extra={
           shouldCollapseYears && (
             <Text type="secondary" style={{ fontSize: '12px' }}>
-              Detailed columns hidden on mobile
+              Showing totals only on smaller screens
             </Text>
           )
         }
       >
         <Text className="page-helper-text" style={{ display: 'block', margin: '16px 16px 0' }}>
-          On smaller widths, review the summary cards first and use horizontal table scroll for year-by-year detail.
+          {shouldCollapseYears
+            ? 'On smaller widths, review the yearly summary cards first. The ledger below shows totals only to keep the table readable.'
+            : 'Use the yearly columns below for detailed billed, paid, and balance review across each financial year.'}
         </Text>
         <Alert
-          message="Table shows Billed, Paid, and Balance for each financial year"
+          message={
+            shouldCollapseYears
+              ? 'Mobile view shows totals only. Use the summary cards or export Excel for full year-by-year detail.'
+              : 'Table shows Billed, Paid, and Balance for each financial year'
+          }
           type="info"
           showIcon
           style={{ margin: '16px', marginBottom: 0 }}
@@ -900,7 +925,7 @@ const Reports: React.FC = () => {
                       {hasActiveFilters && ` (${pivotData.length} units)`}
                     </Text>
                   </Table.Summary.Cell>
-                  {years.map((year, index) => {
+                  {visibleYears.map((year, index) => {
                     const yearlyTotal = yearlyTotals.find((t) => t.year === year)
                     return (
                       <React.Fragment key={year}>
@@ -922,15 +947,15 @@ const Reports: React.FC = () => {
                       </React.Fragment>
                     )
                   })}
-                  <Table.Summary.Cell index={years.length * 3 + 5} align="right">
+                  <Table.Summary.Cell index={visibleYears.length * 3 + 5} align="right">
                     <Text strong>Rs. {stats.totalBilled.toLocaleString()}</Text>
                   </Table.Summary.Cell>
-                  <Table.Summary.Cell index={years.length * 3 + 6} align="right">
+                  <Table.Summary.Cell index={visibleYears.length * 3 + 6} align="right">
                     <Text strong type="success">
                       Rs. {stats.totalCollected.toLocaleString()}
                     </Text>
                   </Table.Summary.Cell>
-                  <Table.Summary.Cell index={years.length * 3 + 7} align="right">
+                  <Table.Summary.Cell index={visibleYears.length * 3 + 7} align="right">
                     <Text strong type={stats.outstanding > 0 ? 'danger' : 'success'}>
                       Rs. {stats.outstanding.toLocaleString()}
                     </Text>

@@ -834,6 +834,7 @@ const Projects: React.FC = () => {
                 trigger={['hover', 'click']}
                 placement="bottomLeft"
                 overlayClassName="app-filter-dropdown-menu"
+                disabled={loading}
                 menu={{
                   items: workingFYOptions.map((option) => ({
                     key: String(option.value),
@@ -842,8 +843,10 @@ const Projects: React.FC = () => {
                   }))
                 }}
               >
-                <Button className="app-filter-dropdown-button" style={{ minWidth: 220 }}>
-                  {workingFYOptions.find((option) => option.value === workingFY)?.label || workingFY}
+                <Button className="app-filter-dropdown-button" style={{ minWidth: 220 }} disabled={loading}>
+                  {loading
+                    ? 'Loading financial year...'
+                    : workingFYOptions.find((option) => option.value === workingFY)?.label || workingFY}
                 </Button>
               </Dropdown>
             </Space>
@@ -876,6 +879,7 @@ const Projects: React.FC = () => {
           onChange={handleProjectFilterChange}
           onClear={clearAllFilters}
           showActiveFilters={hasActiveFilters}
+          loading={loading}
           variant="plain"
         />
       </Card>

@@ -135,6 +135,7 @@ export function FilterPanel({
             onPressEnter={(e) => onChange(field.key, e.currentTarget.value)}
             allowClear={field.allowClear !== false}
             prefix={<SearchOutlined />}
+            disabled={loading}
             style={commonStyle}
           />
         )
@@ -156,6 +157,8 @@ export function FilterPanel({
           selectedLabels.length > 0
             ? selectedLabels.join(', ')
             : field.placeholder || field.label
+
+        const hasOptions = (field.options?.length ?? 0) > 0
 
         const menuItems = [
           ...(field.allowClear !== false
@@ -194,13 +197,15 @@ export function FilterPanel({
             menu={{ items: menuItems }}
             placement="bottomLeft"
             overlayClassName="app-filter-dropdown-menu"
+            disabled={loading || !hasOptions}
           >
             <Button
               className="app-filter-dropdown-button"
               style={commonStyle}
               title={buttonLabel}
+              disabled={loading || !hasOptions}
             >
-              {buttonLabel}
+              {loading ? `Loading ${field.label}...` : buttonLabel}
             </Button>
           </Dropdown>
         )
@@ -214,6 +219,7 @@ export function FilterPanel({
             placeholder={field.placeholder || field.label}
             value={typeof values[field.key] === 'number' ? (values[field.key] as number) : undefined}
             onChange={(value) => onChange(field.key, value)}
+            disabled={loading}
             style={commonStyle}
           />
         )
@@ -232,6 +238,7 @@ export function FilterPanel({
                   const current = rangeValue || [null, null]
                   onChange(field.key, [min, current[1]])
                 }}
+                disabled={loading}
                 style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
               <span className="app-filter-range-separator">to</span>
@@ -243,6 +250,7 @@ export function FilterPanel({
                   const current = rangeValue || [null, null]
                   onChange(field.key, [current[0], max])
                 }}
+                disabled={loading}
                 style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
           </Space.Compact>
@@ -255,7 +263,11 @@ export function FilterPanel({
   }
 
   const content = (
-    <Space orientation="vertical" style={{ width: '100%' }} size="middle">
+    <div
+      className={`app-filter-panel${loading ? ' is-loading' : ''}`}
+      aria-busy={loading}
+    >
+      <Space orientation="vertical" style={{ width: '100%' }} size="middle">
       {showFields && (
         <div className="app-filter-panel-fields">
           <div className="app-filter-panel-label">
@@ -299,6 +311,7 @@ export function FilterPanel({
                 className="app-filter-clear-button"
                 icon={<ClearOutlined />}
                 onClick={onClear}
+                disabled={loading}
                 style={{ fontSize: responsiveLabelSize }}
               >
                 Clear all
@@ -307,7 +320,8 @@ export function FilterPanel({
           </Space>
         </div>
       )}
-    </Space>
+      </Space>
+    </div>
   )
 
   if (variant === 'plain') {

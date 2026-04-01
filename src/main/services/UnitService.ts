@@ -488,6 +488,65 @@ class UnitService {
     })
   }
 
+  public importUnits(units: Unit[]): boolean {
+    this.logDebug(`[IMPORT] Starting units-only import for ${units.length} units`)
+
+    return dbService.transaction(() => {
+      for (const [index, unit] of units.entries()) {
+        const projectId = Number(unit.project_id)
+        const unitNumber = this.sanitizeText(unit.unit_number)
+        const ownerName = this.sanitizeText(unit.owner_name)
+        const areaSqft = Number(unit.area_sqft)
+
+        if (!Number.isFinite(projectId) || projectId <= 0) {
+          throw new Error(`Row ${index + 1}: invalid project selected`)
+        }
+        if (!unitNumber) {
+          throw new Error(`Row ${index + 1}: unit number is required`)
+        }
+        if (!ownerName) {
+          throw new Error(`Row ${index + 1}: owner name is required`)
+        }
+        if (!Number.isFinite(areaSqft) || areaSqft <= 0) {
+          throw new Error(`Row ${index + 1}: area must be greater than 0`)
+        }
+
+        const projectExists = dbService.get('SELECT id FROM projects WHERE id = ?', [projectId])
+        if (!projectExists) {
+          throw new Error(`Row ${index + 1}: project ${projectId} does not exist`)
+        }
+
+        const normalizedSectorCode = this.normalizeSectorCode(unit.sector_code, unitNumber)
+        const normalizedUnit: Unit = {
+          project_id: projectId,
+          unit_number: unitNumber,
+          sector_code: normalizedSectorCode || undefined,
+          owner_name: ownerName,
+          unit_type: this.normalizeUnitType(unit.unit_type),
+          area_sqft: areaSqft,
+          contact_number: this.sanitizeText(unit.contact_number),
+          email: this.sanitizeText(unit.email),
+          status: this.normalizeUnitStatus(unit.status),
+          billing_address: this.sanitizeText(unit.billing_address),
+          resident_address: this.sanitizeText(unit.resident_address)
+        }
+
+        const existingUnit = dbService.get<{ id: number }>(
+          'SELECT id FROM units WHERE project_id = ? AND unit_number = ?',
+          [projectId, unitNumber]
+        )
+
+        if (existingUnit) {
+          this.update(existingUnit.id, normalizedUnit)
+        } else {
+          this.create(normalizedUnit)
+        }
+      }
+
+      return true
+    })
+  }
+
   private deleteInternal(id: number): boolean {
     // Internal delete without transaction wrapper for use in bulk operations
     const unit = dbService.get('SELECT id FROM units WHERE id = ?', [id])

@@ -75,6 +75,7 @@ declare global {
         delete: (id: number) => Promise<boolean>
         bulkDelete: (ids: number[]) => Promise<boolean>
         bulkCreate: (units: Unit[]) => Promise<boolean>
+        importUnits: (units: Unit[]) => Promise<boolean>
         importLedger: (params: {
           projectId: number
           rows: Record<string, unknown>[]
