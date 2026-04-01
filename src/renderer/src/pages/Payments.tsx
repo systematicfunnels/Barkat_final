@@ -18,6 +18,7 @@ import {
   DividerProps,
   Progress,
   Alert,
+  Dropdown,
   Row,
   Col
 } from 'antd'
@@ -25,6 +26,8 @@ import {
   PlusOutlined,
   DeleteOutlined,
   PrinterOutlined,
+  FolderOpenOutlined,
+  DownloadOutlined,
   TableOutlined,
   CalculatorOutlined,
   ClearOutlined,
@@ -740,6 +743,38 @@ const Payments: React.FC = () => {
     }
   }
 
+  const handleOpenReceiptsFolder = useCallback(async (): Promise<void> => {
+    try {
+      await window.api.shell.openOutputFolder('receipts')
+    } catch (error) {
+      console.error('Failed to open receipts folder:', error)
+      message.error('Failed to open receipts folder')
+    }
+  }, [])
+
+  const handleDownloadReceiptsZip = useCallback(async (): Promise<void> => {
+    try {
+      const timestamp = dayjs().format('YYYYMMDD_HHmmss')
+      const destinationPath = await window.api.dialog.saveFile({
+        title: 'Save Receipts ZIP',
+        defaultPath: `receipts_${timestamp}.zip`,
+        filters: [{ name: 'ZIP Archive', extensions: ['zip'] }]
+      })
+
+      if (!destinationPath) return
+
+      message.loading({ content: 'Creating ZIP...', key: 'receipts_zip' })
+      const result = await window.api.shell.exportOutputZip('receipts', destinationPath)
+      message.success({
+        content: `ZIP saved with ${result.fileCount} receipt PDF${result.fileCount !== 1 ? 's' : ''}`,
+        key: 'receipts_zip'
+      })
+    } catch (error) {
+      console.error('Failed to export receipts ZIP:', error)
+      message.error({ content: 'Failed to create receipts ZIP', key: 'receipts_zip' })
+    }
+  }, [])
+
   const handleBatchReceipts = async (): Promise<void> => {
     if (selectedRowKeys.length === 0) {
       message.warning('Please select payments to generate receipts for')
@@ -1027,6 +1062,28 @@ const Payments: React.FC = () => {
             )}
           </div>
           <Space className="responsive-action-bar">
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'open-folder',
+                    icon: <FolderOpenOutlined />,
+                    label: 'Open Receipts Folder',
+                    onClick: () => void handleOpenReceiptsFolder()
+                  },
+                  {
+                    key: 'download-zip',
+                    icon: <DownloadOutlined />,
+                    label: 'Download Receipts ZIP',
+                    onClick: () => void handleDownloadReceiptsZip()
+                  }
+                ]
+              }}
+            >
+              <Button icon={<FolderOpenOutlined />} aria-label="Open receipts folder options">
+                Receipts Folder
+              </Button>
+            </Dropdown>
             <Button
               icon={<TableOutlined />}
               onClick={handleBulkAdd}

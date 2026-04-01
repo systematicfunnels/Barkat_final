@@ -209,24 +209,39 @@ class BackupService {
         return { success: false, error: result.error }
       }
 
-      // Verify integrity (optional: run PRAGMA integrity_check)
+      dbService.reopenConnection()
+      dbWasClosed = false
+
       return {
         success: true,
         backupPath: this.dbPath,
         timestamp: new Date().toISOString(),
-        size: result.size,
-        requiresRestart: true
+        size: result.size
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      // If DB was closed but restore failed, we can't recover here - requires manual intervention
       if (dbWasClosed) {
-        this.logError('[BACKUP] Database was closed but restore failed. Manual restart required:', message)
-        return {
-          success: false,
-          error: `Restore failed: ${message}. CRITICAL: Database connection was closed. Application restart required.`,
-          requiresRestart: true,
-          criticalFailure: true
+        try {
+          dbService.reopenConnection()
+          dbWasClosed = false
+          return {
+            success: false,
+            error: `Restore failed: ${message}. Database connection was reopened; please verify your data before continuing.`
+          }
+        } catch (reopenError) {
+          const reopenMessage =
+            reopenError instanceof Error ? reopenError.message : String(reopenError)
+          this.logError(
+            '[BACKUP] Database was closed, restore failed, and reopen also failed:',
+            message,
+            reopenMessage
+          )
+          return {
+            success: false,
+            error: `Restore failed: ${message}. CRITICAL: Database connection could not be reopened (${reopenMessage}). Application restart required.`,
+            requiresRestart: true,
+            criticalFailure: true
+          }
         }
       }
       return {

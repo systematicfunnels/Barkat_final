@@ -143,7 +143,13 @@ const api = {
       ipcRenderer.invoke('get-available-financial-years', projectId) as Promise<string[]>
   },
   shell: {
-    showItemInFolder: (path: string) => ipcRenderer.invoke('show-item-in-folder', path)
+    showItemInFolder: (path: string) => ipcRenderer.invoke('show-item-in-folder', path),
+    openOutputFolder: (folderType: 'maintenance-letters' | 'receipts') =>
+      ipcRenderer.invoke('open-output-folder', folderType),
+    exportOutputZip: (
+      folderType: 'maintenance-letters' | 'receipts',
+      destinationPath: string
+    ) => ipcRenderer.invoke('export-output-zip', folderType, destinationPath)
   },
   dialog: {
     selectLocalFile: (options: { title?: string; filters?: { name: string; extensions: string[] }[] }) =>

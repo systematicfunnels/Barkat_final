@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS maintenance_letters (
   financial_year TEXT NOT NULL,
   base_amount REAL NOT NULL, -- Maps to maintenance_charge
   arrears REAL DEFAULT 0, -- Aligned with ER
+  snapshot_discount_percentage REAL DEFAULT 0,
   discount_amount REAL DEFAULT 0,
   final_amount REAL NOT NULL,
   is_paid BOOLEAN DEFAULT 0, -- Aligned with ER
@@ -172,6 +173,13 @@ CREATE TABLE IF NOT EXISTS receipts (
   payment_id INTEGER NOT NULL,
   receipt_number TEXT UNIQUE,
   receipt_date DATE NOT NULL,
+  snapshot_letter_id INTEGER,
+  snapshot_financial_year TEXT,
+  snapshot_base_amount REAL DEFAULT 0,
+  snapshot_arrears REAL DEFAULT 0,
+  snapshot_discount_amount REAL DEFAULT 0,
+  snapshot_letter_total REAL DEFAULT 0,
+  snapshot_addons_json TEXT,
   FOREIGN KEY (payment_id) REFERENCES payments(id) ON DELETE CASCADE
 );
 

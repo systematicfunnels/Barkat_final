@@ -20,6 +20,7 @@ import {
   Progress,
   List,
   Spin,
+  Dropdown,
   Row,
   Col
 } from 'antd'
@@ -31,10 +32,12 @@ import {
   FilePdfOutlined,
   PlusOutlined,
   FolderOpenOutlined,
+  DownloadOutlined,
   DeleteOutlined,
   EditOutlined,
   InfoCircleOutlined,
   CheckCircleOutlined,
+  ClockCircleOutlined,
   CloseCircleOutlined,
   CopyOutlined,
   SearchOutlined
@@ -120,6 +123,9 @@ const Billing: React.FC = () => {
   const [projectUnits, setProjectUnits] = useState<Unit[]>([])
   const [unitsLoading, setUnitsLoading] = useState(false)
   const [unitSearchText, setUnitSearchText] = useState('')
+  const [unitSelectionStatusFilter, setUnitSelectionStatusFilter] = useState<'all' | 'ready' | 'billed'>('all')
+  const [unitSelectionPage, setUnitSelectionPage] = useState(1)
+  const [unitSelectionPageSize, setUnitSelectionPageSize] = useState(8)
   const [batchProjectId, setBatchProjectId] = useState<number | null>(null)
   const [batchFinancialYear, setBatchFinancialYear] = useState<string | null>(defaultFY)
   const [batchConfigSnapshot, setBatchConfigSnapshot] = useState<BatchLetterConfigSnapshot | null>(null)
@@ -225,6 +231,8 @@ const Billing: React.FC = () => {
       setProjectUnits([])
       setUnitsLoading(false)
       setUnitSearchText('')
+      setUnitSelectionStatusFilter('all')
+      setUnitSelectionPage(1)
       setProjectSetupSummary(null)
       setRateDueDateHint(null)
       setLastAutoSyncedDueDate(null)
@@ -236,6 +244,7 @@ const Billing: React.FC = () => {
       if (passedUnitIds.length === 0) {
         setSelectedUnitIds([])
       }
+      setUnitSelectionPage(1)
       return
     }
     setUnitsLoading(true)
@@ -257,6 +266,10 @@ const Billing: React.FC = () => {
       })
       .finally(() => setUnitsLoading(false))
   }, [batchProjectId, isModalOpen, passedUnitIds])
+
+  useEffect(() => {
+    setUnitSelectionPage(1)
+  }, [unitSearchText, unitSelectionStatusFilter, batchProjectId, batchFinancialYear])
 
   useEffect(() => {
     if (!isModalOpen || !batchProjectId || !batchFinancialYear) {
@@ -780,6 +793,37 @@ const Billing: React.FC = () => {
     }
   }
 
+  const handleOpenLettersFolder = useCallback(async (): Promise<void> => {
+    try {
+      await window.api.shell.openOutputFolder('maintenance-letters')
+    } catch {
+      message.error('Failed to open maintenance letters folder')
+    }
+  }, [])
+
+  const handleDownloadLettersZip = useCallback(async (): Promise<void> => {
+    try {
+      const timestamp = dayjs().format('YYYYMMDD_HHmmss')
+      const destinationPath = await window.api.dialog.saveFile({
+        title: 'Save Letters ZIP',
+        defaultPath: `maintenance_letters_${timestamp}.zip`,
+        filters: [{ name: 'ZIP Archive', extensions: ['zip'] }]
+      })
+
+      if (!destinationPath) return
+
+      message.loading({ content: 'Creating ZIP...', key: 'letters_zip' })
+      const result = await window.api.shell.exportOutputZip('maintenance-letters', destinationPath)
+      message.success({
+        content: `ZIP saved with ${result.fileCount} letter PDF${result.fileCount !== 1 ? 's' : ''}`,
+        key: 'letters_zip'
+      })
+    } catch (error) {
+      console.error('Failed to export letters ZIP:', error)
+      message.error({ content: 'Failed to create letters ZIP', key: 'letters_zip' })
+    }
+  }, [])
+
   const handleEditLetter = async (record: MaintenanceLetter): Promise<void> => {
     if (!record.id) return
     try {
@@ -1020,17 +1064,6 @@ const Billing: React.FC = () => {
     return Array.from(yearSet).sort().reverse()
   }, [letters, defaultFY])
 
-  const filteredProjectUnits = useMemo(() => {
-    const q = unitSearchText.trim().toLowerCase()
-    if (!q) return projectUnits
-    return projectUnits.filter((u) => {
-      return (
-        (u.unit_number || '').toLowerCase().includes(q) ||
-        (u.owner_name || '').toLowerCase().includes(q)
-      )
-    })
-  }, [projectUnits, unitSearchText])
-
   // Track which units already have a letter for the selected FY (to show indicator in step 2)
   const alreadyBilledUnitIds = useMemo(() => {
     const fy = batchFinancialYear
@@ -1042,6 +1075,43 @@ const Billing: React.FC = () => {
         .map((l) => l.unit_id)
     )
   }, [letters, batchProjectId, batchFinancialYear])
+
+  const filteredProjectUnits = useMemo(() => {
+    const q = unitSearchText.trim().toLowerCase()
+    return projectUnits.filter((u) => {
+      const billed = alreadyBilledUnitIds.has(u.id as number)
+      const matchesStatus =
+        unitSelectionStatusFilter === 'all' ||
+        (unitSelectionStatusFilter === 'ready' && !billed) ||
+        (unitSelectionStatusFilter === 'billed' && billed)
+
+      if (!matchesStatus) return false
+      if (!q) return true
+
+      return (
+        (u.unit_number || '').toLowerCase().includes(q) ||
+        (u.owner_name || '').toLowerCase().includes(q)
+      )
+    })
+  }, [alreadyBilledUnitIds, projectUnits, unitSearchText, unitSelectionStatusFilter])
+
+  const selectableProjectUnitIds = useMemo(
+    () =>
+      filteredProjectUnits
+        .filter((unit) => !alreadyBilledUnitIds.has(unit.id as number))
+        .map((unit) => unit.id as number),
+    [filteredProjectUnits, alreadyBilledUnitIds]
+  )
+
+  const readyToGenerateCount = useMemo(
+    () => projectUnits.filter((unit) => !alreadyBilledUnitIds.has(unit.id as number)).length,
+    [projectUnits, alreadyBilledUnitIds]
+  )
+
+  const selectedEligibleCount = useMemo(
+    () => selectedUnitIds.filter((id) => !alreadyBilledUnitIds.has(id)).length,
+    [selectedUnitIds, alreadyBilledUnitIds]
+  )
 
   const billingStatusOptions = useMemo(
     () => [
@@ -1350,6 +1420,26 @@ const Billing: React.FC = () => {
             </Text>
           </div>
           <Space>
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'open-folder',
+                    icon: <FolderOpenOutlined />,
+                    label: 'Open Letters Folder',
+                    onClick: () => void handleOpenLettersFolder()
+                  },
+                  {
+                    key: 'download-zip',
+                    icon: <DownloadOutlined />,
+                    label: 'Download Letters ZIP',
+                    onClick: () => void handleDownloadLettersZip()
+                  }
+                ]
+              }}
+            >
+              <Button icon={<FolderOpenOutlined />}>Letters Folder</Button>
+            </Dropdown>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleBatchGenerate}>
               Generate Maintenance Letters
             </Button>
@@ -1847,34 +1937,54 @@ const Billing: React.FC = () => {
             )}
             <Space
               wrap
-              style={{ width: '100%', marginBottom: 12 }}
+              style={{ width: '100%', marginBottom: 12, justifyContent: 'space-between' }}
               size="middle"
               align="center"
             >
-              <Input
-                className="app-search-field"
-                placeholder="Search unit / owner..."
-                prefix={<SearchOutlined />}
-                style={{ width: 260 }}
-                value={unitSearchText}
-                onChange={(e) => setUnitSearchText(e.target.value)}
-                allowClear
-              />
-              <Button
-                onClick={() => setSelectedUnitIds(projectUnits.map((u) => u.id as number))}
-                disabled={projectUnits.length === 0}
-              >
-                Select all
-              </Button>
-              <Button
-                onClick={() => setSelectedUnitIds([])}
-                disabled={selectedUnitIds.length === 0}
-              >
-                Clear
-              </Button>
-              <Text type="secondary">
-                Selected: {selectedUnitIds.length} / {projectUnits.length}
-              </Text>
+              <Space wrap size="middle">
+                <Input
+                  className="app-search-field"
+                  placeholder="Search unit / owner..."
+                  prefix={<SearchOutlined />}
+                  style={{ width: 260 }}
+                  value={unitSearchText}
+                  onChange={(e) => setUnitSearchText(e.target.value)}
+                  allowClear
+                />
+                <Select
+                  value={unitSelectionStatusFilter}
+                  onChange={(value) => setUnitSelectionStatusFilter(value)}
+                  className="app-combobox"
+                  style={{ minWidth: 170 }}
+                  options={[
+                    { value: 'all', label: `All Units (${projectUnits.length})` },
+                    { value: 'ready', label: `Ready to Generate (${readyToGenerateCount})` },
+                    { value: 'billed', label: `Already Billed (${alreadyBilledUnitIds.size})` }
+                  ]}
+                />
+                <Button
+                  onClick={() => setSelectedUnitIds(selectableProjectUnitIds)}
+                  disabled={selectableProjectUnitIds.length === 0}
+                >
+                  Select Eligible
+                </Button>
+                <Button
+                  onClick={() => setSelectedUnitIds([])}
+                  disabled={selectedUnitIds.length === 0}
+                >
+                  Clear
+                </Button>
+              </Space>
+              <div className="billing-unit-selection-summary">
+                <Text type="secondary">
+                  Selected: {selectedEligibleCount} / {readyToGenerateCount} eligible
+                </Text>
+                {alreadyBilledUnitIds.size > 0 && (
+                  <Text type="secondary">
+                    Showing: {filteredProjectUnits.length} of {projectUnits.length} units
+                  </Text>
+                )}
+              </div>
             </Space>
             <div className="billing-unit-selection-table">
               <Table
@@ -1882,7 +1992,22 @@ const Billing: React.FC = () => {
                 loading={unitsLoading}
                 dataSource={filteredProjectUnits}
                 rowKey="id"
-                pagination={{ pageSize: 4, simple: true }}
+                pagination={{
+                  current: unitSelectionPage,
+                  pageSize: unitSelectionPageSize,
+                  total: filteredProjectUnits.length,
+                  showSizeChanger: true,
+                  showQuickJumper: filteredProjectUnits.length > unitSelectionPageSize * 4,
+                  pageSizeOptions: [8, 12, 20, 50, 100],
+                  onChange: (page, size) => {
+                    setUnitSelectionPage(page)
+                    if (size !== unitSelectionPageSize) {
+                      setUnitSelectionPageSize(size)
+                    }
+                  },
+                  showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} units`,
+                  size: 'small'
+                }}
                 scroll={{ y: 240 }}
                 rowSelection={{
                   selectedRowKeys: selectedUnitIds,
@@ -1897,15 +2022,24 @@ const Billing: React.FC = () => {
                   {
                     title: 'Status',
                     key: 'billed_status',
-                    width: 70,
+                    width: 150,
                     render: (_: unknown, record: Unit) =>
                       alreadyBilledUnitIds.has(record.id as number) ? (
-                        <Tag color="green" style={{ fontSize: 9, padding: '0 2px' }}>Billed</Tag>
+                        <Tag className="billing-unit-status-tag billing-unit-status-tag-billed" icon={<CheckCircleOutlined />}>
+                          Already billed
+                        </Tag>
                       ) : (
-                        <Tag color="default" style={{ fontSize: 9, padding: '0 2px' }}>Pending</Tag>
+                        <Tag className="billing-unit-status-tag billing-unit-status-tag-ready" icon={<ClockCircleOutlined />}>
+                          Ready to generate
+                        </Tag>
                       )
                   }
                 ]}
+                rowClassName={(record) =>
+                  alreadyBilledUnitIds.has(record.id as number)
+                    ? 'billing-unit-row billing-unit-row-billed'
+                    : 'billing-unit-row billing-unit-row-ready'
+                }
               />
             </div>
           </>

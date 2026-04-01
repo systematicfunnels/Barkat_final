@@ -810,6 +810,10 @@ class DatabaseService {
         }[]
         if (!columns.some((c) => c.name === 'arrears'))
           this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN arrears REAL DEFAULT 0')
+        if (!columns.some((c) => c.name === 'snapshot_discount_percentage'))
+          this.db.exec(
+            'ALTER TABLE maintenance_letters ADD COLUMN snapshot_discount_percentage REAL DEFAULT 0'
+          )
         if (!columns.some((c) => c.name === 'is_paid'))
           this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN is_paid BOOLEAN DEFAULT 0')
         if (!columns.some((c) => c.name === 'is_sent'))
@@ -929,6 +933,27 @@ class DatabaseService {
         }
       }
 
+      const receiptsExist = this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='receipts'")
+        .get()
+      if (receiptsExist) {
+        const columns = this.db.prepare('PRAGMA table_info(receipts)').all() as { name: string }[]
+        if (!columns.some((c) => c.name === 'snapshot_letter_id'))
+          this.db.exec('ALTER TABLE receipts ADD COLUMN snapshot_letter_id INTEGER')
+        if (!columns.some((c) => c.name === 'snapshot_financial_year'))
+          this.db.exec('ALTER TABLE receipts ADD COLUMN snapshot_financial_year TEXT')
+        if (!columns.some((c) => c.name === 'snapshot_base_amount'))
+          this.db.exec('ALTER TABLE receipts ADD COLUMN snapshot_base_amount REAL DEFAULT 0')
+        if (!columns.some((c) => c.name === 'snapshot_arrears'))
+          this.db.exec('ALTER TABLE receipts ADD COLUMN snapshot_arrears REAL DEFAULT 0')
+        if (!columns.some((c) => c.name === 'snapshot_discount_amount'))
+          this.db.exec('ALTER TABLE receipts ADD COLUMN snapshot_discount_amount REAL DEFAULT 0')
+        if (!columns.some((c) => c.name === 'snapshot_letter_total'))
+          this.db.exec('ALTER TABLE receipts ADD COLUMN snapshot_letter_total REAL DEFAULT 0')
+        if (!columns.some((c) => c.name === 'snapshot_addons_json'))
+          this.db.exec('ALTER TABLE receipts ADD COLUMN snapshot_addons_json TEXT')
+      }
+
       // 5. Migrate 'invoices' to 'maintenance_letters'
       const invoicesExist = this.db
         .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='invoices'")
@@ -947,6 +972,7 @@ class DatabaseService {
               unit_id INTEGER NOT NULL,
               financial_year TEXT NOT NULL,
               base_amount REAL NOT NULL,
+              snapshot_discount_percentage REAL DEFAULT 0,
               discount_amount REAL DEFAULT 0,
               final_amount REAL NOT NULL,
               due_date DATE,
@@ -1117,6 +1143,13 @@ class DatabaseService {
     if (!this.isOpen()) {
       this.reopen()
     }
+  }
+
+  public reopenConnection(): void {
+    if (this.isOpen()) {
+      return
+    }
+    this.reopen()
   }
 
   public query<T>(sql: string, params: unknown[] = []): T[] {

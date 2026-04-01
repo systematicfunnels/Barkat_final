@@ -39,6 +39,13 @@ export interface Receipt {
   payment_id: number
   receipt_number: string
   receipt_date: string
+  snapshot_letter_id?: number
+  snapshot_financial_year?: string
+  snapshot_base_amount?: number
+  snapshot_arrears?: number
+  snapshot_discount_amount?: number
+  snapshot_letter_total?: number
+  snapshot_addons_json?: string
 }
 
 type ReceiptAddon = {
@@ -47,14 +54,153 @@ type ReceiptAddon = {
   remarks?: string
 }
 
+type LetterWithAddons = MaintenanceLetter & { addons: string }
+
+type ReceiptSnapshot = {
+  snapshot_letter_id: number | null
+  snapshot_financial_year: string
+  snapshot_base_amount: number
+  snapshot_arrears: number
+  snapshot_discount_amount: number
+  snapshot_letter_total: number
+  snapshot_addons_json: string
+}
+
 class PaymentService extends BasePDFGenerator {
+  private getLetterWithAddonsById(letterId: number): LetterWithAddons | undefined {
+    return dbService.get(
+      `SELECT l.*,
+              COALESCE(
+                JSON_GROUP_ARRAY(
+                  CASE
+                    WHEN a.id IS NOT NULL THEN JSON_OBJECT(
+                      'addon_name', a.addon_name,
+                      'addon_amount', a.addon_amount,
+                      'remarks', a.remarks
+                    )
+                  END
+                ),
+                '[]'
+              ) as addons
+       FROM maintenance_letters l
+       LEFT JOIN add_ons a ON l.id = a.letter_id
+       WHERE l.id = ?
+       GROUP BY l.id`,
+      [letterId]
+    ) as LetterWithAddons | undefined
+  }
+
+  private getLetterWithAddonsByUnitAndYear(unitId: number, financialYear: string): LetterWithAddons | undefined {
+    return dbService.get(
+      `SELECT l.*,
+              COALESCE(
+                JSON_GROUP_ARRAY(
+                  CASE
+                    WHEN a.id IS NOT NULL THEN JSON_OBJECT(
+                      'addon_name', a.addon_name,
+                      'addon_amount', a.addon_amount,
+                      'remarks', a.remarks
+                    )
+                  END
+                ),
+                '[]'
+              ) as addons
+       FROM maintenance_letters l
+       LEFT JOIN add_ons a ON l.id = a.letter_id
+       WHERE l.unit_id = ? AND l.financial_year = ?
+       GROUP BY l.id
+       ORDER BY l.id DESC
+       LIMIT 1`,
+      [unitId, financialYear]
+    ) as LetterWithAddons | undefined
+  }
+
+  private parseReceiptAddons(addonsJson?: string): ReceiptAddon[] {
+    if (!addonsJson) return []
+
+    try {
+      const parsed = JSON.parse(addonsJson)
+      if (!Array.isArray(parsed)) return []
+
+      return parsed.filter(
+        (item): item is ReceiptAddon =>
+          Boolean(item) &&
+          typeof item.addon_name === 'string' &&
+          typeof item.addon_amount === 'number'
+      )
+    } catch {
+      return []
+    }
+  }
+
+  private buildReceiptSnapshot(letter: LetterWithAddons | undefined, fallbackFinancialYear: string): ReceiptSnapshot {
+    return {
+      snapshot_letter_id: letter?.id ?? null,
+      snapshot_financial_year: letter?.financial_year || fallbackFinancialYear,
+      snapshot_base_amount: normalizeMoney(letter?.base_amount || 0),
+      snapshot_arrears: normalizeMoney(letter?.arrears || 0),
+      snapshot_discount_amount: normalizeMoney(letter?.discount_amount || 0),
+      snapshot_letter_total: normalizeMoney(letter?.final_amount || 0),
+      snapshot_addons_json: letter?.addons || '[]'
+    }
+  }
+
+  private resolveLinkedLetterAndSnapshot(params: {
+    unitId: number
+    letterId?: number
+    financialYear?: string
+  }): {
+    linkedLetter: LetterWithAddons | undefined
+    resolvedLetterId?: number
+    resolvedFinancialYear: string
+    snapshot: ReceiptSnapshot
+  } {
+    let resolvedLetterId = params.letterId
+    let resolvedFinancialYear = params.financialYear
+    let linkedLetter: LetterWithAddons | undefined
+
+    if (resolvedLetterId) {
+      linkedLetter = this.getLetterWithAddonsById(resolvedLetterId)
+      if (!linkedLetter) {
+        throw new Error('Selected maintenance letter could not be found')
+      }
+      resolvedFinancialYear = linkedLetter.financial_year
+    } else if (resolvedFinancialYear) {
+      linkedLetter = this.getLetterWithAddonsByUnitAndYear(params.unitId, resolvedFinancialYear)
+      if (linkedLetter?.id) {
+        resolvedLetterId = linkedLetter.id
+        resolvedFinancialYear = linkedLetter.financial_year
+      }
+    }
+
+    if (!resolvedFinancialYear) {
+      resolvedFinancialYear = getCurrentFinancialYear()
+    }
+
+    return {
+      linkedLetter,
+      resolvedLetterId,
+      resolvedFinancialYear,
+      snapshot: this.buildReceiptSnapshot(linkedLetter, resolvedFinancialYear)
+    }
+  }
+
   public async generateReceiptPdf(paymentId: number): Promise<string> {
     try {
-      const payment = dbService.get<Payment>(
+      const payment = dbService.get<
+        Payment &
+          Receipt & {
+            city?: string
+            state?: string
+            sector_code?: string
+          }
+      >(
         `SELECT p.*, u.unit_number, u.owner_name, u.contact_number, u.sector_code,
                 pr.name as project_name, pr.address, pr.city, pr.state,
                 pr.contact_email, pr.contact_phone,
-                r.receipt_number
+                r.receipt_number, r.snapshot_letter_id, r.snapshot_financial_year,
+                r.snapshot_base_amount, r.snapshot_arrears, r.snapshot_discount_amount,
+                r.snapshot_letter_total, r.snapshot_addons_json
          FROM payments p
          JOIN units u ON p.unit_id = u.id
          JOIN projects pr ON p.project_id = pr.id
@@ -65,64 +211,30 @@ class PaymentService extends BasePDFGenerator {
 
       if (!payment) throw new Error(`Payment not found: ${paymentId}`)
 
-      // Get associated maintenance letter and its addons for itemized breakdown
-      let letterAndAddons: (MaintenanceLetter & { addons: string }) | undefined = undefined
-      if (payment.letter_id) {
-        letterAndAddons = dbService.get(
-          `SELECT l.*, 
-                  JSON_GROUP_ARRAY(
-                    JSON_OBJECT(
-                      'addon_name', a.addon_name,
-                      'addon_amount', a.addon_amount,
-                      'remarks', a.remarks
-                    )
-                  ) as addons
-           FROM maintenance_letters l
-           LEFT JOIN add_ons a ON l.id = a.letter_id
-           WHERE l.id = ?
-           GROUP BY l.id`,
-          [payment.letter_id]
-        ) as (MaintenanceLetter & { addons: string }) | undefined
-      } else {
-        // Try to find letter by unit and financial year
-        letterAndAddons = dbService.get(
-          `SELECT l.*, 
-                  JSON_GROUP_ARRAY(
-                    JSON_OBJECT(
-                      'addon_name', a.addon_name,
-                      'addon_amount', a.addon_amount,
-                      'remarks', a.remarks
-                    )
-                  ) as addons
-           FROM maintenance_letters l
-           LEFT JOIN add_ons a ON l.id = a.letter_id
-           WHERE l.unit_id = ? AND l.financial_year = ?
-           GROUP BY l.id`,
-          [payment.unit_id, payment.financial_year]
-        ) as (MaintenanceLetter & { addons: string }) | undefined
-      }
+      const fallbackLetter =
+        payment.letter_id
+          ? this.getLetterWithAddonsById(payment.letter_id)
+          : payment.financial_year
+            ? this.getLetterWithAddonsByUnitAndYear(payment.unit_id, payment.financial_year)
+            : undefined
 
-      // Parse addons JSON if it exists
-      let addons: ReceiptAddon[] = []
-      if (letterAndAddons && letterAndAddons.addons) {
-        try {
-          const parsed = JSON.parse(letterAndAddons.addons)
-          // Validate parsed is an array before filtering
-          if (Array.isArray(parsed)) {
-            // Filter out null entries (when no addons exist)
-            addons = parsed.filter(
-              (item): item is ReceiptAddon =>
-                Boolean(item) &&
-                typeof item.addon_name === 'string' &&
-                typeof item.addon_amount === 'number'
-            )
+      const receiptSnapshot = payment.snapshot_financial_year
+        ? {
+            financialYear: payment.snapshot_financial_year,
+            baseAmount: normalizeMoney(payment.snapshot_base_amount || 0),
+            arrearsAmount: normalizeMoney(payment.snapshot_arrears || 0),
+            discountAmount: normalizeMoney(payment.snapshot_discount_amount || 0),
+            letterTotal: normalizeMoney(payment.snapshot_letter_total || 0),
+            addons: this.parseReceiptAddons(payment.snapshot_addons_json)
           }
-        } catch (e) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.warn('Failed to parse addons JSON:', e)
+        : {
+            financialYear: fallbackLetter?.financial_year || payment.financial_year || '—',
+            baseAmount: normalizeMoney(fallbackLetter?.base_amount || 0),
+            arrearsAmount: normalizeMoney(fallbackLetter?.arrears || 0),
+            discountAmount: normalizeMoney(fallbackLetter?.discount_amount || 0),
+            letterTotal: normalizeMoney(fallbackLetter?.final_amount || 0),
+            addons: this.parseReceiptAddons(fallbackLetter?.addons)
           }
-        }
-      }
 
       await this.initializePDF()
 
@@ -223,7 +335,7 @@ class PaymentService extends BasePDFGenerator {
       // Draw all receipt rows
       drawReceiptRow('Receipt No.', payment.receipt_number || `REC-${paymentId}`)
       drawReceiptRow('Payment Date', formatDate(payment.payment_date || ''))
-      drawReceiptRow('Financial Year', payment.financial_year || '—')
+      drawReceiptRow('Financial Year', receiptSnapshot.financialYear || '—')
       drawReceiptRow('Unit Owner', payment.owner_name || '—')
       drawReceiptRow('Unit Number', payment.unit_number || '—')
       drawReceiptRow('Project', payment.project_name || '—')
@@ -234,7 +346,12 @@ class PaymentService extends BasePDFGenerator {
       this.layout.currentY -= 10
 
       // ── Payment Breakdown (itemized) ──
-      if (letterAndAddons) {
+      if (
+        receiptSnapshot.baseAmount > 0 ||
+        receiptSnapshot.addons.length > 0 ||
+        receiptSnapshot.arrearsAmount > 0 ||
+        receiptSnapshot.discountAmount > 0
+      ) {
         // Draw breakdown header
         this.layout.currentY -= 5
         const breakdownText = 'Payment Breakdown'
@@ -251,15 +368,15 @@ class PaymentService extends BasePDFGenerator {
         this.layout.currentY -= 20
 
         // Base maintenance amount
-        if (letterAndAddons.base_amount > 0) {
+        if (receiptSnapshot.baseAmount > 0) {
           drawReceiptRow(
             'Maintenance Charges',
-            `Rs. ${normalizeMoney(letterAndAddons.base_amount).toLocaleString('en-IN')}`
+            `Rs. ${receiptSnapshot.baseAmount.toLocaleString('en-IN')}`
           )
         }
 
         // Add-ons (filter out zero amounts)
-        addons.forEach((addon: ReceiptAddon) => {
+        receiptSnapshot.addons.forEach((addon: ReceiptAddon) => {
           if (addon.addon_amount > 0) {
             drawReceiptRow(
               addon.addon_name,
@@ -269,18 +386,18 @@ class PaymentService extends BasePDFGenerator {
         })
 
         // Arrears if any
-        if (letterAndAddons.arrears && letterAndAddons.arrears > 0) {
+        if (receiptSnapshot.arrearsAmount > 0) {
           drawReceiptRow(
             'Arrears (Previous Outstanding)',
-            `Rs. ${normalizeMoney(letterAndAddons.arrears).toLocaleString('en-IN')}`
+            `Rs. ${receiptSnapshot.arrearsAmount.toLocaleString('en-IN')}`
           )
         }
 
         // Discount if any
-        if (letterAndAddons.discount_amount && letterAndAddons.discount_amount > 0) {
+        if (receiptSnapshot.discountAmount > 0) {
           drawReceiptRow(
             'Early Payment Discount',
-            `-Rs. ${normalizeMoney(letterAndAddons.discount_amount).toLocaleString('en-IN')}`
+            `-Rs. ${receiptSnapshot.discountAmount.toLocaleString('en-IN')}`
           )
         }
 
@@ -378,16 +495,27 @@ class PaymentService extends BasePDFGenerator {
       }
 
       // Prepare update data with validation
+      const {
+        linkedLetter,
+        resolvedLetterId,
+        resolvedFinancialYear,
+        snapshot
+      } = this.resolveLinkedLetterAndSnapshot({
+        unitId: payment.unit_id ?? existingPayment.unit_id,
+        letterId: payment.letter_id ?? existingPayment.letter_id,
+        financialYear: payment.financial_year ?? existingPayment.financial_year
+      })
+
       const updateData = {
         project_id: payment.project_id ?? existingPayment.project_id,
         unit_id: payment.unit_id ?? existingPayment.unit_id,
-        letter_id: payment.letter_id ?? existingPayment.letter_id,
+        letter_id: resolvedLetterId ?? existingPayment.letter_id,
         payment_date: payment.payment_date ?? existingPayment.payment_date,
         payment_amount: normalizeMoney(payment.payment_amount ?? existingPayment.payment_amount),
         payment_mode: payment.payment_mode ?? existingPayment.payment_mode,
         cheque_number: payment.cheque_number ?? existingPayment.cheque_number,
         remarks: payment.remarks ?? existingPayment.remarks,
-        financial_year: payment.financial_year ?? existingPayment.financial_year
+        financial_year: resolvedFinancialYear
       }
 
       // Validate required fields
@@ -414,6 +542,33 @@ class PaymentService extends BasePDFGenerator {
         'UPDATE payments SET project_id = ?, unit_id = ?, letter_id = ?, payment_date = ?, payment_amount = ?, payment_mode = ?, cheque_number = ?, remarks = ?, financial_year = ? WHERE id = ?',
         params
       )
+
+      const existingReceipt = dbService.get<{ id: number }>('SELECT id FROM receipts WHERE payment_id = ?', [id])
+      if (existingReceipt) {
+        dbService.run(
+          `UPDATE receipts
+           SET receipt_date = ?,
+               snapshot_letter_id = ?,
+               snapshot_financial_year = ?,
+               snapshot_base_amount = ?,
+               snapshot_arrears = ?,
+               snapshot_discount_amount = ?,
+               snapshot_letter_total = ?,
+               snapshot_addons_json = ?
+           WHERE payment_id = ?`,
+          [
+            updateData.payment_date,
+            linkedLetter?.id ?? snapshot.snapshot_letter_id,
+            snapshot.snapshot_financial_year,
+            snapshot.snapshot_base_amount,
+            snapshot.snapshot_arrears,
+            snapshot.snapshot_discount_amount,
+            snapshot.snapshot_letter_total,
+            snapshot.snapshot_addons_json,
+            id
+          ]
+        )
+      }
 
       return true
     })
@@ -474,40 +629,16 @@ class PaymentService extends BasePDFGenerator {
         throw new Error('Selected unit does not belong to the selected project')
       }
 
-      let resolvedLetterId = payment.letter_id
-      let resolvedFinancialYear = payment.financial_year
-
-      // Validate and resolve financial year
-      if (!resolvedFinancialYear) {
-        // If no financial year provided, try to get it from the letter
-        if (resolvedLetterId) {
-          resolvedFinancialYear = dbService.get<{ financial_year: string }>(
-            'SELECT financial_year FROM maintenance_letters WHERE id = ?',
-            [resolvedLetterId]
-          )?.financial_year
-        }
-
-        // If still no financial year, try to get it from the unit's latest letter
-        if (!resolvedFinancialYear) {
-          resolvedFinancialYear = dbService.get<{ financial_year: string }>(
-            'SELECT financial_year FROM maintenance_letters WHERE unit_id = ? ORDER BY financial_year DESC LIMIT 1',
-            [payment.unit_id]
-          )?.financial_year
-        }
-
-        // If still no financial year, use current financial year
-        if (!resolvedFinancialYear) {
-          resolvedFinancialYear = getCurrentFinancialYear()
-        }
-      }
-
-      // Validate and resolve letter ID
-      if (!resolvedLetterId && resolvedFinancialYear) {
-        resolvedLetterId = dbService.get<{ id: number }>(
-          'SELECT id FROM maintenance_letters WHERE unit_id = ? AND TRIM(financial_year) = TRIM(?)',
-          [payment.unit_id, resolvedFinancialYear]
-        )?.id
-      }
+      const {
+        linkedLetter,
+        resolvedLetterId,
+        resolvedFinancialYear,
+        snapshot
+      } = this.resolveLinkedLetterAndSnapshot({
+        unitId: payment.unit_id,
+        letterId: payment.letter_id,
+        financialYear: payment.financial_year
+      })
 
       // Validate financial year format - accepts both 2024-25 and 2024-2025
       if (!resolvedFinancialYear || !resolvedFinancialYear.match(/^\d{4}-(\d{2}|\d{4})$/)) {
@@ -545,9 +676,24 @@ class PaymentService extends BasePDFGenerator {
             console.log('[PAYMENTS] Creating receipt record')
           }
           dbService.run(
-            `INSERT INTO receipts (payment_id, receipt_number, receipt_date)
-             VALUES (?, ?, ?)`,
-            [paymentId, receiptNumber, payment.payment_date]
+            `INSERT INTO receipts (
+              payment_id, receipt_number, receipt_date,
+              snapshot_letter_id, snapshot_financial_year, snapshot_base_amount,
+              snapshot_arrears, snapshot_discount_amount, snapshot_letter_total,
+              snapshot_addons_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+              paymentId,
+              receiptNumber,
+              payment.payment_date,
+              linkedLetter?.id ?? snapshot.snapshot_letter_id,
+              snapshot.snapshot_financial_year,
+              snapshot.snapshot_base_amount,
+              snapshot.snapshot_arrears,
+              snapshot.snapshot_discount_amount,
+              snapshot.snapshot_letter_total,
+              snapshot.snapshot_addons_json
+            ]
           )
           if (process.env.NODE_ENV !== 'production') {
             console.log('[PAYMENTS] Receipt record created successfully')
@@ -593,4 +739,6 @@ class PaymentService extends BasePDFGenerator {
 }
 
 export const paymentService = new PaymentService()
+
+
 

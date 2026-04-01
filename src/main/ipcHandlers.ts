@@ -1,5 +1,6 @@
 import { dialog, ipcMain, shell, app } from 'electron'
 import { randomUUID } from 'crypto'
+import { execFile } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import { dbService } from './db/database'
@@ -40,6 +41,8 @@ const toPositiveInteger = (value: unknown): number | null => {
   const num = Number(value)
   return Number.isInteger(num) && num > 0 ? num : null
 }
+
+const escapePowerShellLiteral = (value: string): string => value.replace(/'/g, "''")
 
 const isNonNegativeNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0
@@ -773,6 +776,71 @@ export function registerIpcHandlers(): void {
     validatePath(filePath)
     shell.showItemInFolder(filePath)
   })
+
+  ipcMain.handle('open-output-folder', async (_, folderType: 'maintenance-letters' | 'receipts'): Promise<void> => {
+    const userDataPath = app.getPath('userData')
+    const targetFolder =
+      folderType === 'maintenance-letters'
+        ? path.join(userDataPath, 'maintenance-letters')
+        : path.join(userDataPath, 'receipts')
+
+    if (!fs.existsSync(targetFolder)) {
+      await fs.promises.mkdir(targetFolder, { recursive: true })
+    }
+
+    await shell.openPath(targetFolder)
+  })
+
+  ipcMain.handle(
+    'export-output-zip',
+    async (
+      _,
+      folderType: 'maintenance-letters' | 'receipts',
+      destinationPath: string
+    ): Promise<{ zipPath: string; fileCount: number }> => {
+      const userDataPath = app.getPath('userData')
+      const sourceFolder =
+        folderType === 'maintenance-letters'
+          ? path.join(userDataPath, 'maintenance-letters')
+          : path.join(userDataPath, 'receipts')
+
+      if (!fs.existsSync(sourceFolder)) {
+        throw new Error(`No ${folderType} folder found yet.`)
+      }
+
+      const files = (await fs.promises.readdir(sourceFolder))
+        .filter((file) => file.toLowerCase().endsWith('.pdf'))
+        .map((file) => path.join(sourceFolder, file))
+
+      if (files.length === 0) {
+        throw new Error(`No PDF files found in ${folderType}.`)
+      }
+
+      const normalizedDestination = destinationPath.toLowerCase().endsWith('.zip')
+        ? destinationPath
+        : `${destinationPath}.zip`
+
+      const sourcePattern = `${escapePowerShellLiteral(path.join(sourceFolder, '*.pdf'))}`
+      const destinationLiteral = escapePowerShellLiteral(normalizedDestination)
+      const script = `Compress-Archive -Path '${sourcePattern}' -DestinationPath '${destinationLiteral}' -Force`
+
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-Command', script],
+          (error, _stdout, stderr) => {
+            if (error) {
+              reject(new Error(stderr?.trim() || error.message))
+              return
+            }
+            resolve()
+          }
+        )
+      })
+
+      return { zipPath: normalizedDestination, fileCount: files.length }
+    }
+  )
 
   // Database Repair
   ipcMain.handle('database-repair', () => {

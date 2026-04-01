@@ -588,25 +588,30 @@ export abstract class BasePDFGenerator {
    */
   protected drawFooter(text: string): void {
     const { width } = this.layout
+    const footerFont = this.fonts.italic ?? this.fonts.regular
 
-    // Ensure minimum space before footer
-    const minFooterY = 80 // Minimum Y position for footer
-    const footerY = Math.min(this.layout.currentY, minFooterY)
+    // Keep a dedicated signature area near the bottom-right.
+    const preferredFooterY = 30
+    const minimumFooterY = 12
+    const footerY = Math.min(preferredFooterY, Math.max(minimumFooterY, this.layout.currentY - 28))
+    const textWidth = footerFont.widthOfTextAtSize(text, this.FONT_SIZES.FOOTER)
+    const signatureWidth = 145
+    const lineEndX = width - this.MARGIN
+    const lineStartX = lineEndX - signatureWidth
+    const textX = lineEndX - textWidth
 
-    // Footer line
     this.page.drawLine({
-      start: { x: this.MARGIN, y: footerY + 15 },
-      end: { x: width - this.MARGIN, y: footerY + 15 },
-      thickness: 1,
-      color: this.COLORS.BORDER
+      start: { x: lineStartX, y: footerY + 14 },
+      end: { x: lineEndX, y: footerY + 14 },
+      thickness: 1.2,
+      color: this.COLORS.PRIMARY
     })
 
-    // Footer text
     this.page.drawText(text, {
-      x: this.MARGIN,
+      x: textX,
       y: footerY,
       size: this.FONT_SIZES.FOOTER,
-      font: this.fonts.italic,
+      font: footerFont,
       color: this.COLORS.GRAY
     })
   }

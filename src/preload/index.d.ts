@@ -140,6 +140,11 @@ declare global {
       }
       shell: {
         showItemInFolder: (path: string) => void
+        openOutputFolder: (folderType: 'maintenance-letters' | 'receipts') => Promise<void>
+        exportOutputZip: (
+          folderType: 'maintenance-letters' | 'receipts',
+          destinationPath: string
+        ) => Promise<{ zipPath: string; fileCount: number }>
       }
       dialog: {
         selectLocalFile: (options: {

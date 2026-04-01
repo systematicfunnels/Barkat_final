@@ -70,6 +70,7 @@ export interface MaintenanceLetter {
   unit_id: number
   financial_year: string
   base_amount: number
+  snapshot_discount_percentage?: number
   discount_amount: number
   final_amount: number
   due_date: string
@@ -515,6 +516,11 @@ declare global {
       }
       shell: {
         showItemInFolder: (path: string) => void
+        openOutputFolder: (folderType: 'maintenance-letters' | 'receipts') => Promise<void>
+        exportOutputZip: (
+          folderType: 'maintenance-letters' | 'receipts',
+          destinationPath: string
+        ) => Promise<{ zipPath: string; fileCount: number }>
       }
       dialog: {
         selectLocalFile: (options: {

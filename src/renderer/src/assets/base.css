@@ -3506,6 +3506,59 @@ html, body, #root {
   border-radius: 14px;
 }
 
+.billing-unit-selection-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: flex-end;
+}
+
+.billing-unit-selection-table .ant-pagination {
+  align-items: center;
+  gap: 8px;
+}
+
+.billing-unit-selection-table .ant-pagination-total-text {
+  margin-inline-end: auto;
+  color: #667085;
+  font-size: 12px;
+}
+
+.billing-unit-status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border: none;
+  white-space: nowrap;
+}
+
+.billing-unit-status-tag-ready {
+  background: #ecfdf3;
+  color: #027a48;
+}
+
+.billing-unit-status-tag-billed {
+  background: #eef4ff;
+  color: #175cd3;
+}
+
+.billing-unit-row-ready .ant-table-cell {
+  background: #fcfffd;
+}
+
+.billing-unit-row-billed .ant-table-cell {
+  background: #f8fafc;
+  color: #667085;
+}
+
+.billing-unit-row-billed .ant-table-selection-column {
+  opacity: 0.72;
+}
+
 .unit-info-row > .ant-col:nth-last-child(-n + 2) {
   display: none;
 }
