@@ -20,7 +20,6 @@ import {
   Progress,
   List,
   Spin,
-  Dropdown,
   Row,
   Col
 } from 'antd'
@@ -30,6 +29,7 @@ import {
 } from '../utils/financialYear'
 import {
   FilePdfOutlined,
+  WalletOutlined,
   PlusOutlined,
   FolderOpenOutlined,
   DownloadOutlined,
@@ -59,6 +59,7 @@ import FilterPanel, {
   createSelectFilter
 } from '../components/shared/FilterPanel'
 import { useWorkingFinancialYear } from '../context/WorkingFinancialYearContext'
+import ActionMenuButton from '../components/shared/ActionMenuButton'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -1307,10 +1308,12 @@ const Billing: React.FC = () => {
       key: 'actions',
       align: 'right' as const,
       fixed: 'right' as const,
+      width: 320,
       render: (_: unknown, record: MaintenanceLetter) => (
         <Space className="table-row-actions" size="small">
           <Button
             size="small"
+            icon={<WalletOutlined />}
             onClick={(e) => {
               e.stopPropagation()
               navigate('/payments', { 
@@ -1342,7 +1345,9 @@ const Billing: React.FC = () => {
               e.stopPropagation()
               handleEditLetter(record)
             }}
-          />
+          >
+            Edit
+          </Button>
           <Button
             icon={<DeleteOutlined />}
             size="small"
@@ -1351,7 +1356,9 @@ const Billing: React.FC = () => {
               e.stopPropagation()
               record.id && handleDelete(record.id)
             }}
-          />
+          >
+            Delete
+          </Button>
         </Space>
       )
     }
@@ -1419,27 +1426,26 @@ const Billing: React.FC = () => {
               Use this screen to generate letters first, then review status, PDFs, and payment readiness.
             </Text>
           </div>
-          <Space>
-            <Dropdown
-              menu={{
-                items: [
-                  {
-                    key: 'open-folder',
-                    icon: <FolderOpenOutlined />,
-                    label: 'Open Letters Folder',
-                    onClick: () => void handleOpenLettersFolder()
-                  },
-                  {
-                    key: 'download-zip',
-                    icon: <DownloadOutlined />,
-                    label: 'Download Letters ZIP',
-                    onClick: () => void handleDownloadLettersZip()
-                  }
-                ]
-              }}
-            >
-              <Button icon={<FolderOpenOutlined />}>Letters Folder</Button>
-            </Dropdown>
+          <Space className="responsive-action-bar">
+            <ActionMenuButton
+              label="Letters Folder"
+              icon={<FolderOpenOutlined />}
+              ariaLabel="Letters folder actions"
+              items={[
+                {
+                  key: 'open-folder',
+                  icon: <FolderOpenOutlined />,
+                  label: 'Open Letters Folder',
+                  onClick: () => void handleOpenLettersFolder()
+                },
+                {
+                  key: 'download-zip',
+                  icon: <DownloadOutlined />,
+                  label: 'Download Letters ZIP',
+                  onClick: () => void handleDownloadLettersZip()
+                }
+              ]}
+            />
             <Button type="primary" icon={<PlusOutlined />} onClick={handleBatchGenerate}>
               Generate Maintenance Letters
             </Button>

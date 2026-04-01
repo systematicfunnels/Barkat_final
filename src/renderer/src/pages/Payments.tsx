@@ -18,7 +18,6 @@ import {
   DividerProps,
   Progress,
   Alert,
-  Dropdown,
   Row,
   Col
 } from 'antd'
@@ -26,6 +25,7 @@ import {
   PlusOutlined,
   DeleteOutlined,
   PrinterOutlined,
+  EditOutlined,
   FolderOpenOutlined,
   DownloadOutlined,
   TableOutlined,
@@ -40,6 +40,7 @@ import {
   formatFinancialYear,
   getUpcomingFinancialYear
 } from '../utils/financialYear'
+import ActionMenuButton from '../components/shared/ActionMenuButton'
 import FilterPanel, {
   createSearchFilter,
   createSelectFilter
@@ -939,7 +940,7 @@ const Payments: React.FC = () => {
           </Button>
           <Button
             size="small"
-            icon={<InfoCircleOutlined />}
+            icon={<EditOutlined />}
             onClick={() => record.id && handleEditReceipt(record.id)}
             title="Edit Payment"
             aria-label={`Edit payment for unit ${record.unit_number}`}
@@ -1062,28 +1063,25 @@ const Payments: React.FC = () => {
             )}
           </div>
           <Space className="responsive-action-bar">
-            <Dropdown
-              menu={{
-                items: [
-                  {
-                    key: 'open-folder',
-                    icon: <FolderOpenOutlined />,
-                    label: 'Open Receipts Folder',
-                    onClick: () => void handleOpenReceiptsFolder()
-                  },
-                  {
-                    key: 'download-zip',
-                    icon: <DownloadOutlined />,
-                    label: 'Download Receipts ZIP',
-                    onClick: () => void handleDownloadReceiptsZip()
-                  }
-                ]
-              }}
-            >
-              <Button icon={<FolderOpenOutlined />} aria-label="Open receipts folder options">
-                Receipts Folder
-              </Button>
-            </Dropdown>
+            <ActionMenuButton
+              label="Receipts Folder"
+              icon={<FolderOpenOutlined />}
+              ariaLabel="Receipts folder actions"
+              items={[
+                {
+                  key: 'open-folder',
+                  icon: <FolderOpenOutlined />,
+                  label: 'Open Receipts Folder',
+                  onClick: () => void handleOpenReceiptsFolder()
+                },
+                {
+                  key: 'download-zip',
+                  icon: <DownloadOutlined />,
+                  label: 'Download Receipts ZIP',
+                  onClick: () => void handleDownloadReceiptsZip()
+                }
+              ]}
+            />
             <Button
               icon={<TableOutlined />}
               onClick={handleBulkAdd}

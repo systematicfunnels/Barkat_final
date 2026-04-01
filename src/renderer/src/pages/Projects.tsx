@@ -18,7 +18,8 @@ import {
   List,
   Alert,
   Row,
-  Col
+  Col,
+  Dropdown
 } from 'antd'
 const { Title, Text, Paragraph } = Typography
 import {
@@ -749,16 +750,18 @@ const Projects: React.FC = () => {
       title: 'Action',
       key: 'actions',
       align: 'center' as const,
-      width: 120,
+      width: 250,
       render: (_: unknown, record: Project) => (
         <Space className="table-row-actions" size="small">
           <Tooltip title="Manage Rates">
-            <Button onClick={() => handleRates(record)} size="small">
+            <Button icon={<ToolOutlined />} onClick={() => handleRates(record)} size="small">
               Rates
             </Button>
           </Tooltip>
           <Tooltip title="Edit Project">
-            <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} size="small" />
+            <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} size="small">
+              Edit
+            </Button>
           </Tooltip>
           <Tooltip title="Delete Project">
             <Button
@@ -766,7 +769,9 @@ const Projects: React.FC = () => {
               danger
               onClick={() => handleDelete(record.id!)}
               size="small"
-            />
+            >
+              Delete
+            </Button>
           </Tooltip>
         </Space>
       )
@@ -822,16 +827,26 @@ const Projects: React.FC = () => {
       </div>
 
       <Card style={{ marginBottom: 16 }}>
-        <Space direction="vertical" size={12} style={{ width: '100%' }}>
-          <Space wrap align="center" size={12}>
-            <Text strong>Working Financial Year</Text>
-            <Select
-              value={workingFY}
-              onChange={setWorkingFY}
-              options={workingFYOptions}
-              style={{ minWidth: 220 }}
-            />
-          </Space>
+          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+            <Space wrap align="center" size={12}>
+              <Text strong>Working Financial Year</Text>
+              <Dropdown
+                trigger={['hover', 'click']}
+                placement="bottomLeft"
+                overlayClassName="app-filter-dropdown-menu"
+                menu={{
+                  items: workingFYOptions.map((option) => ({
+                    key: String(option.value),
+                    label: option.label,
+                    onClick: () => setWorkingFY(String(option.value))
+                  }))
+                }}
+              >
+                <Button className="app-filter-dropdown-button" style={{ minWidth: 220 }}>
+                  {workingFYOptions.find((option) => option.value === workingFY)?.label || workingFY}
+                </Button>
+              </Dropdown>
+            </Space>
           <Alert
             type="info"
             showIcon

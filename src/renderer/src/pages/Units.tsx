@@ -25,8 +25,8 @@ import {
 import type { DividerProps } from 'antd'
 import {
   UploadOutlined,
-  FilePdfOutlined,
-  SolutionOutlined,
+  FileTextOutlined,
+  WalletOutlined,
   ThunderboltOutlined,
   ExclamationCircleOutlined,
   WarningOutlined,
@@ -35,7 +35,6 @@ import {
   PlusOutlined,
   UndoOutlined
 } from '@ant-design/icons'
-import { IndianRupee } from 'lucide-react'
 import { Unit, Project } from '@preload/types'
 import { readExcelFile } from '../utils/excelReader'
 import { showCompletionWithNextStep } from '../utils/workflowGuidance'
@@ -1207,7 +1206,7 @@ const Units: React.FC = () => {
         <Space className="table-row-actions" size="small">
           <Button
             size="small"
-            icon={<FilePdfOutlined />}
+            icon={<FileTextOutlined />}
             onClick={() => navigate('/billing', { state: { unitId: record.id } })}
             aria-label={`Generate maintenance letter for unit ${record.unit_number}`}
           >
@@ -1215,7 +1214,7 @@ const Units: React.FC = () => {
           </Button>
           <Button
             size="small"
-            icon={<IndianRupee size={14} />}
+            icon={<WalletOutlined />}
             onClick={() => navigate('/payments', { state: { unitId: record.id } })}
             aria-label={`Record payment for unit ${record.unit_number}`}
           >
@@ -1301,7 +1300,7 @@ const Units: React.FC = () => {
           <Space wrap>
             <Button
               type="primary"
-              icon={<SolutionOutlined />}
+              icon={<FileTextOutlined />}
               onClick={() => navigate('/billing', { state: { unitIds: selectedRowKeys } })}
             >
               Generate Letters ({selectedRowKeys.length})

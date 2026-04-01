@@ -7,12 +7,12 @@ import {
   FileTextOutlined,
   BarChartOutlined,
   SettingOutlined,
+  WalletOutlined,
   MenuOutlined,
   CloseOutlined,
   MenuFoldOutlined,
   MenuUnfoldOutlined
 } from '@ant-design/icons'
-import { IndianRupee } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import BreadcrumbNavigation from './BreadcrumbNavigation'
 
@@ -121,7 +121,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     },
     {
       key: '/payments',
-      icon: <IndianRupee size={16} />,
+      icon: <WalletOutlined />,
       label: 'Payments & Receipts',
       title: 'Payments & Receipts'
     },

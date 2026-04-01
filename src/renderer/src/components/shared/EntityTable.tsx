@@ -1,8 +1,12 @@
 import React from 'react'
 import { Table, Space, Button, Tooltip, Tag, Grid } from 'antd'
 import type { ColumnsType, TablePaginationConfig } from 'antd/es/table'
-import { EditOutlined, DeleteOutlined, FilePdfOutlined } from '@ant-design/icons'
-import { IndianRupee } from 'lucide-react'
+import {
+  EditOutlined,
+  DeleteOutlined,
+  FileTextOutlined,
+  WalletOutlined
+} from '@ant-design/icons'
 
 const { useBreakpoint } = Grid
 
@@ -54,15 +58,14 @@ export function EntityTable<T extends object>({
 }: EntityTableProps<T>) {
   const screens = useBreakpoint()
   const isMobile = !screens.md
-  const isTouch = !screens.lg
   
   const defaultActions: ActionConfig<T>[] = []
 
   if (onGenerateLetter) {
     defaultActions.push({
       key: 'generate-letter',
-      icon: <FilePdfOutlined />,
-      label: isMobile ? 'PDF' : undefined,
+      icon: <FileTextOutlined />,
+      label: 'Letter',
       tooltip: 'Generate Maintenance Letter',
       onClick: onGenerateLetter
     })
@@ -71,8 +74,8 @@ export function EntityTable<T extends object>({
   if (onRecordPayment) {
     defaultActions.push({
       key: 'record-payment',
-      icon: <IndianRupee size={isTouch ? 18 : 16} />,
-      label: isMobile ? 'Pay' : undefined,
+      icon: <WalletOutlined />,
+      label: 'Payment',
       tooltip: 'Record Payment',
       onClick: onRecordPayment
     })
@@ -82,7 +85,7 @@ export function EntityTable<T extends object>({
     defaultActions.push({
       key: 'edit',
       icon: <EditOutlined />,
-      label: isMobile ? 'Edit' : undefined,
+      label: 'Edit',
       tooltip: 'Edit',
       onClick: onEdit
     })
@@ -92,7 +95,7 @@ export function EntityTable<T extends object>({
     defaultActions.push({
       key: 'delete',
       icon: <DeleteOutlined />,
-      label: isMobile ? 'Del' : undefined,
+      label: 'Delete',
       tooltip: 'Delete',
       danger: true,
       onClick: onDelete
@@ -104,9 +107,9 @@ export function EntityTable<T extends object>({
   // Responsive action column width
   const getActionColumnWidth = () => {
     if (isMobile) {
-      return Math.max(160, allActions.length * 70 + 16)
+      return Math.max(220, allActions.length * 84 + 16)
     }
-    return Math.max(120, allActions.length * 48 + 16)
+    return Math.max(220, allActions.length * 86 + 16)
   }
 
   const actionColumn: ColumnsType<T>[number] = {
@@ -115,7 +118,7 @@ export function EntityTable<T extends object>({
     align: 'right',
     fixed: 'right',
     width: getActionColumnWidth(),
-    minWidth: isMobile ? 140 : 100,
+    minWidth: isMobile ? 200 : 220,
     render: (_: unknown, record: T) => (
       <Space size={isMobile ? 'small' : 'middle'}>
         {allActions.map((action) => {
@@ -134,7 +137,7 @@ export function EntityTable<T extends object>({
                 e.stopPropagation()
                 action.onClick(record)
               }}
-              style={{ minWidth: isMobile ? 44 : 32 }}
+              style={{ minWidth: isMobile ? 72 : 84 }}
             >
               {action.label}
             </Button>

@@ -1,10 +1,9 @@
 import React, { useMemo } from 'react'
-import { Card, Space, Button, Tag, Typography, Input, Select, InputNumber, Grid } from 'antd'
+import { Card, Space, Button, Tag, Typography, Input, Dropdown, InputNumber, Grid } from 'antd'
 import type { CardProps } from 'antd'
-import { ClearOutlined, FilterOutlined, SearchOutlined } from '@ant-design/icons'
+import { CheckOutlined, ClearOutlined, FilterOutlined, SearchOutlined } from '@ant-design/icons'
 
 const { Text } = Typography
-const { Option } = Select
 const { useBreakpoint } = Grid
 
 export interface FilterOption {
@@ -141,31 +140,71 @@ export function FilterPanel({
         )
 
       case 'select':
-        return (
-          <Select
-            key={field.key}
-            className="app-filter-select"
-            placeholder={field.placeholder || field.label}
-            value={
-              typeof values[field.key] === 'string' ||
-              typeof values[field.key] === 'number' ||
-              Array.isArray(values[field.key])
-                ? values[field.key] as string | number | (string | number)[]
-                : undefined
+      {
+        const currentValue = values[field.key]
+        const selectedValues = Array.isArray(currentValue)
+          ? currentValue
+          : currentValue !== undefined && currentValue !== null && currentValue !== ''
+            ? [currentValue]
+            : []
+
+        const selectedLabels = selectedValues
+          .map((selectedValue) => field.options?.find((opt) => opt.value === selectedValue)?.label || String(selectedValue))
+          .filter(Boolean)
+
+        const buttonLabel =
+          selectedLabels.length > 0
+            ? selectedLabels.join(', ')
+            : field.placeholder || field.label
+
+        const menuItems = [
+          ...(field.allowClear !== false
+            ? [
+                {
+                  key: '__clear__',
+                  label: `All ${field.label}`,
+                  onClick: () => onChange(field.key, field.emptyValue)
+                }
+              ]
+            : []),
+          ...(field.options?.map((opt) => {
+            const isSelected = selectedValues.includes(opt.value)
+            return {
+              key: String(opt.value),
+              label: opt.label,
+              icon: isSelected ? <CheckOutlined /> : undefined,
+              onClick: () => {
+                if (field.multiple) {
+                  const nextValues = isSelected
+                    ? selectedValues.filter((value) => value !== opt.value)
+                    : [...selectedValues, opt.value]
+                  onChange(field.key, nextValues)
+                } else {
+                  onChange(field.key, opt.value)
+                }
+              }
             }
-            onChange={(value) => onChange(field.key, value)}
-            allowClear={field.allowClear !== false}
-            mode={field.multiple ? 'multiple' : undefined}
-            maxTagCount={field.maxTagCount}
-            style={commonStyle}
+          }) || [])
+        ]
+
+        return (
+          <Dropdown
+            key={field.key}
+            trigger={['hover', 'click']}
+            menu={{ items: menuItems }}
+            placement="bottomLeft"
+            overlayClassName="app-filter-dropdown-menu"
           >
-            {field.options?.map((opt) => (
-              <Option key={opt.value} value={opt.value}>
-                {opt.label}
-              </Option>
-            ))}
-          </Select>
+            <Button
+              className="app-filter-dropdown-button"
+              style={commonStyle}
+              title={buttonLabel}
+            >
+              {buttonLabel}
+            </Button>
+          </Dropdown>
         )
+      }
 
       case 'number':
         return (
