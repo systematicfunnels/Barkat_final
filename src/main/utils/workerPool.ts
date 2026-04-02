@@ -42,9 +42,11 @@ export interface TaskResult {
 export class WorkerPool {
   private taskQueue: WorkerTask[] = []
   private activeJobs: Map<string, WorkerTask> = new Map()
-  private activeTasks: Map<string, CancellationToken> = new Map()
+  private activeWorkers: Map<string, Worker> = new Map()
   private resultCallbacks: Map<string, (result: TaskResult) => void> = new Map()
   private progressCallbacks: Map<string, (event: ProgressEvent) => void> = new Map()
+  private finishedStates: Map<string, 'complete' | 'cancel' | 'error'> = new Map()
+  private cancelledTasks: Set<string> = new Set()
   private mainWindow: BrowserWindow | null = null
   private maxConcurrentTasks = 2 // CPU-bound tasks
 
@@ -85,6 +87,7 @@ export class WorkerPool {
 
     try {
       const worker = new Worker(workerPath)
+      this.activeWorkers.set(task.id, worker)
       this.emitProgress(task.id, {
         taskId: task.id,
         type: 'start',
@@ -103,6 +106,7 @@ export class WorkerPool {
             // Task completed
             const duration = Date.now() - startTime
             const result = { ...(event as TaskResult), duration, taskId: task.id }
+            this.finishedStates.set(task.id, 'complete')
             this.resultCallbacks.get(task.id)?.(result)
             this.resultCallbacks.delete(task.id)
             this.emitProgress(task.id, {
@@ -116,6 +120,10 @@ export class WorkerPool {
         })
 
         worker.on('error', (error) => {
+          if (this.cancelledTasks.has(task.id)) {
+            resolve()
+            return
+          }
           const duration = Date.now() - startTime
           const result: TaskResult = {
             taskId: task.id,
@@ -123,6 +131,7 @@ export class WorkerPool {
             error: { code: 'WORKER_ERROR', message: error.message },
             duration
           }
+          this.finishedStates.set(task.id, 'error')
           this.resultCallbacks.get(task.id)?.(result)
           this.resultCallbacks.delete(task.id)
           this.emitProgress(task.id, {
@@ -134,6 +143,13 @@ export class WorkerPool {
         })
 
         worker.on('exit', (code) => {
+          if (this.cancelledTasks.has(task.id)) {
+            this.cancelledTasks.delete(task.id)
+            this.finishedStates.set(task.id, 'cancel')
+            this.resultCallbacks.delete(task.id)
+            resolve()
+            return
+          }
           if (code !== 0 && !this.resultCallbacks.has(task.id)) {
             reject(new Error(`Worker exited with code ${code}`))
           }
@@ -143,8 +159,15 @@ export class WorkerPool {
         worker.postMessage({ task })
       })
 
+      this.activeWorkers.delete(task.id)
       worker.terminate()
     } catch (error) {
+      if (this.cancelledTasks.has(task.id)) {
+        this.cancelledTasks.delete(task.id)
+        this.finishedStates.set(task.id, 'cancel')
+        this.resultCallbacks.delete(task.id)
+        return
+      }
       const duration = Date.now() - startTime
       const errorMsg = error instanceof Error ? error.message : String(error)
       const result: TaskResult = {
@@ -153,6 +176,7 @@ export class WorkerPool {
         error: { code: 'TASK_ERROR', message: errorMsg },
         duration
       }
+      this.finishedStates.set(task.id, 'error')
       this.resultCallbacks.get(task.id)?.(result)
       this.resultCallbacks.delete(task.id)
       this.emitProgress(task.id, {
@@ -160,6 +184,8 @@ export class WorkerPool {
         type: 'error',
         error: { code: 'TASK_ERROR', message: errorMsg }
       })
+    } finally {
+      this.activeWorkers.delete(task.id)
     }
   }
 
@@ -188,6 +214,7 @@ export class WorkerPool {
     const queueIndex = this.taskQueue.findIndex((t) => t.id === taskId)
     if (queueIndex >= 0) {
       this.taskQueue.splice(queueIndex, 1)
+      this.finishedStates.set(taskId, 'cancel')
       this.emitProgress(taskId, {
         taskId,
         type: 'cancel',
@@ -196,11 +223,13 @@ export class WorkerPool {
       return
     }
 
-    // Cancel active task
-    const cancellationToken = this.activeTasks.get(taskId)
-    if (cancellationToken) {
-      cancellationToken.cancel()
-      this.activeTasks.delete(taskId)
+    const activeWorker = this.activeWorkers.get(taskId)
+    if (activeWorker) {
+      this.cancelledTasks.add(taskId)
+      this.finishedStates.set(taskId, 'cancel')
+      void activeWorker.terminate()
+      this.activeWorkers.delete(taskId)
+      this.resultCallbacks.delete(taskId)
       this.emitProgress(taskId, {
         taskId,
         type: 'cancel',
@@ -217,9 +246,11 @@ export class WorkerPool {
     })
   }
 
-  getStatus(taskId: string): 'queued' | 'active' | 'complete' | 'unknown' {
+  getStatus(taskId: string): 'queued' | 'active' | 'complete' | 'cancel' | 'error' | 'unknown' {
     if (this.taskQueue.some((t) => t.id === taskId)) return 'queued'
     if (this.activeJobs.has(taskId)) return 'active'
+    const finishedState = this.finishedStates.get(taskId)
+    if (finishedState) return finishedState
     return 'unknown'
   }
 }

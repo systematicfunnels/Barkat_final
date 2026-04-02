@@ -1,23 +1,55 @@
 /**
  * PDF Worker - Handles batch PDF generation in background thread
- * Prevents UI blocking during bulk PDF letter/receipt generation
+ * Uses the real maintenance letter / receipt services so output stays identical.
  */
 
 import { parentPort } from 'worker_threads'
-import Database from 'better-sqlite3'
 
-// Progress reporting helper
-function reportProgress(current: number, total: number, message: string): void {
+type PdfMode = 'letters' | 'receipts'
+
+interface PDFTask {
+  id: string
+  type: 'batch-pdf'
+  data: {
+    dbPath?: string
+    mode: PdfMode
+    letterIds?: number[]
+    paymentIds?: number[]
+  }
+}
+
+interface WorkerMessage {
+  task: PDFTask
+}
+
+type ItemProgress = {
+  id: number
+  path: string
+  success: boolean
+  unit_number: string
+  owner_name: string
+}
+
+type ProgressPayload = {
+  currentItem?: ItemProgress
+}
+
+function reportProgress(
+  current: number,
+  total: number,
+  message: string,
+  data?: ProgressPayload
+): void {
   parentPort?.postMessage({
     type: 'progress',
     current,
     total,
-    percentage: Math.round((current / total) * 100),
-    message
+    percentage: total > 0 ? Math.round((current / total) * 100) : 0,
+    message,
+    data
   })
 }
 
-// Task completion helper
 function reportComplete(success: boolean, data?: unknown, error?: string): void {
   parentPort?.postMessage({
     success,
@@ -26,149 +58,126 @@ function reportComplete(success: boolean, data?: unknown, error?: string): void 
   })
 }
 
-interface PDFTask {
-  id: string
-  type: 'batch-pdf'
-  data: {
-    dbPath: string
-    mode: 'letters' | 'receipts'
-    letterIds?: number[]
-    paymentIds?: number[]
-    outputDir: string
+async function loadServices(dbPath?: string): Promise<{
+  maintenanceLetterService: { generatePdf: (id: number) => Promise<string> }
+  paymentService: { generateReceiptPdf: (id: number) => Promise<string> }
+  dbService: {
+    get<T>(sql: string, params?: unknown[]): T | undefined
   }
+}> {
+  if (dbPath) {
+    process.env.BARKAT_DB_PATH = dbPath
+  }
+
+  const [{ maintenanceLetterService }, { paymentService }, { dbService }] = await Promise.all([
+    import('../services/MaintenanceLetterService'),
+    import('../services/PaymentService'),
+    import('../db/database')
+  ])
+
+  return { maintenanceLetterService, paymentService, dbService }
 }
 
-interface WorkerMessage {
-  task: PDFTask
-}
+function getItemInfo(
+  mode: PdfMode,
+  id: number,
+  dbService: {
+    get<T>(sql: string, params?: unknown[]): T | undefined
+  }
+): { unit_number: string; owner_name: string } {
+  if (mode === 'letters') {
+    const letter = dbService.get<{ unit_number?: string; owner_name?: string }>(
+      `SELECT u.unit_number, u.owner_name
+       FROM maintenance_letters l
+       JOIN units u ON l.unit_id = u.id
+       WHERE l.id = ?`,
+      [id]
+    )
 
-// Initialize database connection for this worker
-function initDatabase(dbPath: string): Database.Database {
-  return new Database(dbPath)
-}
-
-// Generate PDF for a single letter (placeholder - actual PDF generation would use pdf-lib)
-async function generateLetterPDF(
-  db: Database.Database,
-  letterId: number,
-  outputDir: string
-): Promise<{ success: boolean; filePath?: string; error?: string }> {
-  try {
-    // Get letter details
-    const letter = db.prepare(`
-      SELECT l.*, u.unit_number, u.owner_name, u.area_sqft, u.contact_number, u.email,
-             p.name as project_name, p.address, p.city, p.state, p.contact_email, p.contact_phone
-      FROM maintenance_letters l
-      JOIN units u ON l.unit_id = u.id
-      JOIN projects p ON l.project_id = p.id
-      WHERE l.id = ?
-    `).get(letterId) as Record<string, unknown> | undefined
-
-    if (!letter) {
-      return { success: false, error: `Letter ${letterId} not found` }
+    return {
+      unit_number: letter?.unit_number || `Unit ${id}`,
+      owner_name: letter?.owner_name || 'Unknown'
     }
+  }
 
-    // In a real implementation, this would generate an actual PDF using pdf-lib
-    // For now, we return a placeholder result
-    const fileName = `letter_${letterId}_${Date.now()}.pdf`
-    const filePath = `${outputDir}/${fileName}`
+  const payment = dbService.get<{ unit_number?: string; owner_name?: string }>(
+    `SELECT u.unit_number, u.owner_name
+     FROM payments p
+     JOIN units u ON p.unit_id = u.id
+     WHERE p.id = ?`,
+    [id]
+  )
 
-    // Simulate PDF generation delay
-    await new Promise(resolve => setTimeout(resolve, 50))
-
-    return { success: true, filePath }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { success: false, error: message }
+  return {
+    unit_number: payment?.unit_number || `Unit ${id}`,
+    owner_name: payment?.owner_name || 'Unknown'
   }
 }
 
-// Generate PDF for a single receipt (placeholder - actual PDF generation would use pdf-lib)
-async function generateReceiptPDF(
-  db: Database.Database,
-  paymentId: number,
-  outputDir: string
-): Promise<{ success: boolean; filePath?: string; error?: string }> {
-  try {
-    // Get payment details
-    const payment = db.prepare(`
-      SELECT p.*, u.unit_number, u.owner_name, u.contact_number, u.sector_code,
-             pr.name as project_name, pr.address, pr.city, pr.state,
-             pr.contact_email, pr.contact_phone, r.receipt_number
-      FROM payments p
-      JOIN units u ON p.unit_id = u.id
-      JOIN projects pr ON p.project_id = pr.id
-      LEFT JOIN receipts r ON p.id = r.payment_id
-      WHERE p.id = ?
-    `).get(paymentId) as Record<string, unknown> | undefined
+async function batchGeneratePDFs(task: PDFTask): Promise<void> {
+  const { dbPath, mode, letterIds, paymentIds } = task.data
+  const ids = mode === 'letters' ? letterIds : paymentIds
 
-    if (!payment) {
-      return { success: false, error: `Payment ${paymentId} not found` }
-    }
-
-    // In a real implementation, this would generate an actual PDF using pdf-lib
-    // For now, we return a placeholder result
-    const fileName = `receipt_${paymentId}_${Date.now()}.pdf`
-    const filePath = `${outputDir}/${fileName}`
-
-    // Simulate PDF generation delay
-    await new Promise(resolve => setTimeout(resolve, 50))
-
-    return { success: true, filePath }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return { success: false, error: message }
+  if (!ids || !Array.isArray(ids) || ids.length === 0) {
+    reportComplete(false, undefined, `No ${mode} IDs provided`)
+    return
   }
-}
 
-// Batch generate PDFs
-async function batchGeneratePDFs(
-  db: Database.Database,
-  mode: 'letters' | 'receipts',
-  ids: number[],
-  outputDir: string
-): Promise<{ generated: number; failed: number; files: string[]; errors: string[] }> {
-  const errors: string[] = []
+  const { maintenanceLetterService, paymentService, dbService } = await loadServices(dbPath)
+  const total = ids.length
   const files: string[] = []
+  const errors: string[] = []
   let generated = 0
   let failed = 0
-  const total = ids.length
 
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i]
+  reportProgress(0, total, `Preparing ${mode} PDF generation...`)
+
+  for (let index = 0; index < ids.length; index += 1) {
+    const id = ids[index]
+    const info = getItemInfo(mode, id, dbService)
 
     try {
-      let result: { success: boolean; filePath?: string; error?: string }
+      const path =
+        mode === 'letters'
+          ? await maintenanceLetterService.generatePdf(id)
+          : await paymentService.generateReceiptPdf(id)
 
-      if (mode === 'letters') {
-        result = await generateLetterPDF(db, id, outputDir)
-      } else {
-        result = await generateReceiptPDF(db, id, outputDir)
-      }
+      generated += 1
+      files.push(path)
 
-      if (result.success && result.filePath) {
-        files.push(result.filePath)
-        generated++
-      } else {
-        errors.push(result.error || `Failed to generate PDF for ID ${id}`)
-        failed++
-      }
-
-      // Report progress every 10 PDFs
-      if (i % 10 === 0 || i === ids.length - 1) {
-        reportProgress(i + 1, total, `Generating PDFs: ${i + 1}/${total} (${mode})`)
-      }
+      reportProgress(index + 1, total, `Generated ${index + 1} of ${total} ${mode}`, {
+        currentItem: {
+          id,
+          path,
+          success: true,
+          unit_number: info.unit_number,
+          owner_name: info.owner_name
+        }
+      })
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      errors.push(`Error processing ID ${id}: ${message}`)
-      failed++
+      failed += 1
+      errors.push(error instanceof Error ? error.message : String(error))
+
+      reportProgress(index + 1, total, `Generated ${index + 1} of ${total} ${mode}`, {
+        currentItem: {
+          id,
+          path: '',
+          success: false,
+          unit_number: info.unit_number,
+          owner_name: info.owner_name
+        }
+      })
     }
   }
 
-  return { generated, failed, files, errors }
+  reportComplete(true, {
+    generated,
+    failed,
+    files,
+    errors
+  })
 }
 
-// Main worker message handler
 parentPort?.on('message', async (message: WorkerMessage) => {
   const { task } = message
 
@@ -177,43 +186,9 @@ parentPort?.on('message', async (message: WorkerMessage) => {
     return
   }
 
-  const { dbPath, mode, letterIds, paymentIds, outputDir } = task.data
-
-  if (!dbPath || !mode || !outputDir) {
-    reportComplete(false, undefined, 'Missing required parameters')
-    return
-  }
-
-  const ids = mode === 'letters' ? letterIds : paymentIds
-  if (!ids || !Array.isArray(ids) || ids.length === 0) {
-    reportComplete(false, undefined, `No ${mode} IDs provided`)
-    return
-  }
-
-  let db: Database.Database | null = null
-
   try {
-    reportProgress(0, ids.length, `Initializing ${mode} PDF generation...`)
-
-    db = initDatabase(dbPath)
-
-    const result = await batchGeneratePDFs(db, mode, ids, outputDir)
-    reportComplete(true, {
-      generated: result.generated,
-      failed: result.failed,
-      files: result.files,
-      errors: result.errors
-    })
+    await batchGeneratePDFs(task)
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    reportComplete(false, undefined, message)
-  } finally {
-    if (db) {
-      try {
-        db.close()
-      } catch {
-        // Ignore close errors
-      }
-    }
+    reportComplete(false, undefined, error instanceof Error ? error.message : String(error))
   }
 })

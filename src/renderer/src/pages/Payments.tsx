@@ -102,6 +102,7 @@ const Payments: React.FC = () => {
   const [bulkProject, setBulkProject] = useState<number | null>(null)
   const [generatingReceipts, setGeneratingReceipts] = useState(false)
   const [receiptProgress, setReceiptProgress] = useState<ReceiptProgress | null>(null)
+  const [receiptTaskId, setReceiptTaskId] = useState<string | null>(null)
   const [lastAutoFilledAmount, setLastAutoFilledAmount] = useState<number | null>(null)
   const [lastAutoFillKey, setLastAutoFillKey] = useState<string | null>(null)
 
@@ -574,13 +575,21 @@ const Payments: React.FC = () => {
           `${result.successful} payments recorded. Receipt generation started in background.`
         )
 
-        setGeneratingReceipts(true)
         try {
           if (process.env.NODE_ENV === 'development') {
             console.log('Starting receipt generation', { paymentIds: successfulIds })
           }
-          await Promise.all(successfulIds.map((id) => window.api.payments.generateReceiptPdf(id)))
-          message.success('Receipts generated successfully')
+          const receiptResult = await runBatchReceiptGeneration(successfulIds)
+          setReceiptProgress(null)
+          await fetchData()
+
+          if (receiptResult.failed === 0) {
+            message.success('Receipts generated successfully')
+          } else {
+            message.warning(
+              `Receipts generated with ${receiptResult.failed} failure${receiptResult.failed !== 1 ? 's' : ''}`
+            )
+          }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error'
           console.error(
@@ -589,8 +598,6 @@ const Payments: React.FC = () => {
           )
           // Don't fail the entire payment process, just warn about receipts
           message.warning(`Payments recorded successfully, but receipt generation failed: ${errorMessage}`)
-        } finally {
-          setGeneratingReceipts(false)
         }
       }
 
@@ -733,7 +740,48 @@ const Payments: React.FC = () => {
   const handlePrintReceipt = async (id: number): Promise<void> => {
     try {
       setLoading(true)
-      const pdfPath = await window.api.payments.generateReceiptPdf(id)
+      const { taskId } = (await window.api.worker.enqueueTask('batch-pdf', {
+        mode: 'receipts',
+        paymentIds: [id]
+      })) as { taskId: string }
+
+      const pdfPath = await new Promise<string>((resolve, reject) => {
+        const unsubscribe = window.api.worker.onProgress((event) => {
+          const progressEvent = event as {
+            taskId?: string
+            type?: 'complete' | 'error' | 'cancel'
+            error?: { message?: string }
+            data?: {
+              result?: {
+                success: boolean
+                result?: {
+                  files: string[]
+                }
+              }
+            }
+          }
+
+          if (progressEvent.taskId !== taskId) {
+            return
+          }
+
+          if (progressEvent.type === 'complete') {
+            unsubscribe()
+            resolve(progressEvent.data?.result?.result?.files?.[0] || '')
+          }
+
+          if (progressEvent.type === 'error') {
+            unsubscribe()
+            reject(new Error(progressEvent.error?.message || 'Failed to generate receipt'))
+          }
+
+          if (progressEvent.type === 'cancel') {
+            unsubscribe()
+            reject(new Error('Receipt generation was cancelled'))
+          }
+        })
+      })
+
       await window.api.shell.showItemInFolder(pdfPath)
       message.success('Receipt generated successfully')
     } catch (error) {
@@ -776,68 +824,141 @@ const Payments: React.FC = () => {
     }
   }, [])
 
+  const runBatchReceiptGeneration = useCallback(
+    async (paymentIds: number[]): Promise<{ generated: number; failed: number; files: string[] }> => {
+      setGeneratingReceipts(true)
+      setReceiptProgress({ current: 0, total: paymentIds.length })
+
+      try {
+        const { taskId } = (await window.api.worker.enqueueTask('batch-pdf', {
+          mode: 'receipts',
+          paymentIds
+        })) as { taskId: string }
+        setReceiptTaskId(taskId)
+
+        return await new Promise<{ generated: number; failed: number; files: string[] }>(
+          (resolve, reject) => {
+            const unsubscribe = window.api.worker.onProgress((event) => {
+              const progressEvent = event as {
+                taskId?: string
+                type?: 'start' | 'progress' | 'complete' | 'error' | 'cancel'
+                current?: number
+                total?: number
+                error?: { message?: string }
+                data?: {
+                  result?: {
+                    success: boolean
+                    result?: {
+                      generated: number
+                      failed: number
+                      files: string[]
+                    }
+                  }
+                }
+              }
+
+              if (progressEvent.taskId !== taskId) {
+                return
+              }
+
+              if (progressEvent.type === 'progress') {
+                setReceiptProgress((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        current: progressEvent.current ?? prev.current,
+                        total: progressEvent.total ?? prev.total
+                      }
+                    : null
+                )
+              }
+
+              if (progressEvent.type === 'complete') {
+                unsubscribe()
+                setReceiptTaskId(null)
+                resolve(
+                  progressEvent.data?.result?.result || {
+                    generated: progressEvent.total || 0,
+                    failed: 0,
+                    files: []
+                  }
+                )
+              }
+
+              if (progressEvent.type === 'error') {
+                unsubscribe()
+                setReceiptTaskId(null)
+                reject(new Error(progressEvent.error?.message || 'Receipt generation failed'))
+              }
+
+              if (progressEvent.type === 'cancel') {
+                unsubscribe()
+                setReceiptTaskId(null)
+                reject(new Error('Receipt generation cancelled'))
+              }
+            })
+          }
+        )
+      } finally {
+        setGeneratingReceipts(false)
+      }
+    },
+    []
+  )
+
   const handleBatchReceipts = async (): Promise<void> => {
     if (selectedRowKeys.length === 0) {
       message.warning('Please select payments to generate receipts for')
       return
     }
 
-    setGeneratingReceipts(true)
-    setReceiptProgress({ current: 0, total: selectedRowKeys.length })
+    try {
+      const result = await runBatchReceiptGeneration(selectedRowKeys as number[])
+      setReceiptProgress(null)
+      await fetchData()
 
-    const paymentIds = selectedRowKeys as number[]
-    let successCount = 0
-    let failCount = 0
-    let firstReceiptPath = ''
-
-    for (let i = 0; i < paymentIds.length; i++) {
-      try {
-        const pdfPath = await window.api.payments.generateReceiptPdf(paymentIds[i])
-        if (i === 0) firstReceiptPath = pdfPath
-        successCount++
-      } catch {
-        failCount++
+      if (result.failed === 0 && result.files[0]) {
+        message.success(
+          <span>
+            Successfully generated {result.generated} receipts.{' '}
+            <a
+              onClick={() => window.api.shell.showItemInFolder(result.files[0])}
+              style={{ color: '#1890ff', cursor: 'pointer' }}
+            >
+              Open folder
+            </a>
+          </span>,
+          10
+        )
+      } else if (result.failed === 0) {
+        message.success(`Successfully generated ${result.generated} receipts`)
+      } else {
+        message.warning(`Generated ${result.generated} receipts, failed to generate ${result.failed}`)
       }
-      setReceiptProgress((prev) => (prev ? { ...prev, current: i + 1 } : null))
-    }
-
-    setGeneratingReceipts(false)
-    setReceiptProgress(null)
-
-    if (failCount === 0 && firstReceiptPath) {
-      message.success(
-        <span>
-          Successfully generated {successCount} receipts.{' '}
-          <a
-            onClick={() => window.api.shell.showItemInFolder(firstReceiptPath)}
-            style={{ color: '#1890ff', cursor: 'pointer' }}
-          >
-            Open folder
-          </a>
-        </span>,
-        10 // Show for 10 seconds
-      )
-    } else if (failCount === 0) {
-      message.success(`Successfully generated ${successCount} receipts`)
-    } else {
-      message.warning(`Generated ${successCount} receipts, failed to generate ${failCount}`)
+    } catch (error) {
+      console.error('Failed to generate receipts:', error)
+      setReceiptProgress(null)
+      message.error(error instanceof Error ? error.message : 'Failed to generate receipts')
     }
   }
 
   const handleCancelBatchGeneration = (): void => {
-    if (receiptProgress && receiptProgress.current < receiptProgress.total) {
+    if (receiptTaskId && receiptProgress && receiptProgress.current < receiptProgress.total) {
       Modal.confirm({
         title: 'Cancel Receipt Generation?',
         content: `${receiptProgress.current} of ${receiptProgress.total} receipts have been generated and saved. Do you want to cancel the remaining?`,
-        onOk: () => {
+        onOk: async () => {
+          await window.api.worker.cancel(receiptTaskId)
           setGeneratingReceipts(false)
           setReceiptProgress(null)
+          setReceiptTaskId(null)
           message.info(`Cancelled. ${receiptProgress.current} receipts were saved.`)
         }
       })
     } else {
       setGeneratingReceipts(false)
       setReceiptProgress(null)
+      setReceiptTaskId(null)
     }
   }
 
@@ -1154,13 +1275,14 @@ const Payments: React.FC = () => {
             dataSource={filteredPayments}
             rowKey="id"
             loading={loading}
-            pagination={{ 
+          pagination={{ 
               pageSize: pageSize,
               showSizeChanger: true,
               pageSizeOptions: [10, 20, 50],
               onShowSizeChange: (_, size) => setPageSize(size)
             }}
-            scroll={{ x: 'max-content' }}
+            virtual={filteredPayments.length > 100}
+            scroll={{ x: 'max-content', y: filteredPayments.length > 100 ? 620 : undefined }}
           />
         </div>
 

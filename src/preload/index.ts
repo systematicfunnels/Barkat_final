@@ -196,7 +196,9 @@ const api = {
     getStatus: (taskId: string) => ipcRenderer.invoke('worker-task-status', taskId),
     cancel: (taskId: string) => ipcRenderer.invoke('worker-task-cancel', taskId),
     onProgress: (callback: (event: unknown) => void) => {
-      ipcRenderer.on('worker-progress', (_, event) => callback(event))
+      const listener = (_: Electron.IpcRendererEvent, event: unknown) => callback(event)
+      ipcRenderer.on('worker-progress', listener)
+      return () => ipcRenderer.off('worker-progress', listener)
     }
   },
   logging: {

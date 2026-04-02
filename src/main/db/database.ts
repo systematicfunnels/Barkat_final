@@ -1124,6 +1124,10 @@ class DatabaseService {
     return this.db
   }
 
+  public getDbPath(): string {
+    return this.dbPath
+  }
+
   private reopen(): void {
     this.debug('[DATABASE] Reopening database connection:', this.dbPath)
     this.db = new Database(this.dbPath)

@@ -3041,6 +3041,27 @@ svg.anticon {
       color 0.18s ease;
 }
 
+.unit-table-card .units-table-scroll-wrapper {
+    overflow: visible;
+    max-width: 100%;
+}
+
+.unit-table-card .units-data-table .ant-table-wrapper {
+    overflow: hidden;
+    border-radius: 18px;
+}
+
+.unit-table-card .units-data-table .ant-table-container {
+    overflow: hidden;
+}
+
+.unit-table-card .units-data-table .ant-table-content,
+.unit-table-card .units-data-table .ant-table-body {
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable both-edges;
+    padding-bottom: 4px;
+}
+
 .page-table-card .ant-table-tbody > tr > td {
     border-bottom: 1px solid rgba(15, 23, 42, 0.05) !important;
     transition:
@@ -3256,7 +3277,44 @@ svg.anticon {
 }
 
 .unit-filter-panel {
-  margin-bottom: 8px;
+  margin-bottom: 2px;
+}
+
+.unit-table-card .table-scroll-hint {
+  margin-bottom: 6px;
+}
+
+.unit-table-card .ant-table-thead > tr > th {
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.unit-table-card .ant-table-tbody > tr > td {
+  vertical-align: top;
+}
+
+.unit-table-card .ant-table-thead > tr > th .ant-table-column-title {
+  white-space: nowrap;
+}
+
+.unit-table-card .ant-table-cell {
+  word-break: keep-all;
+}
+
+.unit-table-card .ant-table-cell .ant-tag {
+  white-space: nowrap;
+}
+
+.unit-table-card .table-row-actions {
+  justify-content: flex-end;
+  row-gap: 8px;
+  flex-wrap: nowrap;
+  align-items: center;
+}
+
+.unit-table-card .table-row-actions .ant-btn {
+  min-width: 0;
+  white-space: nowrap;
 }
 
 .billing-filter-card .ant-card-body {

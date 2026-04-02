@@ -991,12 +991,16 @@ export function registerIpcHandlers(): void {
     'enqueue-worker-task',
     async (_, taskType: string, data: Record<string, unknown>) => {
       try {
+        const enrichedData =
+          taskType === 'batch-pdf' && !data.dbPath
+            ? { ...data, dbPath: dbService.getDbPath() }
+            : data
         const taskId = `${taskType}_${randomUUID()}`
         const task: WorkerTask = {
           id: taskId,
           type: taskType,
-          data,
-          priority: data.priority as number | undefined
+          data: enrichedData,
+          priority: enrichedData.priority as number | undefined
         }
         await workerPool.enqueue(task)
         return { taskId, status: 'queued' }

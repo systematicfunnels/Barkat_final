@@ -190,7 +190,7 @@ declare global {
         ) => Promise<{ taskId: string }>
         getStatus: (taskId: string) => Promise<unknown>
         cancel: (taskId: string) => Promise<boolean>
-        onProgress: (callback: (event: unknown) => void) => void
+        onProgress: (callback: (event: unknown) => void) => () => void
       }
       logging: {
         getErrorLogs: (limit?: number) => Promise<unknown[]>

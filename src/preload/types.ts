@@ -676,7 +676,7 @@ declare global {
         enqueueTask: (taskType: string, data: Record<string, unknown>) => Promise<unknown>
         getStatus: (taskId: string) => Promise<unknown>
         cancel: (taskId: string) => Promise<unknown>
-        onProgress: (callback: (event: unknown) => void) => void
+        onProgress: (callback: (event: unknown) => void) => () => void
       }
       logging: {
         getErrorLogs: (limit?: number) => Promise<unknown[]>

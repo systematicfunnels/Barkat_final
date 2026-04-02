@@ -1,16 +1,17 @@
-import React from 'react'
+import React, { Suspense, lazy } from 'react'
 import { HashRouter as Router, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
-import { ConfigProvider } from 'antd'
+import { ConfigProvider, Spin } from 'antd'
 import ErrorBoundary from './components/ErrorBoundary'
-import Projects from './pages/Projects'
-import Units from './pages/Units'
-import Dashboard from './pages/Dashboard'
-import Billing from './pages/Billing'
-import Payments from './pages/Payments'
-import Reports from './pages/Reports'
-import Settings from './pages/Settings'
 import { WorkingFinancialYearProvider } from './context/WorkingFinancialYearContext'
+
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const Projects = lazy(() => import('./pages/Projects'))
+const Units = lazy(() => import('./pages/Units'))
+const Billing = lazy(() => import('./pages/Billing'))
+const Payments = lazy(() => import('./pages/Payments'))
+const Reports = lazy(() => import('./pages/Reports'))
+const Settings = lazy(() => import('./pages/Settings'))
 
 const App: React.FC = () => {
   return (
@@ -51,15 +52,30 @@ const App: React.FC = () => {
         <Router>
           <Layout>
             <ErrorBoundary>
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/projects" element={<Projects />} />
-                <Route path="/units" element={<Units />} />
-                <Route path="/billing" element={<Billing />} />
-                <Route path="/payments" element={<Payments />} />
-                <Route path="/reports" element={<Reports />} />
-                <Route path="/settings" element={<Settings />} />
-              </Routes>
+              <Suspense
+                fallback={
+                  <div
+                    style={{
+                      minHeight: '55vh',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                  >
+                    <Spin size="large" />
+                  </div>
+                }
+              >
+                <Routes>
+                  <Route path="/" element={<Dashboard />} />
+                  <Route path="/projects" element={<Projects />} />
+                  <Route path="/units" element={<Units />} />
+                  <Route path="/billing" element={<Billing />} />
+                  <Route path="/payments" element={<Payments />} />
+                  <Route path="/reports" element={<Reports />} />
+                  <Route path="/settings" element={<Settings />} />
+                </Routes>
+              </Suspense>
             </ErrorBoundary>
           </Layout>
         </Router>

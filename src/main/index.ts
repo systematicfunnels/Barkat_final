@@ -26,6 +26,13 @@ function createWindow(): void {
     mainWindow.show()
   })
 
+  mainWindow.once('show', () => {
+    // Defer non-critical startup work until after the first frame is visible.
+    setTimeout(() => {
+      backupService.startAutoBackup(7)
+    }, 0)
+  })
+
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
     return { action: 'deny' }
@@ -68,9 +75,6 @@ app.whenReady().then(() => {
   ipcMain.on('ping', () => console.log('pong'))
 
   registerIpcHandlers()
-
-  // Initialize auto-backup service (weekly interval by default)
-  backupService.startAutoBackup(7)
 
   createWindow()
 

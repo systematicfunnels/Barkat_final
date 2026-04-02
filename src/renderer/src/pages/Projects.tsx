@@ -984,7 +984,8 @@ const Projects: React.FC = () => {
             pageSizeOptions: [10, 20, 50],
             onShowSizeChange: (_, size) => setPageSize(size)
           }}
-          scroll={{ x: 'max-content' }}
+          virtual={filteredProjects.length > 100}
+          scroll={{ x: 'max-content', y: filteredProjects.length > 100 ? 620 : undefined }}
         />
       </div>
 

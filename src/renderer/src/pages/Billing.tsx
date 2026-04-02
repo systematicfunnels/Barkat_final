@@ -119,6 +119,7 @@ const Billing: React.FC = () => {
 
   const [generatingPdf, setGeneratingPdf] = useState(false)
   const [pdfProgress, setPdfProgress] = useState<PdfProgress | null>(null)
+  const [batchPdfTaskId, setBatchPdfTaskId] = useState<string | null>(null)
   const [selectedUnitIds, setSelectedUnitIds] = useState<number[]>([])
   const [batchModalStep, setBatchModalStep] = useState<'config' | 'units'>('config')
   const [projectUnits, setProjectUnits] = useState<Unit[]>([])
@@ -772,7 +773,48 @@ const Billing: React.FC = () => {
   const handleViewPdf = async (id: number): Promise<void> => {
     try {
       message.loading({ content: 'Generating Letter...', key: 'pdf_gen' })
-      const path = await window.api.letters.generatePdf(id)
+      const { taskId } = (await window.api.worker.enqueueTask('batch-pdf', {
+        mode: 'letters',
+        letterIds: [id]
+      })) as { taskId: string }
+
+      const path = await new Promise<string>((resolve, reject) => {
+        const unsubscribe = window.api.worker.onProgress((event) => {
+          const progressEvent = event as {
+            taskId?: string
+            type?: 'complete' | 'error' | 'cancel'
+            error?: { message?: string }
+            data?: {
+              result?: {
+                success: boolean
+                result?: {
+                  files: string[]
+                }
+              }
+            }
+          }
+
+          if (progressEvent.taskId !== taskId) {
+            return
+          }
+
+          if (progressEvent.type === 'complete') {
+            unsubscribe()
+            resolve(progressEvent.data?.result?.result?.files?.[0] || '')
+          }
+
+          if (progressEvent.type === 'error') {
+            unsubscribe()
+            reject(new Error(progressEvent.error?.message || 'Failed to generate letter'))
+          }
+
+          if (progressEvent.type === 'cancel') {
+            unsubscribe()
+            reject(new Error('Letter generation was cancelled'))
+          }
+        })
+      })
+
       message.success({ content: 'Maintenance Letter generated successfully!', key: 'pdf_gen' })
       notification.success({
         message: 'Letter Ready',
@@ -884,109 +926,150 @@ const Billing: React.FC = () => {
     })
 
     const letterIds = selectedRowKeys as number[]
-    const completedLetters: PdfProgress['completed'] = []
+    const { taskId } = (await window.api.worker.enqueueTask('batch-pdf', {
+      mode: 'letters',
+      letterIds
+    })) as { taskId: string }
+    setBatchPdfTaskId(taskId)
 
-    for (let i = 0; i < letterIds.length; i++) {
-      const letterId = letterIds[i]
-      
-      // Find letter details from the letters array
-      const letter = letters.find((l) => l.id === letterId)
-      const letterInfo = {
-        id: letterId,
-        unit_number: letter?.unit_number || `Unit ${letterId}`,
-        owner_name: letter?.owner_name || 'Unknown'
-      }
-      
-      // Update current letter being processed
-      setPdfProgress((prev) =>
-        prev
-          ? {
-              ...prev,
-              currentLetter: letterInfo
+    await new Promise<void>((resolve, reject) => {
+      const unsubscribe = window.api.worker.onProgress((event) => {
+        const progressEvent = event as {
+          taskId?: string
+          type?: 'start' | 'progress' | 'complete' | 'error' | 'cancel'
+          current?: number
+          total?: number
+          error?: { message?: string }
+          data?: {
+            currentItem?: PdfProgress['completed'][number]
+            result?: {
+              success: boolean
+              result?: {
+                generated: number
+                failed: number
+                files: string[]
+                errors: string[]
+              }
             }
-          : null
-      )
+          }
+        }
 
-      try {
-        const path = await window.api.letters.generatePdf(letterId)
-        const completed = {
-          id: letterId,
-          path,
-          success: true,
-          unit_number: letterInfo.unit_number,
-          owner_name: letterInfo.owner_name
+        if (progressEvent.taskId !== taskId) {
+          return
         }
-        completedLetters.push(completed)
-        setPdfProgress((prev) =>
-          prev
-            ? {
-                ...prev,
-                current: i + 1,
-                completed: [...prev.completed, completed]
-              }
-            : null
-        )
-      } catch {
-        const completed = {
-          id: letterId,
-          path: '',
-          success: false,
-          unit_number: letterInfo.unit_number,
-          owner_name: letterInfo.owner_name
+
+        if (progressEvent.type === 'progress') {
+          const completedItem = progressEvent.data?.currentItem
+
+          setPdfProgress((prev) => {
+            if (!prev) return prev
+
+            const updatedCompleted = completedItem
+              ? [...prev.completed, completedItem]
+              : prev.completed
+
+            return {
+              ...prev,
+              current: progressEvent.current ?? prev.current,
+              total: progressEvent.total ?? prev.total,
+              currentLetter: completedItem
+                ? {
+                    id: completedItem.id,
+                    unit_number: completedItem.unit_number,
+                    owner_name: completedItem.owner_name
+                  }
+                : prev.currentLetter,
+              completed: updatedCompleted
+            }
+          })
         }
-        completedLetters.push(completed)
-        setPdfProgress((prev) =>
-          prev
-            ? {
-                ...prev,
-                current: i + 1,
-                completed: [...prev.completed, completed]
-              }
-            : null
-        )
+
+        if (progressEvent.type === 'complete') {
+          unsubscribe()
+          setGeneratingPdf(false)
+          setBatchPdfTaskId(null)
+
+          const result = progressEvent.data?.result?.result
+          const successCount = result?.generated ?? 0
+          const failCount = result?.failed ?? 0
+          const firstSuccessPath = result?.files?.[0] || ''
+
+          notification.success({
+            message: 'Batch PDF Generation Complete',
+            description: (
+              <div>
+                <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: 8 }}>
+                  {successCount} generated successfully
+                  {failCount > 0 ? `, ${failCount} failed` : ''}
+                </div>
+                <div style={{ color: '#666', fontSize: '13px' }}>
+                  Total letters processed: {progressEvent.total || letterIds.length}
+                </div>
+              </div>
+            ),
+            btn: (
+              <Button
+                type="primary"
+                size="small"
+                icon={<FolderOpenOutlined />}
+                onClick={() => {
+                  if (firstSuccessPath) {
+                    void window.api.shell.showItemInFolder(firstSuccessPath)
+                  } else {
+                    void window.api.shell.openOutputFolder('maintenance-letters')
+                  }
+                }}
+              >
+                Show All in Folder
+              </Button>
+            ),
+            duration: 8,
+            placement: 'bottomRight'
+          })
+
+          resolve()
+        }
+
+        if (progressEvent.type === 'error') {
+          unsubscribe()
+          setGeneratingPdf(false)
+          setBatchPdfTaskId(null)
+          setPdfProgress(null)
+          reject(new Error(progressEvent.error?.message || 'Batch PDF generation failed'))
+        }
+
+        if (progressEvent.type === 'cancel') {
+          unsubscribe()
+          setGeneratingPdf(false)
+          setBatchPdfTaskId(null)
+          reject(new Error('Batch PDF generation cancelled'))
+        }
+      })
+    }).catch((error: unknown) => {
+      const errorMessage = error instanceof Error ? error.message : 'Batch PDF generation failed'
+      if (errorMessage !== 'Batch PDF generation cancelled') {
+        message.error(errorMessage)
       }
+    })
+  }
+
+  const handleCancelBatchPdfGeneration = (): void => {
+    if (batchPdfTaskId && pdfProgress && pdfProgress.current < pdfProgress.total) {
+      Modal.confirm({
+        title: 'Cancel PDF Generation?',
+        content: `${pdfProgress.current} of ${pdfProgress.total} letters have already been processed. Do you want to stop the remaining generation?`,
+        onOk: async () => {
+          await window.api.worker.cancel(batchPdfTaskId)
+          setGeneratingPdf(false)
+          setBatchPdfTaskId(null)
+          message.info(`Cancelled. ${pdfProgress.current} letters were processed.`)
+        }
+      })
+      return
     }
 
     setGeneratingPdf(false)
-
-    // Show summary notification with "Show All in Folder" button
-    const successCount = completedLetters.filter((c) => c.success).length
-    const failCount = completedLetters.filter((c) => !c.success).length
-
-    notification.success({
-      message: 'Batch PDF Generation Complete',
-      description: (
-        <div>
-          <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: 8 }}>
-            {successCount} generated successfully{failCount > 0 ? `, ${failCount} failed` : ''}
-          </div>
-          <div style={{ color: '#666', fontSize: '13px' }}>
-            Total letters processed: {completedLetters.length}
-          </div>
-        </div>
-      ),
-      btn: (
-        <Button
-          type="primary"
-          size="small"
-          icon={<FolderOpenOutlined />}
-          onClick={() => {
-            // Open the maintenance-letters directory
-            const pdfPath = completedLetters.find((c) => c.success)?.path
-            if (pdfPath) {
-              window.api.shell.showItemInFolder(pdfPath)
-            } else {
-              // Fallback: try to open userData/pdfs directory
-              message.info('Opening PDF output directory...')
-            }
-          }}
-        >
-          Show All in Folder
-        </Button>
-      ),
-      duration: 8,
-      placement: 'bottomRight'
-    })
+    setBatchPdfTaskId(null)
   }
 
   const handleDelete = async (id: number): Promise<void> => {
@@ -1510,15 +1593,15 @@ const Billing: React.FC = () => {
           </div>
         }
         open={generatingPdf}
-        onCancel={() => setGeneratingPdf(false)}
+        onCancel={handleCancelBatchPdfGeneration}
         footer={[
           <Button
             key="close"
-            type="primary"
-            onClick={() => setGeneratingPdf(false)}
-            disabled={pdfProgress?.current !== pdfProgress?.total}
-          >
-            {pdfProgress?.current === pdfProgress?.total ? 'Close' : 'Processing...'}
+            type={pdfProgress?.current === pdfProgress?.total ? 'primary' : 'default'}
+            danger={pdfProgress?.current !== pdfProgress?.total}
+            onClick={handleCancelBatchPdfGeneration}
+            >
+            {pdfProgress?.current === pdfProgress?.total ? 'Close' : 'Cancel'}
           </Button>
         ]}
         closable={pdfProgress?.current === pdfProgress?.total}
@@ -1619,7 +1702,8 @@ const Billing: React.FC = () => {
           pageSizeOptions: [10, 20, 50],
           onShowSizeChange: (_, size) => setPageSize(size)
         }}
-        scroll={{ x: 'max-content' }}
+        virtual={filteredLetters.length > 100}
+        scroll={{ x: 'max-content', y: filteredLetters.length > 100 ? 620 : undefined }}
         size="small"
         rowClassName={(record) => {
           const status = getDisplayStatus(record)
