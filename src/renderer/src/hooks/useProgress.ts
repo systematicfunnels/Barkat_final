@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { message } from 'antd'
+import { appMessage as message } from '../utils/appMessage'
 
 export interface ProgressState {
   current: number

@@ -48,10 +48,11 @@ function useDebounce<T extends (...args: unknown[]) => void>(
 }
 
 const Layout: React.FC<LayoutProps> = ({ children }) => {
+  const autoCollapseBreakpoint = 1180
   const desktopSidebarWidth = 288
   const tabletSidebarWidth = 240
   const collapsedSidebarWidth = 88
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(window.innerWidth < autoCollapseBreakpoint)
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false)
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768)
   const [isTablet, setIsTablet] = useState(window.innerWidth >= 768 && window.innerWidth < 1024)
@@ -93,6 +94,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const sidebarWidth = isTablet ? tabletSidebarWidth : desktopSidebarWidth
   const contentOffset = isMobile ? 0 : collapsed ? collapsedSidebarWidth : sidebarWidth
   const mobileSidebarWidth = isSmallMobile ? 256 : 304
+  const mainContentWidth = isMobile ? '100%' : `calc(100% - ${contentOffset}px)`
 
   const menuItems = [
     {
@@ -150,6 +152,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     setIsSmallMobile(smallMobile)
     if (!mobile) {
       setMobileDrawerOpen(false)
+      setCollapsed(width < autoCollapseBreakpoint)
     }
   }, 150)
 
@@ -242,7 +245,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         closable
         onClose={() => setMobileDrawerOpen(false)}
         open={mobileDrawerOpen}
-        width={mobileSidebarWidth}
+        size={mobileSidebarWidth}
         title={<span className="app-shell-drawer-title">Navigation</span>}
         className="mobile-sidebar-drawer"
         closeIcon={<CloseOutlined />}
@@ -264,7 +267,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           marginLeft: contentOffset,
           transition: 'margin-left 0.2s ease, width 0.2s ease',
           minWidth: 0,
-          width: isMobile ? '100%' : undefined
+          width: mainContentWidth,
+          maxWidth: '100%',
+          flex: '1 1 auto'
         }}
       >
         <Header

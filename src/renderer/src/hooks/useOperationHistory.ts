@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { message } from 'antd'
+import { appMessage as message } from '../utils/appMessage'
 
 export type OperationType = 'delete' | 'create' | 'update' | 'import'
 

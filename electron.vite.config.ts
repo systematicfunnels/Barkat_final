@@ -6,6 +6,16 @@ export default defineConfig({
   main: {
     build: {
       rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          'workers/billing.worker': resolve('src/main/workers/billing.worker.ts'),
+          'workers/import.worker': resolve('src/main/workers/import.worker.ts'),
+          'workers/pdf.worker': resolve('src/main/workers/pdf.worker.ts'),
+          'workers/report-export.worker': resolve('src/main/workers/report-export.worker.ts')
+        },
+        output: {
+          entryFileNames: '[name].js'
+        },
         external: ['better-sqlite3']
       }
     }

@@ -571,6 +571,9 @@ declare global {
             path: string
             timestamp: string
             size: number
+            formatVersion?: number
+            snapshotMethod?: string
+            isVerifiedSnapshot: boolean
           }>
         >
         getExportDefaultName: () => Promise<string>

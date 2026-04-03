@@ -1,8 +1,8 @@
 import Database from 'better-sqlite3'
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
 import { schema } from './schema'
+import { getUserDataPath, isPackagedApp } from '../utils/runtimePaths'
 
 class DatabaseService {
   private db: Database.Database
@@ -97,10 +97,12 @@ class DatabaseService {
   }
 
   constructor() {
+    const packaged = isPackagedApp()
+    const userDataPath = getUserDataPath()
     this.dbPath =
       process.env.BARKAT_DB_PATH ||
-      (app.isPackaged
-        ? path.join(app.getPath('userData'), 'barkat.db')
+      (packaged
+        ? path.join(userDataPath, 'barkat.db')
         : path.join(__dirname, '../../barkat.db'))
     const dbDir = path.dirname(this.dbPath)
 
@@ -109,8 +111,8 @@ class DatabaseService {
     }
 
     this.debug('[DATABASE] Database path:', this.dbPath)
-    this.debug('[DATABASE] App packaged:', app.isPackaged)
-    this.debug('[DATABASE] User data path:', app.getPath('userData'))
+    this.debug('[DATABASE] App packaged:', packaged)
+    this.debug('[DATABASE] User data path:', userDataPath)
     this.debug('[DATABASE] __dirname:', __dirname)
 
     // Check if database file exists
@@ -140,7 +142,7 @@ class DatabaseService {
 
       // If the installed app has a corrupted sqlite file, recover automatically by recreating it.
       // This prevents the “database disk image is malformed” crash during setup/import.
-      if (app.isPackaged && /malformed|corrupt|not a database/i.test(message)) {
+      if (packaged && /malformed|corrupt|not a database/i.test(message)) {
         try {
           const backupPath = `${this.dbPath}.corrupt.${Date.now()}`
           if (fs.existsSync(this.dbPath)) {

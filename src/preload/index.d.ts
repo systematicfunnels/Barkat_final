@@ -207,7 +207,15 @@ declare global {
         }>
         restoreBackup: (backupPath: string) => Promise<{ success: boolean; error?: string }>
         listBackups: () => Promise<
-          Array<{ name: string; path: string; timestamp: string; size: number }>
+          Array<{
+            name: string
+            path: string
+            timestamp: string
+            size: number
+            formatVersion?: number
+            snapshotMethod?: string
+            isVerifiedSnapshot: boolean
+          }>
         >
         getExportDefaultName: () => Promise<string>
         startAutoBackup: (intervalDays?: number) => Promise<{ enabled: boolean; intervalDays: number }>

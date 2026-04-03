@@ -67,7 +67,7 @@ const Dashboard: React.FC = () => {
         },
         {
           errorMessage: 'Failed to load projects',
-          loadingMessage: 'Loading projects...'
+          silent: true
         }
       )
     }
@@ -87,7 +87,7 @@ const Dashboard: React.FC = () => {
         },
         {
           errorMessage: 'Failed to load financial years',
-          loadingMessage: 'Loading financial years...'
+          silent: true
         }
       )
     }
@@ -110,7 +110,7 @@ const Dashboard: React.FC = () => {
           },
           {
             errorMessage: 'Failed to load dashboard statistics',
-            loadingMessage: 'Loading dashboard statistics...'
+            silent: true
           }
         )
       } finally {

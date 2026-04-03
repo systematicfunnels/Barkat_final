@@ -26,11 +26,20 @@ export interface BackupResult {
   error?: string
 }
 
+type BackupMetadata = {
+  timestamp: string
+  dbPath: string
+  size: number
+  version: string
+  formatVersion?: number
+  snapshotMethod?: string
+}
+
 class BackupService {
+  private readonly BACKUP_FORMAT_VERSION = 2
+  private readonly BACKUP_SNAPSHOT_METHOD = 'sqlite-vacuum-into'
   private backupDir = path.join(app.getPath('userData'), 'backups')
-  private dbPath = app.isPackaged
-    ? path.join(app.getPath('userData'), 'barkat.db')
-    : path.join(__dirname, '../../barkat.db')
+  private dbPath = dbService.getDbPath()
   private readonly RESTORE_DELAY_MS = 100
   private config: BackupConfig = {
     enabled: true,
@@ -108,6 +117,43 @@ class BackupService {
     }
   }
 
+  private escapeSqlitePath(filePath: string): string {
+    return filePath.replace(/'/g, "''")
+  }
+
+  private async createConsistentBackupFile(destinationPath: string): Promise<number> {
+    const normalizedDestinationPath = path.resolve(destinationPath)
+    const sqlitePath = this.escapeSqlitePath(normalizedDestinationPath)
+    const db = dbService.getDb()
+
+    if (fs.existsSync(normalizedDestinationPath)) {
+      await fs.promises.unlink(normalizedDestinationPath)
+    }
+
+    // Flush WAL pages first, then create a self-contained backup snapshot.
+    db.pragma('wal_checkpoint(TRUNCATE)')
+    db.exec(`VACUUM INTO '${sqlitePath}'`)
+
+    const stats = await fs.promises.stat(normalizedDestinationPath)
+    return stats.size
+  }
+
+  private async cleanupDbSidecars(targetDbPath: string): Promise<void> {
+    await Promise.all(
+      ['-wal', '-shm'].map(async (suffix) => {
+        const sidecarPath = `${targetDbPath}${suffix}`
+        try {
+          await fs.promises.unlink(sidecarPath)
+        } catch (error) {
+          const nodeError = error as NodeJS.ErrnoException
+          if (nodeError.code !== 'ENOENT') {
+            throw error
+          }
+        }
+      })
+    )
+  }
+
   /**
    * Create a backup of the database
    */
@@ -132,19 +178,17 @@ class BackupService {
 
       this.logInfo('[BACKUP] Creating backup:', backupPath)
 
-      // Copy the DB file
-      const result = await copyFileAsync(this.dbPath, backupPath)
-      if (!result.success) {
-        return { success: false, error: result.error }
-      }
+      const size = await this.createConsistentBackupFile(backupPath)
 
       // Create a metadata file
       const metadataPath = backupPath + '.json'
-      const metadata = {
+      const metadata: BackupMetadata = {
         timestamp: new Date().toISOString(),
         dbPath: this.dbPath,
-        size: result.size,
-        version: '1'
+        size,
+        version: String(this.BACKUP_FORMAT_VERSION),
+        formatVersion: this.BACKUP_FORMAT_VERSION,
+        snapshotMethod: this.BACKUP_SNAPSHOT_METHOD
       }
       await fs.promises.writeFile(metadataPath, JSON.stringify(metadata, null, 2))
 
@@ -155,7 +199,7 @@ class BackupService {
         success: true,
         backupPath,
         timestamp,
-        size: result.size
+        size
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -202,6 +246,8 @@ class BackupService {
 
       // Wait a moment to ensure connection is fully closed
       await new Promise((resolve) => setTimeout(resolve, this.RESTORE_DELAY_MS))
+
+      await this.cleanupDbSidecars(this.dbPath)
 
       // Restore the backup file
       const result = await copyFileAsync(backupPath, this.dbPath)
@@ -298,6 +344,9 @@ class BackupService {
     path: string
     timestamp: string
     size: number
+    formatVersion?: number
+    snapshotMethod?: string
+    isVerifiedSnapshot: boolean
   }>> {
     try {
       const files = await fs.promises.readdir(this.backupDir)
@@ -309,10 +358,16 @@ class BackupService {
             const stat = await fs.promises.stat(fullPath)
             const metadataPath = fullPath + '.json'
             let timestamp = ''
+            let formatVersion: number | undefined
+            let snapshotMethod: string | undefined
             try {
               await fs.promises.access(metadataPath)
-              const metadata = JSON.parse(await fs.promises.readFile(metadataPath, 'utf-8'))
+              const metadata = JSON.parse(
+                await fs.promises.readFile(metadataPath, 'utf-8')
+              ) as BackupMetadata
               timestamp = metadata.timestamp
+              formatVersion = metadata.formatVersion
+              snapshotMethod = metadata.snapshotMethod
             } catch {
               timestamp = new Date(stat.mtimeMs).toISOString()
             }
@@ -323,7 +378,13 @@ class BackupService {
               name: f,
               path: fullPath,
               timestamp,
-              size: stat.size
+              size: stat.size,
+              formatVersion,
+              snapshotMethod,
+              isVerifiedSnapshot:
+                typeof formatVersion === 'number' &&
+                formatVersion >= this.BACKUP_FORMAT_VERSION &&
+                snapshotMethod === this.BACKUP_SNAPSHOT_METHOD
             }
           })
       )

@@ -50,6 +50,17 @@ export class WorkerPool {
   private mainWindow: BrowserWindow | null = null
   private maxConcurrentTasks = 2 // CPU-bound tasks
 
+  private getWorkerFileName(taskType: string): string {
+    const workerFileMap: Record<string, string> = {
+      billing: 'billing.worker.js',
+      import: 'import.worker.js',
+      'batch-pdf': 'pdf.worker.js',
+      'report-export': 'report-export.worker.js'
+    }
+
+    return workerFileMap[taskType] || `${taskType}.worker.js`
+  }
+
   setMainWindow(window: BrowserWindow): void {
     this.mainWindow = window
   }
@@ -79,11 +90,10 @@ export class WorkerPool {
 
   private async executeTask(task: WorkerTask): Promise<void> {
     const startTime = Date.now()
-    
-    // Fix: Ensure worker path works in packaged app
+    const workerFileName = this.getWorkerFileName(task.type)
     const workerPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'main', 'workers', `${task.type}.worker.js`)
-      : path.join(__dirname, 'workers', `${task.type}.worker.js`)
+      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'main', 'workers', workerFileName)
+      : path.join(app.getAppPath(), 'out', 'main', 'workers', workerFileName)
 
     try {
       const worker = new Worker(workerPath)
@@ -106,15 +116,26 @@ export class WorkerPool {
             // Task completed
             const duration = Date.now() - startTime
             const result = { ...(event as TaskResult), duration, taskId: task.id }
-            this.finishedStates.set(task.id, 'complete')
             this.resultCallbacks.get(task.id)?.(result)
             this.resultCallbacks.delete(task.id)
-            this.emitProgress(task.id, {
-              taskId: task.id,
-              type: 'complete',
-              message: 'Task completed',
-              data: result
-            })
+            if (result.success) {
+              this.finishedStates.set(task.id, 'complete')
+              this.emitProgress(task.id, {
+                taskId: task.id,
+                type: 'complete',
+                message: 'Task completed',
+                data: result
+              })
+            } else {
+              this.finishedStates.set(task.id, 'error')
+              this.emitProgress(task.id, {
+                taskId: task.id,
+                type: 'error',
+                message: result.error?.message || 'Task failed',
+                error: result.error,
+                data: result
+              })
+            }
             resolve()
           }
         })

@@ -8,7 +8,6 @@ import {
   Form,
   Select,
   DatePicker,
-  message,
   Input,
   InputNumber,
   Tag,
@@ -40,6 +39,7 @@ import {
   formatFinancialYear,
   getUpcomingFinancialYear
 } from '../utils/financialYear'
+import { appMessage as message } from '../utils/appMessage'
 import ActionMenuButton from '../components/shared/ActionMenuButton'
 import FilterPanel, {
   createSearchFilter,
@@ -752,11 +752,11 @@ const Payments: React.FC = () => {
             type?: 'complete' | 'error' | 'cancel'
             error?: { message?: string }
             data?: {
+              success?: boolean
               result?: {
-                success: boolean
-                result?: {
-                  files: string[]
-                }
+                files: string[]
+                failed?: number
+                errors?: string[]
               }
             }
           }
@@ -767,7 +767,24 @@ const Payments: React.FC = () => {
 
           if (progressEvent.type === 'complete') {
             unsubscribe()
-            resolve(progressEvent.data?.result?.result?.files?.[0] || '')
+            const result = progressEvent.data?.result
+            const firstPath = result?.files?.[0] || ''
+            const firstError = result?.errors?.[0]
+            const failedCount = result?.failed ?? 0
+
+            if (!firstPath) {
+              reject(
+                new Error(
+                  firstError ||
+                    (failedCount > 0
+                      ? 'Failed to generate receipt'
+                      : 'Receipt PDF was not created')
+                )
+              )
+              return
+            }
+
+            resolve(firstPath)
           }
 
           if (progressEvent.type === 'error') {
@@ -786,7 +803,7 @@ const Payments: React.FC = () => {
       message.success('Receipt generated successfully')
     } catch (error) {
       console.error('Failed to generate receipt:', error)
-      message.error('Failed to generate receipt')
+      message.error(error instanceof Error ? error.message : 'Failed to generate receipt')
     } finally {
       setLoading(false)
     }
@@ -846,13 +863,11 @@ const Payments: React.FC = () => {
                 total?: number
                 error?: { message?: string }
                 data?: {
+                  success?: boolean
                   result?: {
-                    success: boolean
-                    result?: {
-                      generated: number
-                      failed: number
-                      files: string[]
-                    }
+                    generated: number
+                    failed: number
+                    files: string[]
                   }
                 }
               }
@@ -877,7 +892,7 @@ const Payments: React.FC = () => {
                 unsubscribe()
                 setReceiptTaskId(null)
                 resolve(
-                  progressEvent.data?.result?.result || {
+                  progressEvent.data?.result || {
                     generated: progressEvent.total || 0,
                     failed: 0,
                     files: []
@@ -1140,7 +1155,7 @@ const Payments: React.FC = () => {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="No projects found"
+          title="No projects found"
           description={
             <span>
               You need to create a project and generate maintenance letters before recording payments.{' '}
@@ -1455,7 +1470,7 @@ const Payments: React.FC = () => {
                     type="info"
                     showIcon
                     style={{ marginBottom: 12 }}
-                    message="Recommended payment flow"
+                    title="Recommended payment flow"
                     description="For billed units, select the maintenance letter first. That will align the financial year and fill the amount automatically."
                   />
                   <Row gutter={[16, 8]}>
@@ -1801,7 +1816,7 @@ const Payments: React.FC = () => {
 
               {unitsWithLettersDue.length > 0 && !showAllUnits && (
                 <Alert
-                  message={`Showing ${unitsWithLettersDue.length} units with maintenance letters due`}
+                  title={`Showing ${unitsWithLettersDue.length} units with maintenance letters due`}
                   type="info"
                   showIcon
                   style={{ marginBottom: 16 }}
@@ -1942,7 +1957,7 @@ const Payments: React.FC = () => {
 
           {!bulkProject && (
             <Alert
-              message="Select a project to start bulk payment entry"
+              title="Select a project to start bulk payment entry"
               type="info"
               showIcon
               style={{ marginTop: 16 }}

@@ -196,7 +196,7 @@ export function FilterPanel({
             trigger={['hover', 'click']}
             menu={{ items: menuItems }}
             placement="bottomLeft"
-            overlayClassName="app-filter-dropdown-menu"
+            classNames={{ root: 'app-filter-dropdown-menu' }}
             disabled={loading || !hasOptions}
           >
             <Button

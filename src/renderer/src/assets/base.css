@@ -1727,17 +1727,6 @@ svg.anticon {
   .ant-layout-content {
     padding: 24px 20px !important;
   }
-  
-  /* Sidebar adjustment for tablet */
-  .ant-layout-sider {
-    width: 220px !important;
-    min-width: 220px !important;
-    max-width: 220px !important;
-  }
-  
-  .ant-layout {
-    margin-left: 220px !important;
-  }
 }
 
 /* Large devices (laptops/desktops, 1024px - 1365px) */
@@ -2096,6 +2085,9 @@ svg.anticon {
 
 .app-shell-main {
   min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  flex: 1 1 auto;
 }
 
 .app-shell-header {
@@ -2172,6 +2164,17 @@ svg.anticon {
   margin-bottom: 18px;
 }
 
+@media (max-width: 1180px) {
+  .app-shell-content {
+    padding: 20px 18px 24px;
+  }
+
+  .app-shell-content-inner {
+    max-width: 100%;
+    margin: 0;
+  }
+}
+
 @media (max-width: 1023px) {
   .app-shell-content {
     padding: 20px 16px 24px;
@@ -2179,6 +2182,7 @@ svg.anticon {
 
   .app-shell-content-inner {
     max-width: 100%;
+    margin: 0;
   }
 }
 
@@ -2200,6 +2204,7 @@ svg.anticon {
 
   .app-shell-content-inner {
     max-width: 100%;
+    margin: 0;
   }
 }
 
@@ -2245,6 +2250,8 @@ svg.anticon {
   display: flex;
   flex-direction: column;
   gap: 20px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .page-hero {
@@ -2979,6 +2986,10 @@ svg.anticon {
 }
 
 @media (max-width: 1023px) {
+  .page-hero-subtitle {
+    max-width: none;
+  }
+
   .page-stat-card .ant-card-body {
     padding: 16px 18px !important;
   }
@@ -3011,6 +3022,97 @@ svg.anticon {
   border-radius: 16px;
   background: linear-gradient(180deg, rgba(255,255,255,0.8), rgba(245,250,247,0.8));
   border: 1px solid rgba(15, 23, 42, 0.06);
+}
+
+.maintenance-rate-editor-card .ant-card-body {
+  padding: 18px 18px 14px;
+}
+
+.maintenance-rate-editor-form .ant-form-item {
+  margin-bottom: 0;
+}
+
+.maintenance-rate-editor-form .ant-input-number-group-wrapper,
+.maintenance-rate-editor-form .ant-input-number-affix-wrapper {
+  width: 100%;
+}
+
+.maintenance-rate-editor-form .ant-input-number-group {
+  display: flex;
+  width: 100%;
+}
+
+.maintenance-rate-editor-form .ant-input-number-group .ant-input-number {
+  flex: 1 1 auto;
+}
+
+.maintenance-rate-editor-form .ant-input-number-group-addon {
+  min-width: 46px;
+  padding-inline: 12px;
+  text-align: center;
+  background: #f8fbf9;
+  color: rgba(15, 23, 42, 0.78);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+.maintenance-rate-editor-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px 18px;
+  align-items: end;
+}
+
+.maintenance-rate-editor-grid-secondary {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+}
+
+.maintenance-rate-subsection-title {
+  margin-bottom: 14px;
+  font-size: 14px;
+  font-weight: 700;
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.maintenance-rate-editor-actions {
+  display: flex;
+  align-items: end;
+  justify-content: flex-start;
+  min-height: 72px;
+}
+
+.maintenance-rate-editor-actions .ant-space {
+  gap: 10px !important;
+}
+
+.maintenance-rate-editor-actions .ant-btn {
+  min-width: 92px;
+}
+
+@media (max-width: 900px) {
+  .maintenance-rate-editor-grid,
+  .maintenance-rate-editor-grid-secondary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .maintenance-rate-editor-actions {
+    min-height: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .maintenance-rate-editor-grid,
+  .maintenance-rate-editor-grid-secondary {
+    grid-template-columns: 1fr;
+  }
+
+  .maintenance-rate-editor-actions .ant-space {
+    width: 100%;
+  }
+
+  .maintenance-rate-editor-actions .ant-space-item,
+  .maintenance-rate-editor-actions .ant-btn {
+    width: 100%;
+  }
 }
 
 .page-table-card {
@@ -3423,6 +3525,76 @@ svg.anticon {
 
 .settings-footer-note {
   opacity: 0.9;
+}
+
+.project-sector-config-card .ant-card-head {
+  border-bottom-color: rgba(15, 23, 42, 0.08);
+}
+
+.project-sector-config-card .ant-card-body {
+  padding-top: 16px;
+}
+
+.project-sector-config-grid {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.7fr) repeat(2, minmax(0, 1.3fr));
+  gap: 14px 16px;
+}
+
+.project-sector-config-field {
+  min-width: 0;
+}
+
+.project-sector-config-field-compact {
+  max-width: 150px;
+}
+
+.project-sector-config-field-wide {
+  grid-column: 1 / -1;
+}
+
+.project-sector-config-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(15, 23, 42, 0.72);
+}
+
+.project-sector-config-field .ant-input {
+  min-width: 0;
+}
+
+.project-sector-config-qr-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.project-sector-config-qr-row .ant-btn {
+  min-width: 118px;
+}
+
+@media (max-width: 900px) {
+  .project-sector-config-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .project-sector-config-field-compact {
+    max-width: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .project-sector-config-grid,
+  .project-sector-config-qr-row {
+    grid-template-columns: 1fr;
+  }
+
+  .project-sector-config-qr-row .ant-btn {
+    width: 100%;
+  }
 }
 
 /* Generate Maintenance Letters Modal - Centered, No Scroll */

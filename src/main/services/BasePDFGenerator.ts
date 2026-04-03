@@ -2,7 +2,7 @@ import { PDFDocument, PDFPage, PDFFont, rgb, StandardFonts, RGB } from 'pdf-lib'
 import { CONFIG } from '../config/constants'
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
+import { getUserDataPath } from '../utils/runtimePaths'
 
 export interface PDFFontSet {
   regular: PDFFont
@@ -621,7 +621,7 @@ export abstract class BasePDFGenerator {
    */
   protected async savePDF(fileName: string, directory?: string): Promise<string> {
     const pdfBytes = await this.pdfDoc.save()
-    const targetDir = directory || path.join(app.getPath('userData'), 'pdfs')
+    const targetDir = directory || path.join(getUserDataPath(), 'pdfs')
     if (!fs.existsSync(targetDir)) {
       await fs.promises.mkdir(targetDir, { recursive: true })
     }

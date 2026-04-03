@@ -528,18 +528,43 @@ export function registerIpcHandlers(): void {
     }
   )
 
-  const validatePath = (filePath: string): void => {
-    if (!filePath) return
-    const userDataPath = app.getPath('userData')
-    if (!filePath.startsWith(userDataPath)) {
-      throw new Error('Access denied: Path is outside of application data directory.')
+  const resolveExistingLocalPath = (
+    filePath: string,
+    options?: { mustBeInUserData?: boolean }
+  ): string => {
+    const normalizedPath = sanitizeText(filePath)
+    if (!normalizedPath) {
+      throw new Error('A file path is required.')
     }
+
+    const resolvedPath = path.resolve(normalizedPath)
+    if (!path.isAbsolute(resolvedPath)) {
+      throw new Error('Invalid path: absolute local path required.')
+    }
+
+    if (!fs.existsSync(resolvedPath)) {
+      throw new Error('File not found.')
+    }
+
+    if (options?.mustBeInUserData) {
+      const userDataPath = path.resolve(app.getPath('userData'))
+      const relativePath = path.relative(userDataPath, resolvedPath)
+      const isInsideUserData =
+        relativePath === '' ||
+        (!relativePath.startsWith('..') && !path.isAbsolute(relativePath))
+
+      if (!isInsideUserData) {
+        throw new Error('Access denied: Path is outside of application data directory.')
+      }
+    }
+
+    return resolvedPath
   }
 
   ipcMain.handle('open-pdf', (_, filePath: string): void => {
-    validatePath(filePath)
-    if (filePath && filePath.endsWith('.pdf')) {
-      shell.openPath(filePath)
+    const resolvedPath = resolveExistingLocalPath(filePath)
+    if (resolvedPath.toLowerCase().endsWith('.pdf')) {
+      shell.openPath(resolvedPath)
     }
   })
 
@@ -796,8 +821,8 @@ export function registerIpcHandlers(): void {
 
   // Shell
   ipcMain.handle('show-item-in-folder', (_, filePath: string): void => {
-    validatePath(filePath)
-    shell.showItemInFolder(filePath)
+    const resolvedPath = resolveExistingLocalPath(filePath)
+    shell.showItemInFolder(resolvedPath)
   })
 
   ipcMain.handle('open-output-folder', async (_, folderType: 'maintenance-letters' | 'receipts'): Promise<void> => {
@@ -993,7 +1018,12 @@ export function registerIpcHandlers(): void {
       try {
         const enrichedData =
           taskType === 'batch-pdf' && !data.dbPath
-            ? { ...data, dbPath: dbService.getDbPath() }
+            ? {
+                ...data,
+                dbPath: dbService.getDbPath(),
+                userDataPath: app.getPath('userData'),
+                isPackaged: app.isPackaged
+              }
             : data
         const taskId = `${taskType}_${randomUUID()}`
         const task: WorkerTask = {

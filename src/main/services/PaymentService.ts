@@ -1,12 +1,12 @@
 import { dbService } from '../db/database'
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
 import { rgb } from 'pdf-lib'
 import { BasePDFGenerator } from './BasePDFGenerator'
 import { MaintenanceLetter } from './MaintenanceLetterService'
 import { normalizeMoney } from '../utils/money'
 import { getCurrentFinancialYear } from '../utils/dateUtils'
+import { getUserDataPath } from '../utils/runtimePaths'
 
 export interface Payment {
   id?: number
@@ -472,7 +472,7 @@ class PaymentService extends BasePDFGenerator {
       })
 
       const pdfBytes = await this.pdfDoc.save()
-      const pdfDir = path.join(app.getPath('userData'), 'receipts')
+      const pdfDir = path.join(getUserDataPath(), 'receipts')
       if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true })
 
       const fileName = `Receipt_${payment.receipt_number || paymentId}.pdf`

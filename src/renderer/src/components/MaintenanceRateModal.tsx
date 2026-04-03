@@ -7,7 +7,6 @@ import {
   Input,
   InputNumber,
   Space,
-  message,
   Divider,
   Select,
   Popconfirm,
@@ -26,6 +25,7 @@ import {
 import { MaintenanceRate, MaintenanceSlab } from '@preload/types'
 import FilterPanel, { createSelectFilter } from './shared/FilterPanel'
 import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/financialYear'
+import { appMessage as message } from '../utils/appMessage'
 
 interface MaintenanceRateModalProps {
   projectId: number
@@ -654,14 +654,14 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           </Text>
         </div>
         <Alert
-          message="Penalty source of truth"
+          title="Penalty source of truth"
           description="Set late-payment penalty here for each financial year and unit type. If a rate penalty is blank, the project-level charges configuration is used as the fallback. Unit-level penalty values are legacy/import fields and are not the source of truth for new maintenance letters."
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
         />
         <Card size="small" style={{ marginBottom: 16 }}>
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={12} style={{ width: '100%' }}>
             <div>
               <Title level={5} style={{ margin: 0 }}>
                 Rates
@@ -698,15 +698,24 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
         </Card>
 
         {isAddingRate && (
-          <Card size="small" style={{ marginBottom: 16, backgroundColor: '#fafafa' }}>
-            <Form form={rateForm} layout="inline" onFinish={handleSaveRate}>
+          <Card
+            size="small"
+            className="maintenance-rate-editor-card"
+            style={{ marginBottom: 16, backgroundColor: '#fafafa' }}
+          >
+            <Form
+              form={rateForm}
+              layout="vertical"
+              onFinish={handleSaveRate}
+              className="maintenance-rate-editor-form"
+            >
+              <div className="maintenance-rate-editor-grid">
               <Form.Item<RateFormValues>
                 name="financial_year"
                 label="Financial Year"
                 rules={[{ required: true, message: 'Financial Year is required' }]}
-                style={{ marginBottom: 8 }}
               >
-                <Select style={{ width: 120 }} aria-label="Financial year">
+                <Select aria-label="Financial year">
                   {formFinancialYearOptions.map((fy) => (
                     <Option key={fy} value={fy}>
                       {fy}
@@ -718,9 +727,8 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                 name="unit_type"
                 label="Unit Type"
                 initialValue="All"
-                style={{ marginBottom: 8 }}
               >
-                <Select style={{ width: 120 }} aria-label="Unit type">
+                <Select aria-label="Unit type">
                   {UNIT_TYPE_OPTIONS.map((unitType) => (
                     <Option key={unitType} value={unitType}>
                       {unitType}
@@ -735,72 +743,66 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                   { required: true, message: 'Rate is required' },
                   { type: 'number', min: 0, message: 'Rate must be positive' }
                 ]}
-                style={{ marginBottom: 8 }}
               >
                 <InputNumber
                   min={0}
                   placeholder="0.00"
-                  style={{ width: 120 }}
+                  style={{ width: '100%' }}
                   aria-label="Rate per square foot"
                   precision={2}
                 />
               </Form.Item>
-              <Form.Item<RateFormValues>
-                name="gst_percent"
-                label="GST %"
-                initialValue={0}
-                style={{ marginBottom: 8 }}
-                tooltip="GST percentage applied on top of base maintenance (e.g. 18 for 18%)"
+                <Form.Item<RateFormValues>
+                  name="gst_percent"
+                  label="GST %"
+                  initialValue={0}
+                  tooltip="GST percentage applied on top of base maintenance (e.g. 18 for 18%)"
               >
                 <InputNumber
                   min={0}
                   max={100}
-                  placeholder="0"
-                  style={{ width: 90 }}
-                  aria-label="GST percentage"
-                  precision={2}
-                  addonAfter="%"
-                />
-              </Form.Item>
-              <Form.Item<RateFormValues>
-                name="penalty_percentage"
-                label="Penalty %"
+                    placeholder="0.00"
+                    style={{ width: '100%' }}
+                    aria-label="GST percentage"
+                    precision={2}
+                  />
+                </Form.Item>
+                <Form.Item<RateFormValues>
+                  name="penalty_percentage"
+                  label="Penalty %"
                 tooltip="Late payment penalty percentage for this rate and financial year"
-                style={{ marginBottom: 8 }}
               >
                 <InputNumber
                   min={0}
                   max={100}
-                  placeholder="Default"
-                  style={{ width: 100 }}
-                  aria-label="Penalty percentage"
-                  precision={2}
-                  addonAfter="%"
-                />
-              </Form.Item>
+                    placeholder="Default"
+                    style={{ width: '100%' }}
+                    aria-label="Penalty percentage"
+                    precision={2}
+                  />
+                </Form.Item>
               <Form.Item<RateFormValues>
                 name="billing_frequency"
                 label="Billing Frequency"
                 initialValue="YEARLY"
-                style={{ marginBottom: 8 }}
               >
-                <Select style={{ width: 140 }} aria-label="Billing frequency">
+                <Select aria-label="Billing frequency">
                   <Option value="YEARLY">Yearly</Option>
                   <Option value="MONTHLY">Monthly</Option>
                   <Option value="QUARTERLY">Quarterly</Option>
                   <Option value="HALFYEARLY">Half-Yearly</Option>
                 </Select>
               </Form.Item>
+              </div>
 
               {/* Billing Dates Section */}
-              <Divider style={{ margin: '12px 0' }} />
-              <div style={{ marginBottom: 8, fontWeight: 500, color: '#555' }}>Billing Dates & Early Payment Discount</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              <Divider style={{ margin: '18px 0 14px' }} />
+              <div className="maintenance-rate-subsection-title">Billing Dates & Early Payment Discount</div>
+              <div className="maintenance-rate-editor-grid maintenance-rate-editor-grid-secondary">
                 <Form.Item<RateFormValues>
                   name="due_date"
                   label="Due Date"
                   tooltip="Payment due date"
-                  style={{ marginBottom: 8 }}
                 >
                   <Input type="date" aria-label="Due date" />
                 </Form.Item>
@@ -808,27 +810,24 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                   name="discount_percentage"
                   label="Discount %"
                   tooltip="Early payment discount percentage"
-                  style={{ marginBottom: 8 }}
                 >
                   <InputNumber
                     min={0}
                     max={100}
                     placeholder="e.g. 10"
-                    style={{ width: 100 }}
+                    style={{ width: '100%' }}
                     aria-label="Discount percentage"
-                    addonAfter="%"
                   />
                 </Form.Item>
-              </div>
-
-              <Form.Item style={{ marginBottom: 8, marginTop: 12 }}>
-                <Space>
+                <div className="maintenance-rate-editor-actions">
+                  <Space>
                   <Button type="primary" htmlType="submit" loading={loading}>
                     Save
                   </Button>
                   <Button onClick={handleCancelRateForm}>Cancel</Button>
-                </Space>
-              </Form.Item>
+                  </Space>
+                </div>
+              </div>
             </Form>
           </Card>
         )}
@@ -944,7 +943,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
               />
             ) : (
               <Alert
-                message="No early payment slabs"
+                title="No early payment slabs"
                 description="Add slabs to offer discounts for payments made before due dates."
                 type="info"
                 showIcon

@@ -11,7 +11,6 @@ import {
   Button,
   TableProps,
   Tooltip,
-  message,
   Tag,
   Alert
 } from 'antd'
@@ -21,8 +20,8 @@ import {
   FilterOutlined,
   BarChartOutlined
 } from '@ant-design/icons'
-import ExcelJS from 'exceljs'
 import dayjs from 'dayjs'
+import { appMessage as message } from '../utils/appMessage'
 
 import {
   Project,
@@ -262,282 +261,118 @@ const Reports: React.FC = () => {
       return
     }
 
+    const sanitizedProjectName = selectedProjectName
+      .split('')
+      .filter((char) => !/[<>:"/\\|?*]/.test(char) && char.charCodeAt(0) >= 32)
+      .join('')
+      .trim()
+      .replace(/\s+/g, '_')
+
+    let filename = `Financial_Report_${dayjs().format('YYYY-MM-DD')}`
+    if (hasActiveFilters) {
+      filename = `Filtered_Report_${dayjs().format('YYYY-MM-DD')}`
+      if (sanitizedProjectName) {
+        filename = `${sanitizedProjectName}_Report_${dayjs().format('YYYY-MM-DD')}`
+      }
+    }
+
+    const savePath = await window.api.dialog.saveFile({
+      title: 'Save Financial Report',
+      defaultPath: `${filename}.xlsx`,
+      filters: [
+        {
+          name: 'Excel Workbook',
+          extensions: ['xlsx']
+        }
+      ]
+    })
+
+    if (!savePath) {
+      message.info('Export cancelled')
+      return
+    }
+
     setExporting(true)
     try {
-      const workbook = new ExcelJS.Workbook()
-      const worksheetName = hasActiveFilters ? 'Filtered Financial Report' : 'Financial Report'
-      const worksheet = workbook.addWorksheet(worksheetName)
-
-      // Add Yearly Summary Sheet
-      const summarySheet = workbook.addWorksheet('Yearly Summary')
-
-      // Yearly Summary Sheet
-      summarySheet.columns = [
-        { header: 'Financial Year', key: 'year', width: 20 },
-        { header: 'Units Billed', key: 'unitCount', width: 15 },
-        { header: 'Total Billed', key: 'billed', width: 15 },
-        { header: 'Total Collected', key: 'paid', width: 15 },
-        { header: 'Outstanding', key: 'balance', width: 15 },
-        { header: 'Collection %', key: 'collectionRate', width: 15 }
-      ]
-
-      // Validate yearly totals calculation
-      yearlyTotals.forEach((total) => {
-      const collectionRate = total.billed > 0 ? (total.paid / total.billed) * 100 : 0
-        summarySheet.addRow({
-          year: total.year,
-          unitCount: total.unitCount,
-          billed: total.billed,
-          paid: total.paid,
-          balance: total.balance,
-          collectionRate: `${collectionRate.toFixed(1)}%`
-        })
+      message.loading({
+        content: 'Preparing Excel export...',
+        key: 'report_export',
+        duration: 0
       })
 
-      // Add summary totals row with validation
-      const totalBilled = yearlyTotals.reduce((sum, t) => sum + t.billed, 0)
-      const totalPaid = yearlyTotals.reduce((sum, t) => sum + t.paid, 0)
-      const totalBalance = yearlyTotals.reduce((sum, t) => sum + t.balance, 0)
-      const totalUnits = yearlyTotals.reduce((sum, t) => sum + t.unitCount, 0)
-      const overallCollectionRate = totalBilled > 0 ? (totalPaid / totalBilled) * 100 : 0
+      const { taskId } = (await window.api.worker.enqueueTask('report-export', {
+        savePath,
+        rows: pivotData,
+        years,
+        yearlyTotals,
+        stats,
+        selectedProjectName: selectedProjectName || undefined,
+        hasActiveFilters,
+        selectedUnitType,
+        selectedStatus,
+        searchText: searchText || undefined,
+        outstandingRange,
+        generatedAt: dayjs().format('DD/MM/YYYY HH:mm')
+      })) as { taskId: string }
 
-      // Validate that totals match the expected calculations
-      const calculatedTotalBalance = totalBilled - totalPaid
-      if (calculatedTotalBalance !== totalBalance) {
-        console.warn(
-          `Balance calculation mismatch: Expected ${calculatedTotalBalance}, Got ${totalBalance}`
-        )
-      }
-
-      summarySheet.addRow({})
-      const totalRow = summarySheet.addRow({
-        year: 'GRAND TOTAL',
-        unitCount: totalUnits,
-        billed: totalBilled,
-        paid: totalPaid,
-        balance: totalBalance,
-        collectionRate: `${overallCollectionRate.toFixed(1)}%`
-      })
-
-      totalRow.font = { bold: true }
-      totalRow.fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE0E0E0' }
-      }
-
-      // Main Detailed Sheet
-      const columns = [
-        { header: 'Project', key: 'Project', width: 20 },
-        { header: 'Unit', key: 'Unit', width: 15 },
-        { header: 'Owner', key: 'Owner', width: 25 },
-        { header: 'Type', key: 'Type', width: 10 },
-        { header: 'Status', key: 'Status', width: 10 }
-      ]
-
-      years.forEach((year) => {
-        columns.push({ header: `${year} - Billed`, key: `${year}_Billed`, width: 15 })
-        columns.push({ header: `${year} - Paid`, key: `${year}_Paid`, width: 15 })
-        columns.push({ header: `${year} - Balance`, key: `${year}_Balance`, width: 15 })
-      })
-
-      columns.push({ header: 'Total Billed', key: 'Total_Billed', width: 15 })
-      columns.push({ header: 'Total Paid', key: 'Total_Paid', width: 15 })
-      columns.push({ header: 'Total Outstanding', key: 'Total_Outstanding', width: 15 })
-
-      worksheet.columns = columns
-
-      const filterSummaryRows: string[][] = []
-      if (hasActiveFilters) {
-        filterSummaryRows.push(['FILTERED FINANCIAL REPORT'])
-        filterSummaryRows.push([`Generated: ${dayjs().format('DD/MM/YYYY HH:mm')}`])
-
-        if (selectedProject) {
-          filterSummaryRows.push([`Project: ${selectedProjectName}`])
-        }
-        if (selectedUnitType) {
-          filterSummaryRows.push([`Unit Type: ${selectedUnitType}`])
-        }
-        if (selectedStatus) {
-          filterSummaryRows.push([`Status: ${selectedStatus}`])
-        }
-        if (searchText) {
-          filterSummaryRows.push([`Search: "${searchText}"`])
-        }
-        if (outstandingRange[0] !== null || outstandingRange[1] !== null) {
-          filterSummaryRows.push([
-            `Outstanding Range: ${outstandingRange[0] !== null ? `Rs. ${outstandingRange[0]}` : 'Any'} - ${outstandingRange[1] !== null ? `Rs. ${outstandingRange[1]}` : 'Any'}`
-          ])
-        }
-
-        filterSummaryRows.push([''])
-      }
-
-      if (filterSummaryRows.length > 0) {
-        worksheet.insertRows(1, filterSummaryRows)
-      }
-
-      // Add rows with validation
-      let grandTotalBilled = 0
-      let grandTotalPaid = 0
-      let grandTotalOutstanding = 0
-
-      pivotData.forEach((row) => {
-        const exportRow: Record<string, string | number> = {
-          Project: row.project_name,
-          Unit: row.unit_number,
-          Owner: row.owner_name,
-          Type: row.unit_type,
-          Status: row.unit_status,
-          Total_Billed: row.total_billed,
-          Total_Paid: row.total_paid,
-          Total_Outstanding: row.outstanding
-        }
-
-        // Validate individual row calculations
-        const calculatedOutstanding = row.total_billed - row.total_paid
-        if (Math.abs(calculatedOutstanding - row.outstanding) > 0.01) {
-          console.warn(
-            `Row ${row.unit_number} outstanding mismatch: Expected ${calculatedOutstanding}, Got ${row.outstanding}`
-          )
-        }
-
-        grandTotalBilled += row.total_billed
-        grandTotalPaid += row.total_paid
-        grandTotalOutstanding += row.outstanding
-
-        years.forEach((year) => {
-          const yearData = row[year] as YearlyData
-          const billed = yearData?.billed || 0
-          const paid = yearData?.paid || 0
-          const balance = yearData?.balance || 0
-
-          // Validate yearly data consistency
-          const calculatedBalance = billed - paid
-          if (Math.abs(calculatedBalance - balance) > 0.01) {
-            console.warn(
-              `Row ${row.unit_number} year ${year} balance mismatch: Expected ${calculatedBalance}, Got ${balance}`
-            )
+      const exportedPath = await new Promise<string>((resolve, reject) => {
+        const unsubscribe = window.api.worker.onProgress((event) => {
+          const progressEvent = event as {
+            taskId?: string
+            type?: 'start' | 'progress' | 'complete' | 'error' | 'cancel'
+            percentage?: number
+            message?: string
+            error?: { message?: string }
+            data?: {
+              result?: {
+                savePath?: string
+              }
+            }
           }
 
-          exportRow[`${year}_Billed`] = billed
-          exportRow[`${year}_Paid`] = paid
-          exportRow[`${year}_Balance`] = balance
+          if (progressEvent.taskId !== taskId) {
+            return
+          }
+
+          if (progressEvent.type === 'progress' || progressEvent.type === 'start') {
+            message.loading({
+              content:
+                progressEvent.message ||
+                `Exporting report${typeof progressEvent.percentage === 'number' ? ` (${progressEvent.percentage}%)` : '...'}`,
+              key: 'report_export',
+              duration: 0
+            })
+            return
+          }
+
+          if (progressEvent.type === 'error') {
+            unsubscribe()
+            reject(
+              new Error(progressEvent.error?.message || 'Failed to export Excel file')
+            )
+            return
+          }
+
+          if (progressEvent.type === 'cancel') {
+            unsubscribe()
+            reject(new Error('Report export was cancelled'))
+            return
+          }
+
+          if (progressEvent.type === 'complete') {
+            unsubscribe()
+            const savedPath = progressEvent.data?.result?.savePath || savePath
+            resolve(savedPath)
+          }
         })
-
-        worksheet.addRow(exportRow)
       })
 
-      // Add summary row with validation
-      const summaryRow = worksheet.addRow({})
-      summaryRow.getCell('Project').value = 'GRAND TOTAL'
-      summaryRow.getCell('Project').font = { bold: true }
-
-      years.forEach((year) => {
-        const billedCol = `${year}_Billed`
-        const paidCol = `${year}_Paid`
-        const balanceCol = `${year}_Balance`
-
-        const totalBilled = pivotData.reduce((sum, row) => {
-          const yearData = row[year] as YearlyData
-          return sum + (yearData?.billed || 0)
-        }, 0)
-
-        const totalPaid = pivotData.reduce((sum, row) => {
-          const yearData = row[year] as YearlyData
-          return sum + (yearData?.paid || 0)
-        }, 0)
-
-        const totalBalance = pivotData.reduce((sum, row) => {
-          const yearData = row[year] as YearlyData
-          return sum + (yearData?.balance || 0)
-        }, 0)
-
-        // Validate yearly totals consistency
-        const calculatedTotalBalance = totalBilled - totalPaid
-        if (Math.abs(calculatedTotalBalance - totalBalance) > 0.01) {
-          console.warn(
-            `Year ${year} balance mismatch: Expected ${calculatedTotalBalance}, Got ${totalBalance}`
-          )
-        }
-
-        summaryRow.getCell(billedCol).value = totalBilled
-        summaryRow.getCell(paidCol).value = totalPaid
-        summaryRow.getCell(balanceCol).value = totalBalance
-
-        summaryRow.getCell(billedCol).font = { bold: true }
-        summaryRow.getCell(paidCol).font = { bold: true }
-        summaryRow.getCell(balanceCol).font = { bold: true }
+      message.success({
+        content: 'Excel report exported successfully',
+        key: 'report_export'
       })
 
-      // Validate final totals
-      if (Math.abs(grandTotalBilled - stats.totalBilled) > 0.01) {
-        console.warn(
-          `Grand total billed mismatch: Expected ${stats.totalBilled}, Got ${grandTotalBilled}`
-        )
-      }
-      if (Math.abs(grandTotalPaid - stats.totalCollected) > 0.01) {
-        console.warn(
-          `Grand total paid mismatch: Expected ${stats.totalCollected}, Got ${grandTotalPaid}`
-        )
-      }
-      if (Math.abs(grandTotalOutstanding - stats.outstanding) > 0.01) {
-        console.warn(
-          `Grand total outstanding mismatch: Expected ${stats.outstanding}, Got ${grandTotalOutstanding}`
-        )
-      }
-
-      summaryRow.getCell('Total_Billed').value = stats.totalBilled
-      summaryRow.getCell('Total_Paid').value = stats.totalCollected
-      summaryRow.getCell('Total_Outstanding').value = stats.outstanding
-
-      summaryRow.getCell('Total_Billed').font = { bold: true }
-      summaryRow.getCell('Total_Paid').font = { bold: true }
-      summaryRow.getCell('Total_Outstanding').font = { bold: true }
-
-      // Style the headers
-      const headerRowNumber = filterSummaryRows.length + 1
-      worksheet.getRow(headerRowNumber).font = { bold: true }
-      worksheet.getRow(headerRowNumber).fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE0E0E0' }
-      }
-
-      summarySheet.getRow(1).font = { bold: true }
-      summarySheet.getRow(1).fill = {
-        type: 'pattern',
-        pattern: 'solid',
-        fgColor: { argb: 'FFE0E0E0' }
-      }
-
-      // Generate buffer and save
-      const buffer = await workbook.xlsx.writeBuffer()
-      const blob = new Blob([buffer], {
-        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-      })
-      const url = window.URL.createObjectURL(blob)
-      const anchor = document.createElement('a')
-      anchor.href = url
-
-      const sanitizedProjectName = selectedProjectName
-        .split('')
-        .filter((char) => !/[<>:"/\\|?*]/.test(char) && char.charCodeAt(0) >= 32)
-        .join('')
-        .trim()
-        .replace(/\s+/g, '_')
-
-      let filename = `Financial_Report_${dayjs().format('YYYY-MM-DD')}`
-      if (hasActiveFilters) {
-        filename = `Filtered_Report_${dayjs().format('YYYY-MM-DD')}`
-        if (sanitizedProjectName) {
-          filename = `${sanitizedProjectName}_Report_${dayjs().format('YYYY-MM-DD')}`
-        }
-      }
-
-      anchor.download = `${filename}.xlsx`
-      anchor.click()
-      window.URL.revokeObjectURL(url)
+      await window.api.shell.showItemInFolder(exportedPath)
 
       // Show completion notification using utility
       showCompletionWithNextStep(
@@ -548,7 +383,10 @@ const Reports: React.FC = () => {
       )
     } catch (error) {
       console.error('Failed to export Excel:', error)
-      message.error('Failed to export Excel file')
+      message.error({
+        content: error instanceof Error ? error.message : 'Failed to export Excel file',
+        key: 'report_export'
+      })
     } finally {
       setExporting(false)
     }
@@ -764,7 +602,7 @@ const Reports: React.FC = () => {
             </>
           }
           style={{ marginBottom: 24 }}
-          bodyStyle={{ padding: '16px 16px 12px' }}
+          styles={{ body: { padding: '16px 16px 12px' } }}
           className="page-toolbar-card report-summary-card"
         >
           <div className="report-summary-grid">
@@ -774,7 +612,7 @@ const Reports: React.FC = () => {
                 <div key={total.year}>
                   <Card
                     size="small"
-                    bordered
+                    variant="outlined"
                     className="page-stat-card report-year-card"
                   >
                     <div className="report-year-card-header">
@@ -799,7 +637,7 @@ const Reports: React.FC = () => {
                         {collectionRate.toFixed(1)}%
                       </Tag>
                     </div>
-                    <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Space orientation="vertical" size={8} style={{ width: '100%' }}>
                       <div className="report-year-card-row">
                         <Text type="secondary">Billed:</Text>
                         <Text strong className="report-year-card-value">
@@ -832,37 +670,39 @@ const Reports: React.FC = () => {
 
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} sm={8}>
-          <Card bordered={false} className="report-stat-card billed page-stat-card">
+          <Card variant="borderless" className="report-stat-card billed page-stat-card">
             <Statistic
               title="TOTAL BILLED"
               value={stats.totalBilled}
               precision={0}
               prefix="Rs. "
-              valueStyle={{ fontSize: '24px' }}
+              styles={{ content: { fontSize: '24px' } }}
             />
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card bordered={false} className="report-stat-card collected page-stat-card">
+          <Card variant="borderless" className="report-stat-card collected page-stat-card">
             <Statistic
               title="TOTAL COLLECTED"
               value={stats.totalCollected}
               precision={0}
               prefix="Rs. "
-              valueStyle={{ color: '#3f8600', fontSize: '24px' }}
+              styles={{ content: { color: '#3f8600', fontSize: '24px' } }}
             />
           </Card>
         </Col>
         <Col xs={24} sm={8}>
-          <Card bordered={false} className="report-stat-card outstanding page-stat-card">
+          <Card variant="borderless" className="report-stat-card outstanding page-stat-card">
             <Statistic
               title="TOTAL OUTSTANDING"
               value={stats.outstanding}
               precision={0}
               prefix="Rs. "
-              valueStyle={{
-                color: stats.outstanding > 0 ? '#cf1322' : '#3f8600',
-                fontSize: '24px'
+              styles={{
+                content: {
+                  color: stats.outstanding > 0 ? '#cf1322' : '#3f8600',
+                  fontSize: '24px'
+                }
               }}
             />
           </Card>
@@ -877,7 +717,7 @@ const Reports: React.FC = () => {
             {hasActiveFilters && <Tag color="blue">Filtered</Tag>}
           </Space>
         }
-        bodyStyle={{ padding: 0 }}
+        styles={{ body: { padding: 0 } }}
         className="page-table-card report-ledger-card"
         extra={
           shouldCollapseYears && (
@@ -893,7 +733,7 @@ const Reports: React.FC = () => {
             : 'Use the yearly columns below for detailed billed, paid, and balance review across each financial year.'}
         </Text>
         <Alert
-          message={
+          title={
             shouldCollapseYears
               ? 'Mobile view shows totals only. Use the summary cards or export Excel for full year-by-year detail.'
               : 'Table shows Billed, Paid, and Balance for each financial year'

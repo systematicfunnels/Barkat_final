@@ -5,7 +5,6 @@ import {
   Select,
   Button,
   Space,
-  message,
   Typography,
   Table,
   Tag,
@@ -14,6 +13,7 @@ import {
   Alert
 } from 'antd'
 import { PlusOutlined, FilePdfOutlined } from '@ant-design/icons'
+import { appMessage as message } from '../utils/appMessage'
 import {
   Project,
   Unit,
@@ -338,7 +338,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
       {calculation && (
         <div>
           <Alert
-            message="Letter Calculation Generated"
+            title="Letter Calculation Generated"
             description="This preview is rendered from backend-prepared values for the selected project, unit, and financial year."
             type="success"
             showIcon

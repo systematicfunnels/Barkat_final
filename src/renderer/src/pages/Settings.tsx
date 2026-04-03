@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { Card, Button, Typography, Space, Divider, message, Alert, Modal, List, Tag } from 'antd'
+import { Card, Button, Typography, Space, Divider, Alert, Modal, List, Tag } from 'antd'
 import { DownloadOutlined, UploadOutlined, ToolOutlined, DatabaseOutlined } from '@ant-design/icons'
+import { appMessage as message } from '../utils/appMessage'
 
 const { Title, Paragraph, Text } = Typography
 
@@ -25,6 +26,9 @@ type BackupListItem = {
   path: string
   timestamp: string
   size: number
+  formatVersion?: number
+  snapshotMethod?: string
+  isVerifiedSnapshot: boolean
 }
 
 type AppInfo = {
@@ -43,6 +47,8 @@ const Settings: React.FC = () => {
   const [backupConfig, setBackupConfig] = useState<BackupConfigState | null>(null)
   const [backups, setBackups] = useState<BackupListItem[]>([])
   const [appInfo, setAppInfo] = useState<AppInfo | null>(null)
+  const latestBackup = backups[0]
+  const verifiedBackupCount = backups.filter((backup) => backup.isVerifiedSnapshot).length
 
   const loadDiagnostics = async (): Promise<void> => {
     setDiagnosticsLoading(true)
@@ -120,11 +126,17 @@ const Settings: React.FC = () => {
         const importResult = await window.api.backup.restoreBackup(result)
 
         if (importResult.success) {
+          await loadDiagnostics()
           message.success(
             importResult.requiresRestart
               ? 'Database imported successfully. Restart is required to complete restore.'
-              : 'Database imported successfully.'
+              : 'Database imported successfully. Refreshing workspace...'
           )
+          if (!importResult.requiresRestart) {
+            window.setTimeout(() => {
+              window.location.reload()
+            }, 400)
+          }
         } else {
           message.error(`Import failed: ${importResult.error}`)
         }
@@ -220,7 +232,7 @@ const Settings: React.FC = () => {
 
       <Card title="System Diagnostics" className="page-toolbar-card settings-diagnostics-card">
         <div className="page-soft-panel">
-          <Space direction="vertical">
+          <Space orientation="vertical">
             <Text>Version: {appInfo?.version || 'Loading...'}</Text>
             <Text>Database Type: SQLite 3 (better-sqlite3)</Text>
             <Text>
@@ -240,18 +252,44 @@ const Settings: React.FC = () => {
                 : 'Loading...'}
             </Text>
             <Text>Available Backups: {diagnosticsLoading ? 'Loading...' : backups.length}</Text>
+            <Text>
+              Verified Safe Backups:{' '}
+              {diagnosticsLoading ? 'Loading...' : `${verifiedBackupCount} of ${backups.length}`}
+            </Text>
             <Alert
-              message="Backup Readiness"
+              title="Backup Readiness"
               description={
                 diagnosticsLoading
                   ? 'Loading backup status...'
-                  : backups.length > 0
-                    ? `Latest backup available: ${new Date(backups[0].timestamp).toLocaleString()}`
+                  : latestBackup
+                    ? latestBackup.isVerifiedSnapshot
+                      ? `Latest backup available: ${new Date(latestBackup.timestamp).toLocaleString()}. This backup was created from a verified live SQLite snapshot.`
+                      : `Latest backup available: ${new Date(latestBackup.timestamp).toLocaleString()}. This is a legacy backup; restore is supported, but newer verified backups are safer.`
                     : 'No backups found yet. Export a backup before doing restores or major data operations.'
               }
-              type={backups.length > 0 ? 'success' : 'warning'}
+              type={latestBackup ? (latestBackup.isVerifiedSnapshot ? 'success' : 'warning') : 'warning'}
               showIcon
             />
+            {!diagnosticsLoading && backups.length > 0 && (
+              <div>
+                <Text strong>Recent Backups</Text>
+                <List
+                  size="small"
+                  style={{ marginTop: 8 }}
+                  dataSource={backups.slice(0, 3)}
+                  renderItem={(item) => (
+                    <List.Item>
+                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                        <span>{new Date(item.timestamp).toLocaleString()}</span>
+                        <Tag color={item.isVerifiedSnapshot ? 'green' : 'gold'}>
+                          {item.isVerifiedSnapshot ? 'Verified Backup' : 'Legacy Backup'}
+                        </Tag>
+                      </Space>
+                    </List.Item>
+                  )}
+                />
+              </div>
+            )}
           </Space>
         </div>
       </Card>
@@ -267,7 +305,7 @@ const Settings: React.FC = () => {
         {repairResults && (
           <div style={{ maxHeight: 400, overflow: 'auto' }}>
             <Alert
-              message={repairResults.success ? 'Success' : 'Issues Found'}
+              title={repairResults.success ? 'Success' : 'Issues Found'}
               type={repairResults.success ? 'success' : 'warning'}
               showIcon
               style={{ marginBottom: 16 }}

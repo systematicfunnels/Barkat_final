@@ -1,5 +1,5 @@
 import { useCallback } from 'react'
-import { message } from 'antd'
+import { appMessage as message } from '../utils/appMessage'
 
 export interface AsyncOperationResult<T> {
   data?: T
@@ -79,7 +79,15 @@ export const useAsyncOperation = (): {
   execute: typeof asyncOperationManager.execute
 } => {
   const execute = useCallback(
-    asyncOperationManager.execute.bind(asyncOperationManager),
+    async <T,>(
+      operation: () => Promise<T>,
+      options?: {
+        successMessage?: string
+        errorMessage?: string
+        loadingMessage?: string
+        silent?: boolean
+      }
+    ) => asyncOperationManager.execute(operation, options),
     []
   )
   return { execute }

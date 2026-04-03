@@ -1,5 +1,6 @@
-import { notification, Button } from 'antd'
+import { Button } from 'antd'
 import { useNavigate } from 'react-router-dom'
+import { appNotification as notification } from './appNotification'
 
 /**
  * Provides consistent next-step guidance across all sections
@@ -46,7 +47,7 @@ export const showCompletionWithNextStep = (
   const config = nextStepConfigs[section]
   
   notification.success({
-    message: action,
+    title: action,
     description: (
       <div>
         {details && <div style={{ marginBottom: 8 }}>{details}</div>}

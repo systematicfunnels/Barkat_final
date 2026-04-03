@@ -3,9 +3,9 @@ import { projectService } from './ProjectService'
 import { BasePDFGenerator } from './BasePDFGenerator'
 import fs from 'fs'
 import path from 'path'
-import { app } from 'electron'
 import { rgb } from 'pdf-lib'
 import { normalizeMoney } from '../utils/money'
+import { getUserDataPath } from '../utils/runtimePaths'
 
 export interface MaintenanceLetter {
   id?: number
@@ -293,10 +293,10 @@ class MaintenanceLetterService extends BasePDFGenerator {
       qrCodePath,
       path.resolve(qrCodePath),
       path.join(process.cwd(), qrCodePath),
-      path.join(app.getPath('userData'), qrCodePath),
-      path.join(app.getPath('userData'), 'assets', qrCodePath),
+      path.join(getUserDataPath(), qrCodePath),
+      path.join(getUserDataPath(), 'assets', qrCodePath),
       qrCodePath.startsWith('assets/') 
-        ? path.join(app.getPath('userData'), qrCodePath)
+        ? path.join(getUserDataPath(), qrCodePath)
         : null
     ].filter((p): p is string => Boolean(p))
     
@@ -402,7 +402,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     this.drawFooter('Authorized Signatory')
 
     const pdfBytes = await this.pdfDoc.save()
-    const pdfDir = path.join(app.getPath('userData'), 'maintenance-letters')
+    const pdfDir = path.join(getUserDataPath(), 'maintenance-letters')
     
     try {
       if (!fs.existsSync(pdfDir)) {

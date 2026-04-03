@@ -8,10 +8,8 @@ import {
   Form,
   Select,
   DatePicker,
-  message,
   Typography,
   Tag,
-  notification,
   Input,
   Card,
   Divider,
@@ -60,6 +58,8 @@ import FilterPanel, {
 } from '../components/shared/FilterPanel'
 import { useWorkingFinancialYear } from '../context/WorkingFinancialYearContext'
 import ActionMenuButton from '../components/shared/ActionMenuButton'
+import { appMessage as message } from '../utils/appMessage'
+import { appNotification as notification } from '../utils/appNotification'
 
 const { Title, Text } = Typography
 const { Option } = Select
@@ -785,11 +785,11 @@ const Billing: React.FC = () => {
             type?: 'complete' | 'error' | 'cancel'
             error?: { message?: string }
             data?: {
+              success?: boolean
               result?: {
-                success: boolean
-                result?: {
-                  files: string[]
-                }
+                files: string[]
+                failed?: number
+                errors?: string[]
               }
             }
           }
@@ -800,7 +800,24 @@ const Billing: React.FC = () => {
 
           if (progressEvent.type === 'complete') {
             unsubscribe()
-            resolve(progressEvent.data?.result?.result?.files?.[0] || '')
+            const result = progressEvent.data?.result
+            const firstPath = result?.files?.[0] || ''
+            const firstError = result?.errors?.[0]
+            const failedCount = result?.failed ?? 0
+
+            if (!firstPath) {
+              reject(
+                new Error(
+                  firstError ||
+                    (failedCount > 0
+                      ? 'Failed to generate letter'
+                      : 'Letter PDF was not created')
+                )
+              )
+              return
+            }
+
+            resolve(firstPath)
           }
 
           if (progressEvent.type === 'error') {
@@ -817,7 +834,7 @@ const Billing: React.FC = () => {
 
       message.success({ content: 'Maintenance Letter generated successfully!', key: 'pdf_gen' })
       notification.success({
-        message: 'Letter Ready',
+        title: 'Letter Ready',
         description: `Maintenance Letter has been saved.`,
         btn: (
           <Button
@@ -831,8 +848,11 @@ const Billing: React.FC = () => {
         ),
         placement: 'bottomRight'
       })
-    } catch {
-      message.error({ content: 'Failed to generate letter', key: 'pdf_gen' })
+    } catch (error) {
+      message.error({
+        content: error instanceof Error ? error.message : 'Failed to generate letter',
+        key: 'pdf_gen'
+      })
     }
   }
 
@@ -942,14 +962,12 @@ const Billing: React.FC = () => {
           error?: { message?: string }
           data?: {
             currentItem?: PdfProgress['completed'][number]
+            success?: boolean
             result?: {
-              success: boolean
-              result?: {
-                generated: number
-                failed: number
-                files: string[]
-                errors: string[]
-              }
+              generated: number
+              failed: number
+              files: string[]
+              errors: string[]
             }
           }
         }
@@ -989,13 +1007,21 @@ const Billing: React.FC = () => {
           setGeneratingPdf(false)
           setBatchPdfTaskId(null)
 
-          const result = progressEvent.data?.result?.result
+          const result = progressEvent.data?.result
           const successCount = result?.generated ?? 0
           const failCount = result?.failed ?? 0
           const firstSuccessPath = result?.files?.[0] || ''
+          const firstError = result?.errors?.[0]
+
+          if (successCount === 0 && failCount > 0) {
+            reject(
+              new Error(firstError || 'Failed to generate selected maintenance letter PDFs')
+            )
+            return
+          }
 
           notification.success({
-            message: 'Batch PDF Generation Complete',
+            title: 'Batch PDF Generation Complete',
             description: (
               <div>
                 <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: 8 }}>
@@ -1455,7 +1481,7 @@ const Billing: React.FC = () => {
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
-          message="No projects found"
+          title="No projects found"
           description={
             <span>
               You need to create a project and add units before generating maintenance letters.{' '}
@@ -1471,7 +1497,7 @@ const Billing: React.FC = () => {
           type="warning"
           showIcon
           style={{ marginBottom: 16 }}
-          message="No maintenance letters yet"
+          title="No maintenance letters yet"
           description={
             <span>
               Click &quot;Generate Maintenance Letters&quot; to create letters for your units, or check that your projects have units and rates configured.{` `}
@@ -1559,7 +1585,7 @@ const Billing: React.FC = () => {
 
       <Card style={{ marginBottom: 0 }} className="page-toolbar-card page-table-card billing-filter-card">
 
-        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+        <Space orientation="vertical" style={{ width: '100%' }} size="middle">
           <FilterPanel
             filters={billingFilterFields}
             values={billingFilterValues}
@@ -1605,7 +1631,7 @@ const Billing: React.FC = () => {
           </Button>
         ]}
         closable={pdfProgress?.current === pdfProgress?.total}
-        maskClosable={pdfProgress?.current === pdfProgress?.total}
+        mask={{ closable: pdfProgress?.current === pdfProgress?.total }}
         width={560}
         className="progress-status-modal mobile-fullscreen-modal"
       >
@@ -1739,7 +1765,7 @@ const Billing: React.FC = () => {
         <div className="billing-generate-modal-scroll">
           {passedUnitIds.length > 0 && (
             <Alert
-              message={`Generating letters for ${passedUnitIds.length} selected unit(s)`}
+              title={`Generating letters for ${passedUnitIds.length} selected unit(s)`}
               type="info"
               showIcon
               icon={<InfoCircleOutlined />}
@@ -1864,7 +1890,7 @@ const Billing: React.FC = () => {
                   <Alert
                     type={projectSetupSummary?.ready_for_letters ? 'success' : projectSetupSummary?.blockers?.length ? 'error' : 'info'}
                     showIcon
-                    message={
+                    title={
                       setupSummaryLoading ? 'Checking project setup...' :
                       !projectSetupSummary ? 'Select project and financial year to validate setup.' :
                       projectSetupSummary.ready_for_letters ? '✓ Project setup is ready' :
@@ -1885,7 +1911,7 @@ const Billing: React.FC = () => {
                     <Alert
                       type="info"
                       showIcon
-                      message={rateDueDateHint}
+                      title={rateDueDateHint}
                       style={{ marginTop: 8 }}
                     />
                   )}
@@ -1917,7 +1943,7 @@ const Billing: React.FC = () => {
                   type="info"
                   showIcon
                   style={{ marginBottom: 8 }}
-                  message="Recommended manual flow"
+                  title="Recommended manual flow"
                   description="Select a project, choose a financial year that shows project setup ready, review the letter and due dates, add optional charges if needed, then move to unit selection."
                 />
               </Col>
@@ -2005,14 +2031,14 @@ const Billing: React.FC = () => {
           ) : (
             <>
             <Alert
-              message="Select specific units to generate letters for, or leave empty to generate for all units in the project"
+              title="Select specific units to generate letters for, or leave empty to generate for all units in the project"
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
             />
             {!unitsLoading && projectUnits.length === 0 && (
               <Alert
-                message="No units available for this project"
+                title="No units available for this project"
                 description="Add units to the selected project before generating maintenance letters."
                 type="warning"
                 showIcon
@@ -2021,7 +2047,7 @@ const Billing: React.FC = () => {
             )}
             {alreadyBilledUnitIds.size > 0 && (
               <Alert
-                message={`${alreadyBilledUnitIds.size} unit${alreadyBilledUnitIds.size !== 1 ? 's' : ''} already have a letter for FY ${batchFinancialYear} - shown as "Already billed" and disabled below.`}
+                title={`${alreadyBilledUnitIds.size} unit${alreadyBilledUnitIds.size !== 1 ? 's' : ''} already have a letter for FY ${batchFinancialYear} - shown as "Already billed" and disabled below.`}
                 type="warning"
                 showIcon
                 style={{ marginBottom: 12 }}

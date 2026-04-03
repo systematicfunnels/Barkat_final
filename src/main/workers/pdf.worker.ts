@@ -12,6 +12,8 @@ interface PDFTask {
   type: 'batch-pdf'
   data: {
     dbPath?: string
+    userDataPath?: string
+    isPackaged?: boolean
     mode: PdfMode
     letterIds?: number[]
     paymentIds?: number[]
@@ -58,7 +60,11 @@ function reportComplete(success: boolean, data?: unknown, error?: string): void 
   })
 }
 
-async function loadServices(dbPath?: string): Promise<{
+async function loadServices(
+  dbPath?: string,
+  userDataPath?: string,
+  isPackaged?: boolean
+): Promise<{
   maintenanceLetterService: { generatePdf: (id: number) => Promise<string> }
   paymentService: { generateReceiptPdf: (id: number) => Promise<string> }
   dbService: {
@@ -67,6 +73,12 @@ async function loadServices(dbPath?: string): Promise<{
 }> {
   if (dbPath) {
     process.env.BARKAT_DB_PATH = dbPath
+  }
+  if (userDataPath) {
+    process.env.BARKAT_USER_DATA_PATH = userDataPath
+  }
+  if (typeof isPackaged === 'boolean') {
+    process.env.BARKAT_IS_PACKAGED = isPackaged ? '1' : '0'
   }
 
   const [{ maintenanceLetterService }, { paymentService }, { dbService }] = await Promise.all([
@@ -115,7 +127,7 @@ function getItemInfo(
 }
 
 async function batchGeneratePDFs(task: PDFTask): Promise<void> {
-  const { dbPath, mode, letterIds, paymentIds } = task.data
+  const { dbPath, userDataPath, isPackaged, mode, letterIds, paymentIds } = task.data
   const ids = mode === 'letters' ? letterIds : paymentIds
 
   if (!ids || !Array.isArray(ids) || ids.length === 0) {
@@ -123,7 +135,11 @@ async function batchGeneratePDFs(task: PDFTask): Promise<void> {
     return
   }
 
-  const { maintenanceLetterService, paymentService, dbService } = await loadServices(dbPath)
+  const { maintenanceLetterService, paymentService, dbService } = await loadServices(
+    dbPath,
+    userDataPath,
+    isPackaged
+  )
   const total = ids.length
   const files: string[] = []
   const errors: string[] = []

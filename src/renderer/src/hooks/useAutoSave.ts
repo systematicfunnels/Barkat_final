@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { message } from 'antd'
+import { appMessage as message } from '../utils/appMessage'
 
 export interface FormState<T> {
   data: T

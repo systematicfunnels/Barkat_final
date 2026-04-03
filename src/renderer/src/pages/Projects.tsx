@@ -7,7 +7,6 @@ import {
   Modal,
   Form,
   Input,
-  message,
   Upload,
   Card,
   Select,
@@ -22,6 +21,7 @@ import {
   Dropdown
 } from 'antd'
 const { Title, Text, Paragraph } = Typography
+import { appMessage as message } from '../utils/appMessage'
 import {
   PlusOutlined,
   EditOutlined,
@@ -692,7 +692,7 @@ const Projects: React.FC = () => {
       key: 'workflow',
       width: 220,
       render: (_: unknown, record: Project) => (
-        <Space direction="vertical" size={4}>
+        <Space orientation="vertical" size={4}>
           <Tag color="blue">
             {TEMPLATE_LABELS[record.template_type || 'standard'] || 'Standard Letter'}
           </Tag>
@@ -714,7 +714,7 @@ const Projects: React.FC = () => {
         }
 
         return (
-          <Space direction="vertical" size={4}>
+          <Space orientation="vertical" size={4}>
             <Tag color={summary.ready_for_letters ? 'success' : 'error'}>
               {summary.ready_for_letters ? 'Ready' : 'Needs Setup'}
             </Tag>
@@ -827,13 +827,13 @@ const Projects: React.FC = () => {
       </div>
 
       <Card style={{ marginBottom: 16 }}>
-          <Space direction="vertical" size={12} style={{ width: '100%' }}>
+          <Space orientation="vertical" size={12} style={{ width: '100%' }}>
             <Space wrap align="center" size={12}>
               <Text strong>Working Financial Year</Text>
               <Dropdown
                 trigger={['hover', 'click']}
                 placement="bottomLeft"
-                overlayClassName="app-filter-dropdown-menu"
+                classNames={{ root: 'app-filter-dropdown-menu' }}
                 disabled={loading}
                 menu={{
                   items: workingFYOptions.map((option) => ({
@@ -853,7 +853,7 @@ const Projects: React.FC = () => {
           <Alert
             type="info"
             showIcon
-            message={`Billing setup for FY ${workingFY}`}
+            title={`Billing setup for FY ${workingFY}`}
             description={`Choose the year you want to bill, then follow this order: add units with sector codes, configure sector bank details, add maintenance rates for ${workingFY}, then generate maintenance letters and receipts.`}
           />
         </Space>
@@ -897,7 +897,7 @@ const Projects: React.FC = () => {
             type="warning"
             showIcon
             icon={<ExclamationCircleOutlined style={{ fontSize: 24 }} />}
-            message={
+            title={
               <span className="project-setup-alert-title">
                 {incompleteProjects.length === 1
                   ? `"${incompleteProjects[0].name}" is not ready for ${workingFY} billing`
@@ -1027,7 +1027,7 @@ const Projects: React.FC = () => {
                   <WarningOutlined />
                 )
               }
-              message={
+              title={
                 editingProjectSummary.ready_for_letters
                   ? editingProjectSummary.warnings.length > 0
                     ? `Project setup for ${workingFY} is usable but still has warnings.`
@@ -1090,7 +1090,7 @@ const Projects: React.FC = () => {
                         type="info"
                         showIcon
                         style={{ marginBottom: 8 }}
-                        message="Recommended setup order"
+                        title="Recommended setup order"
                         description={`Create the project, add units with sector codes, configure sector bank details, choose the working FY, add rates for ${workingFY}, then generate maintenance letters.`}
                       />
                     </Col>
@@ -1197,7 +1197,7 @@ const Projects: React.FC = () => {
                         type="info"
                         showIcon
                         style={{ marginBottom: 16 }}
-                        message="Recommended flow"
+                        title="Recommended flow"
                         description="Manual flow: add units with sector codes first, then add matching sector bank configs here. Import flow: detected sectors from the workbook can be auto-populated here and completed manually."
                       />
 
@@ -1205,7 +1205,7 @@ const Projects: React.FC = () => {
                         <Alert
                           type="info"
                           showIcon
-                          message={`Detected sectors: ${editingProjectSummary.sector_codes.join(', ')}`}
+                          title={`Detected sectors: ${editingProjectSummary.sector_codes.join(', ')}`}
                           description={
                             <div>
                               <div>
@@ -1233,15 +1233,16 @@ const Projects: React.FC = () => {
                           type="warning"
                           showIcon
                           style={{ marginBottom: 16 }}
-                          message="Manual sector setup"
+                          title="Manual sector setup"
                           description="If you are setting up a project manually, add units with sector codes first, or start with common sectors here and keep the same sector codes on the units."
                         />
                       )}
 
-                      <Space direction="vertical" style={{ width: '100%' }} size="middle">
+                      <Space orientation="vertical" style={{ width: '100%' }} size="middle">
                         {sectorConfigs.map((config, index) => (
                           <Card
                             key={`sector-config-${index}`}
+                            className="project-sector-config-card"
                             size="small"
                             title={`Sector ${String(config.sector_code || index + 1)} Payment Config`}
                             extra={
@@ -1255,96 +1256,92 @@ const Projects: React.FC = () => {
                               </Button>
                             }
                           >
-                            <Row gutter={[8, 8]}>
-                              <Col xs={24} sm={8}>
+                            <div className="project-sector-config-grid">
+                              <div className="project-sector-config-field project-sector-config-field-compact">
+                                <label className="project-sector-config-label">Sector</label>
                                 <Input
                                   value={String(config.sector_code || '')}
                                   onChange={(e) =>
                                     handleSectorConfigChange(index, 'sector_code', e.target.value)
                                   }
-                                  placeholder="Sector Code (e.g. A, B, C, 1, 2, etc.)"
-                                  addonBefore="Sector"
-                                  style={{ width: '100%' }}
+                                  placeholder="A / B / C"
                                 />
-                              </Col>
-                              <Col xs={24} sm={8}>
+                              </div>
+
+                              <div className="project-sector-config-field">
+                                <label className="project-sector-config-label">Account Name</label>
                                 <Input
                                   value={String(config.account_name || '')}
                                   onChange={(e) =>
                                     handleSectorConfigChange(index, 'account_name', e.target.value)
                                   }
                                   placeholder="Account Name"
-                                  addonBefore="A/c Name"
-                                  style={{ width: '100%' }}
                                 />
-                              </Col>
-                              <Col xs={24} sm={8}>
+                              </div>
+
+                              <div className="project-sector-config-field">
+                                <label className="project-sector-config-label">Bank Name</label>
                                 <Input
                                   value={String(config.bank_name || '')}
                                   onChange={(e) =>
                                     handleSectorConfigChange(index, 'bank_name', e.target.value)
                                   }
                                   placeholder="Bank Name"
-                                  addonBefore="Bank"
-                                  style={{ width: '100%' }}
                                 />
-                              </Col>
-                              <Col xs={24} sm={8}>
+                              </div>
+
+                              <div className="project-sector-config-field">
+                                <label className="project-sector-config-label">Account Number</label>
                                 <Input
                                   value={String(config.account_no || '')}
                                   onChange={(e) =>
                                     handleSectorConfigChange(index, 'account_no', e.target.value)
                                   }
                                   placeholder="Account Number"
-                                  addonBefore="A/c No"
-                                  style={{ width: '100%' }}
                                 />
-                              </Col>
-                              <Col xs={24} sm={8}>
+                              </div>
+
+                              <div className="project-sector-config-field">
+                                <label className="project-sector-config-label">IFSC Code</label>
                                 <Input
                                   value={String(config.ifsc_code || '')}
                                   onChange={(e) =>
                                     handleSectorConfigChange(index, 'ifsc_code', e.target.value.toUpperCase())
                                   }
                                   placeholder="IFSC Code"
-                                  addonBefore="IFSC"
-                                  style={{ width: '100%' }}
                                 />
-                              </Col>
-                              <Col xs={24} sm={8}>
+                              </div>
+
+                              <div className="project-sector-config-field">
+                                <label className="project-sector-config-label">Branch</label>
                                 <Input
                                   value={String(config.branch || '')}
                                   onChange={(e) =>
                                     handleSectorConfigChange(index, 'branch', e.target.value)
                                   }
                                   placeholder="Branch"
-                                  addonBefore="Branch"
-                                  style={{ width: '100%' }}
                                 />
-                              </Col>
-                              <Col span={24}>
-                                <Input
-                                  value={String(config.qr_code_path || '')}
-                                  onChange={(e) =>
-                                    handleSectorConfigChange(index, 'qr_code_path', e.target.value)
-                                  }
-                                  placeholder="Sector QR image path (.png/.jpg/.jpeg)"
-                                  addonAfter={
-                                    <Button
-                                      type="text"
-                                      size="small"
-                                      icon={<FolderOpenOutlined />}
-                                      onClick={() =>
-                                        pickSectorQrFile(index)
-                                      }
-                                    >
-                                      Browse
-                                    </Button>
-                                  }
-                                  style={{ width: '100%' }}
-                                />
-                              </Col>
-                            </Row>
+                              </div>
+
+                              <div className="project-sector-config-field project-sector-config-field-wide">
+                                <label className="project-sector-config-label">Sector QR Image</label>
+                                <div className="project-sector-config-qr-row">
+                                  <Input
+                                    value={String(config.qr_code_path || '')}
+                                    onChange={(e) =>
+                                      handleSectorConfigChange(index, 'qr_code_path', e.target.value)
+                                    }
+                                    placeholder="Sector QR image path (.png/.jpg/.jpeg)"
+                                  />
+                                  <Button
+                                    icon={<FolderOpenOutlined />}
+                                    onClick={() => pickSectorQrFile(index)}
+                                  >
+                                    Browse
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
                           </Card>
                         ))}
                         <Button
@@ -1417,7 +1414,7 @@ const Projects: React.FC = () => {
         className="mobile-fullscreen-modal"
       >
         {standardWorkbookPreview && (
-          <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Space orientation="vertical" style={{ width: '100%' }} size="middle">
             <Alert
               type={
                 standardWorkbookPreview.workbook_blockers.length > 0
@@ -1427,7 +1424,7 @@ const Projects: React.FC = () => {
                     : 'success'
               }
               showIcon
-              message={
+              title={
                 standardWorkbookPreview.workbook_blockers.length > 0
                   ? 'Workbook has blockers and cannot be imported yet.'
                   : standardWorkbookPreview.workbook_warnings.length > 0

@@ -14,7 +14,6 @@ import {
   Progress,
   InputNumber,
   Input,
-  message,
   Divider,
   Grid
 } from 'antd'
@@ -27,6 +26,7 @@ import {
   ReloadOutlined,
   EditOutlined
 } from '@ant-design/icons'
+import { appMessage as message } from '../../utils/appMessage'
 
 const { Title, Text, Paragraph } = Typography
 const { Option } = Select
@@ -286,9 +286,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
   const invalidCount = previewData.filter(p => p.status === 'invalid').length
 
   const renderUploadStep = () => (
-    <Space direction="vertical" style={{ width: '100%' }} size="large">
+    <Space orientation="vertical" style={{ width: '100%' }} size="large">
       <Alert
-        message="Supported Formats"
+        title="Supported Formats"
         description="Upload Excel (.xlsx, .xls) or CSV files. Maximum 10,000 rows."
         type="info"
         showIcon
@@ -335,9 +335,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
   )
 
   const renderValidateStep = () => (
-    <Space direction="vertical" style={{ width: '100%' }} size="large">
+    <Space orientation="vertical" style={{ width: '100%' }} size="large">
       <Alert
-        message={`Found ${rawData.length} rows`}
+        title={`Found ${rawData.length} rows`}
         description={`${errorCount} errors, ${warningCount} warnings detected`}
         type={errorCount > 0 ? 'error' : warningCount > 0 ? 'warning' : 'success'}
         showIcon
@@ -398,9 +398,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
   )
 
   const renderPreviewStep = () => (
-    <Space direction="vertical" style={{ width: '100%' }} size="large">
+    <Space orientation="vertical" style={{ width: '100%' }} size="large">
       <Alert
-        message={`${validCount} valid, ${invalidCount} invalid rows`}
+        title={`${validCount} valid, ${invalidCount} invalid rows`}
         description="Select rows to import. Click Edit to fix issues."
         type="info"
         showIcon
@@ -480,7 +480,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
             title: 'Issues',
             width: 200,
             render: (_, record) => (
-              <Space direction="vertical" size="small">
+              <Space orientation="vertical" size="small">
                 {record.errors.map((e, i) => (
                   <Text key={i} type="danger" style={{ fontSize: 12 }}>
                     {e.message}
@@ -543,7 +543,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
   )
 
   const renderImportStep = () => (
-    <Space direction="vertical" style={{ width: '100%', textAlign: 'center' }} size="large">
+    <Space orientation="vertical" style={{ width: '100%', textAlign: 'center' }} size="large">
       {importStatus === 'importing' && (
         <>
           <Progress percent={importProgress} status="active" />

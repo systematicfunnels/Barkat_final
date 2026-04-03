@@ -8,7 +8,6 @@ import {
   Form,
   Input,
   InputNumber,
-  message,
   Select,
   Divider,
   Typography,
@@ -28,6 +27,7 @@ import {
 } from '@ant-design/icons'
 import { Unit, Project } from '@preload/types'
 import { UNIT_TYPES, UNIT_TYPE_COLORS } from '../constants/unitTypes'
+import { appMessage as message } from '../utils/appMessage'
 import { useOperationHistory } from '../hooks/useOperationHistory'
 import FilterPanel, {
   createRangeFilter,
