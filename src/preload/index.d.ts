@@ -3,6 +3,7 @@ import {
   Project,
   ProjectSetupSummary,
   ProjectSectorPaymentConfig,
+  ProjectChargesConfig,
   ProjectAddonTemplate,
   StandardWorkbookProjectImportPayload,
   StandardWorkbookProjectImportResult,
@@ -56,8 +57,8 @@ declare global {
           totalBilled: number
           totalOutstanding: number
         }>
-        getChargesConfig: (projectId: number) => Promise<Record<string, unknown> | null>
-        saveChargesConfig: (config: Record<string, unknown>) => Promise<boolean>
+        getChargesConfig: (projectId: number) => Promise<ProjectChargesConfig | null>
+        saveChargesConfig: (config: ProjectChargesConfig) => Promise<boolean>
         getAddonTemplates: (projectId: number) => Promise<ProjectAddonTemplate[]>
         getEnabledAddonTemplates: (projectId: number) => Promise<ProjectAddonTemplate[]>
         createAddonTemplate: (template: Partial<ProjectAddonTemplate>) => Promise<number>

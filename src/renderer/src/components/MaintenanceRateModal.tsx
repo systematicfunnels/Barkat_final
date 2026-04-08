@@ -22,7 +22,7 @@ import {
   PercentageOutlined,
   EditOutlined
 } from '@ant-design/icons'
-import { MaintenanceRate, MaintenanceSlab } from '@preload/types'
+import { MaintenanceRate, MaintenanceSlab, ProjectChargesConfig } from '@preload/types'
 import FilterPanel, { createSelectFilter } from './shared/FilterPanel'
 import { getCurrentFinancialYear, getUpcomingFinancialYear } from '../utils/financialYear'
 import { appMessage as message } from '../utils/appMessage'
@@ -39,6 +39,16 @@ const { Option } = Select
 const { Text, Title } = Typography
 
 const UNIT_TYPE_OPTIONS = ['All', 'Plot', 'Bungalow', 'Garden'] as const
+
+const DEFAULT_PROJECT_CHARGES_CONFIG: ProjectChargesConfig = {
+  project_id: 0,
+  na_tax_rate_per_sqft: 0.09,
+  solar_contribution: 3000,
+  cable_charges: 1000,
+  penalty_percentage: 21,
+  penalty_label: 'Penalty',
+  early_payment_discount_percentage: 10
+}
 
 interface RateFormValues {
   financial_year: string
@@ -77,9 +87,14 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const [isAddingSlab, setIsAddingSlab] = useState(false)
   const [filterFY, setFilterFY] = useState<string | null>(workingFinancialYear ?? null)
   const [filterUnitType, setFilterUnitType] = useState<string>('All')
+  const [projectChargesConfig, setProjectChargesConfig] = useState<ProjectChargesConfig>({
+    ...DEFAULT_PROJECT_CHARGES_CONFIG,
+    project_id: projectId
+  })
 
   const [rateForm] = Form.useForm<RateFormValues>()
   const [slabForm] = Form.useForm<SlabFormValues>()
+  const watchedPenaltyPercentage = Form.useWatch('penalty_percentage', rateForm)
 
   const todayDateInput = useMemo(() => {
     const today = new Date()
@@ -115,9 +130,40 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
     }
   }, [projectId])
 
+  const fetchProjectChargesConfig = useCallback(async (): Promise<void> => {
+    if (!projectId) return
+
+    try {
+      const config = await window.api.projects.getChargesConfig(projectId)
+      setProjectChargesConfig(
+        config
+          ? {
+              ...DEFAULT_PROJECT_CHARGES_CONFIG,
+              ...config,
+              project_id: projectId,
+              penalty_label:
+                config.penalty_label === 'Late Payment Charges'
+                  ? 'Late Payment Charges'
+                  : 'Penalty'
+            }
+          : {
+              ...DEFAULT_PROJECT_CHARGES_CONFIG,
+              project_id: projectId
+            }
+      )
+    } catch (error) {
+      console.error('Failed to fetch project charges config:', error)
+      setProjectChargesConfig({
+        ...DEFAULT_PROJECT_CHARGES_CONFIG,
+        project_id: projectId
+      })
+    }
+  }, [projectId])
+
   useEffect(() => {
     if (visible && projectId) {
       fetchRates()
+      fetchProjectChargesConfig()
       // Reset selections when modal opens
       setSelectedRate(null)
       setSlabs([])
@@ -129,7 +175,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       rateForm.resetFields()
       slabForm.resetFields()
     }
-  }, [visible, projectId, fetchRates, rateForm, slabForm, workingFinancialYear])
+  }, [visible, projectId, fetchProjectChargesConfig, fetchRates, rateForm, slabForm, workingFinancialYear])
 
   const fyOptions = useMemo(() => {
     const years = Array.from(
@@ -253,6 +299,10 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       }
 
       setLoading(true)
+      const normalizedPenaltyLabel: ProjectChargesConfig['penalty_label'] =
+        projectChargesConfig.penalty_label === 'Late Payment Charges'
+          ? 'Late Payment Charges'
+          : 'Penalty'
       if (editingRateId) {
         await window.api.rates.update(editingRateId, {
           ...values,
@@ -261,49 +311,14 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           penalty_percentage: values.penalty_percentage ?? null,
           billing_frequency: values.billing_frequency || 'YEARLY'
         })
-        
-        // Handle slab update/create/delete for existing rate
-        if (values.due_date && values.discount_percentage !== undefined && values.discount_percentage > 0) {
-          try {
-            // Check if there's an existing slab
-            const existingSlabs = await window.api.rates.getSlabs(editingRateId)
-            if (existingSlabs && existingSlabs.length > 0) {
-              // Delete existing slabs and create new one (since updateSlab doesn't exist)
-              for (const slab of existingSlabs) {
-                if (slab.id) {
-                  await window.api.rates.deleteSlab(slab.id)
-                }
-              }
-            }
-            // Create new slab with updated values
-            await window.api.rates.addSlab({
-              rate_id: editingRateId,
-              due_date: values.due_date,
-              discount_percentage: values.discount_percentage,
-              is_early_payment: true
-            } as MaintenanceSlab)
-          } catch {
-            message.warning('Rate saved, but early payment discount could not be updated. You can manage it via the Slabs button.')
-          }
-        } else {
-          // Delete all slabs if discount is removed or set to 0
-          try {
-            const existingSlabs = await window.api.rates.getSlabs(editingRateId)
-            if (existingSlabs && existingSlabs.length > 0) {
-              for (const slab of existingSlabs) {
-                if (slab.id) {
-                  await window.api.rates.deleteSlab(slab.id)
-                }
-              }
-            }
-          } catch {
-            // Silently ignore errors when deleting slabs
-          }
-        }
-        
+        await window.api.projects.saveChargesConfig({
+          ...projectChargesConfig,
+          project_id: projectId,
+          penalty_label: normalizedPenaltyLabel
+        })
         message.success('Rate updated successfully')
       } else {
-        const newRateId = await window.api.rates.create({
+        await window.api.rates.create({
           ...values,
           unit_type: values.unit_type || 'Bungalow',
           gst_percent: values.gst_percent ?? 0,
@@ -311,20 +326,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           billing_frequency: values.billing_frequency || 'YEARLY',
           project_id: projectId
         } as MaintenanceRate)
-
-        // Save inline early-payment slab if configured (for new rates)
-        if (values.due_date && values.discount_percentage !== undefined && values.discount_percentage > 0) {
-          try {
-            await window.api.rates.addSlab({
-              rate_id: newRateId,
-              due_date: values.due_date,
-              discount_percentage: values.discount_percentage,
-              is_early_payment: true
-            } as MaintenanceSlab)
-          } catch {
-            message.warning('Rate saved, but early payment slab could not be added. Add it manually from the Slabs button.')
-          }
-        }
+        await window.api.projects.saveChargesConfig({
+          ...projectChargesConfig,
+          project_id: projectId,
+          penalty_label: normalizedPenaltyLabel
+        })
 
         message.success('Rate added successfully')
       }
@@ -356,27 +362,6 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       penalty_percentage: rate.penalty_percentage ?? undefined,
       billing_frequency: rate.billing_frequency || 'YEARLY'
     })
-    
-    // Load and pre-fill slab data if exists (only first slab supported in inline editing)
-    if (rate.id) {
-      try {
-        const slabs = await window.api.rates.getSlabs(rate.id)
-        if (slabs && slabs.length > 0) {
-          const firstSlab = slabs[0]
-          // Pre-fill billing dates from slab
-          rateForm.setFieldsValue({
-            due_date: firstSlab.due_date,
-            discount_percentage: firstSlab.discount_percentage
-          })
-          // Warn if multiple slabs exist (they can only be managed via Slabs button)
-          if (slabs.length > 1) {
-            message.info(`This rate has ${slabs.length} slabs. Only the first one is shown here. Use the "Slabs" button to manage all.`, 5)
-          }
-        }
-      } catch {
-        // Silently ignore slab fetch errors - form will just show empty billing dates
-      }
-    }
   }
 
   const handleDeleteRate = async (id: number): Promise<void> => {
@@ -520,11 +505,24 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
         (val ?? 0) > 0 ? <Tag color="orange">{val}%</Tag> : <Tag>None</Tag>
     },
     {
-      title: 'Penalty %',
+      title: 'After Due Date',
       dataIndex: 'penalty_percentage',
       key: 'penalty_percentage',
       render: (val: number | null | undefined): React.ReactNode =>
-        val !== null && val !== undefined ? <Tag color="red">{val}%</Tag> : <Tag>Default</Tag>
+        (
+          <div>
+            {val !== null && val !== undefined ? (
+              <Tag color="red">{val}%</Tag>
+            ) : (
+              <Tag>Default</Tag>
+            )}
+            <div>
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {projectChargesConfig.penalty_label}
+              </Text>
+            </div>
+          </div>
+        )
     },
     {
       title: 'Billing Frequency',
@@ -768,65 +766,84 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                   />
                 </Form.Item>
                 <Form.Item<RateFormValues>
-                  name="penalty_percentage"
-                  label="Penalty %"
-                tooltip="Late payment penalty percentage for this rate and financial year"
-              >
-                <InputNumber
-                  min={0}
-                  max={100}
-                    placeholder="Default"
-                    style={{ width: '100%' }}
-                    aria-label="Penalty percentage"
-                    precision={2}
-                  />
+                  name="billing_frequency"
+                  label="Billing Frequency"
+                  initialValue="YEARLY"
+                >
+                  <Select aria-label="Billing frequency">
+                    <Option value="YEARLY">Yearly</Option>
+                    <Option value="MONTHLY">Monthly</Option>
+                    <Option value="QUARTERLY">Quarterly</Option>
+                    <Option value="HALFYEARLY">Half-Yearly</Option>
+                  </Select>
                 </Form.Item>
-              <Form.Item<RateFormValues>
-                name="billing_frequency"
-                label="Billing Frequency"
-                initialValue="YEARLY"
-              >
-                <Select aria-label="Billing frequency">
-                  <Option value="YEARLY">Yearly</Option>
-                  <Option value="MONTHLY">Monthly</Option>
-                  <Option value="QUARTERLY">Quarterly</Option>
-                  <Option value="HALFYEARLY">Half-Yearly</Option>
-                </Select>
-              </Form.Item>
+                <div className="maintenance-rate-afterdue">
+                  <div className="maintenance-rate-afterdue-header">
+                    <Text strong className="maintenance-rate-afterdue-title">
+                      After Due Date
+                    </Text>
+                    <Text type="secondary" className="maintenance-rate-afterdue-preview">
+                      {projectChargesConfig.penalty_label}
+                      {typeof watchedPenaltyPercentage === 'number'
+                        ? ` at ${watchedPenaltyPercentage}%`
+                        : ''}
+                    </Text>
+                  </div>
+
+                  <div className="maintenance-rate-afterdue-fields">
+                    <Form.Item
+                      label="Charge Name"
+                      tooltip="Choose the wording that should be shown in billing output for this project"
+                    >
+                      <Select
+                        value={projectChargesConfig.penalty_label}
+                        onChange={(value: ProjectChargesConfig['penalty_label']) =>
+                          setProjectChargesConfig((prev) => ({
+                            ...prev,
+                            penalty_label: value
+                          }))
+                        }
+                        options={[
+                          { value: 'Penalty', label: 'Penalty' },
+                          { value: 'Late Payment Charges', label: 'Late Payment Charges' }
+                        ]}
+                        aria-label="Penalty label"
+                      />
+                    </Form.Item>
+
+                    <Form.Item<RateFormValues>
+                      name="penalty_percentage"
+                      label="Rate (%)"
+                      tooltip="Numeric percentage added after the due date for this rate and financial year"
+                    >
+                      <InputNumber
+                        min={0}
+                        max={100}
+                        placeholder="Default"
+                        style={{ width: '100%' }}
+                        aria-label="Penalty percentage"
+                        precision={2}
+                      />
+                    </Form.Item>
+                  </div>
+                </div>
               </div>
 
-              {/* Billing Dates Section */}
               <Divider style={{ margin: '18px 0 14px' }} />
-              <div className="maintenance-rate-subsection-title">Billing Dates & Early Payment Discount</div>
-              <div className="maintenance-rate-editor-grid maintenance-rate-editor-grid-secondary">
-                <Form.Item<RateFormValues>
-                  name="due_date"
-                  label="Due Date"
-                  tooltip="Payment due date"
-                >
-                  <Input type="date" aria-label="Due date" />
-                </Form.Item>
-                <Form.Item<RateFormValues>
-                  name="discount_percentage"
-                  label="Discount %"
-                  tooltip="Early payment discount percentage"
-                >
-                  <InputNumber
-                    min={0}
-                    max={100}
-                    placeholder="e.g. 10"
-                    style={{ width: '100%' }}
-                    aria-label="Discount percentage"
-                  />
-                </Form.Item>
-                <div className="maintenance-rate-editor-actions">
-                  <Space>
+              <Alert
+                title="Early payment discounts are managed in slabs"
+                description="Use the Slabs action below to manage due dates and early payment discount percentages. The top rate form now saves only the maintenance rate and penalty settings."
+                type="info"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+              <div className="maintenance-rate-editor-actions">
+                <Space>
                   <Button type="primary" htmlType="submit" loading={loading}>
                     Save
                   </Button>
                   <Button onClick={handleCancelRateForm}>Cancel</Button>
-                  </Space>
-                </div>
+                </Space>
               </div>
             </Form>
           </Card>

@@ -292,87 +292,35 @@ const Reports: React.FC = () => {
       return
     }
 
-    setExporting(true)
-    try {
-      message.loading({
-        content: 'Preparing Excel export...',
-        key: 'report_export',
-        duration: 0
-      })
-
-      const { taskId } = (await window.api.worker.enqueueTask('report-export', {
-        savePath,
-        rows: pivotData,
-        years,
-        yearlyTotals,
-        stats,
-        selectedProjectName: selectedProjectName || undefined,
-        hasActiveFilters,
-        selectedUnitType,
-        selectedStatus,
-        searchText: searchText || undefined,
-        outstandingRange,
-        generatedAt: dayjs().format('DD/MM/YYYY HH:mm')
-      })) as { taskId: string }
-
-      const exportedPath = await new Promise<string>((resolve, reject) => {
-        const unsubscribe = window.api.worker.onProgress((event) => {
-          const progressEvent = event as {
-            taskId?: string
-            type?: 'start' | 'progress' | 'complete' | 'error' | 'cancel'
-            percentage?: number
-            message?: string
-            error?: { message?: string }
-            data?: {
-              result?: {
-                savePath?: string
-              }
-            }
-          }
-
-          if (progressEvent.taskId !== taskId) {
-            return
-          }
-
-          if (progressEvent.type === 'progress' || progressEvent.type === 'start') {
-            message.loading({
-              content:
-                progressEvent.message ||
-                `Exporting report${typeof progressEvent.percentage === 'number' ? ` (${progressEvent.percentage}%)` : '...'}`,
-              key: 'report_export',
-              duration: 0
-            })
-            return
-          }
-
-          if (progressEvent.type === 'error') {
-            unsubscribe()
-            reject(
-              new Error(progressEvent.error?.message || 'Failed to export Excel file')
-            )
-            return
-          }
-
-          if (progressEvent.type === 'cancel') {
-            unsubscribe()
-            reject(new Error('Report export was cancelled'))
-            return
-          }
-
-          if (progressEvent.type === 'complete') {
-            unsubscribe()
-            const savedPath = progressEvent.data?.result?.savePath || savePath
-            resolve(savedPath)
-          }
+      setExporting(true)
+      try {
+        message.loading({
+          content: 'Preparing Excel export...',
+          key: 'report_export',
+          duration: 0
         })
-      })
 
-      message.success({
-        content: 'Excel report exported successfully',
-        key: 'report_export'
-      })
+        const exportedPath = await window.api.reports.exportFinancialReportExcel({
+          savePath,
+          rows: pivotData,
+          years,
+          yearlyTotals,
+          stats,
+          selectedProjectName: selectedProjectName || undefined,
+          hasActiveFilters,
+          selectedUnitType,
+          selectedStatus,
+          searchText: searchText || undefined,
+          outstandingRange,
+          generatedAt: dayjs().format('DD/MM/YYYY HH:mm')
+        })
 
-      await window.api.shell.showItemInFolder(exportedPath)
+        message.success({
+          content: 'Excel report exported successfully',
+          key: 'report_export'
+        })
+
+        await window.api.shell.showItemInFolder(exportedPath.savePath)
 
       // Show completion notification using utility
       showCompletionWithNextStep(

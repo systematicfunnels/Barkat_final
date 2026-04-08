@@ -463,13 +463,37 @@ class DatabaseService {
         'account_no',
         'ifsc_code',
         'branch',
-        'qr_code_path'
+        'qr_code_path',
+        'letterhead_path'
       ]
       for (const col of sectorBankCols) {
         if (!sectorColNames.includes(col)) {
           this.db.exec(`ALTER TABLE project_sector_payment_configs ADD COLUMN ${col} TEXT`)
           console.log(`[DATABASE] ${col} column added to project_sector_payment_configs`)
         }
+      }
+
+      const chargesConfigExists = this.db
+        .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='project_charges_config'")
+        .get()
+      if (chargesConfigExists) {
+        const chargesConfigCols = this.db.prepare('PRAGMA table_info(project_charges_config)').all() as {
+          name: string
+        }[]
+        if (!chargesConfigCols.some((c) => c.name === 'penalty_label')) {
+          this.db.exec("ALTER TABLE project_charges_config ADD COLUMN penalty_label TEXT DEFAULT 'Penalty'")
+          console.log('[DATABASE] penalty_label column added to project_charges_config')
+        }
+        this.db.exec(`
+          UPDATE project_charges_config
+          SET penalty_label = CASE
+            WHEN penalty_label = 'Late Payment Charges' THEN 'Late Payment Charges'
+            ELSE 'Penalty'
+          END
+          WHERE penalty_label IS NULL
+             OR TRIM(penalty_label) = ''
+             OR penalty_label NOT IN ('Penalty', 'Late Payment Charges')
+        `)
       }
 
       // Relax unit_type CHECK to allow Garden and BMF (for Banjara Hills)

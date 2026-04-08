@@ -95,6 +95,7 @@ export interface LetterCalculation {
   }
   arrears_breakdown: ArrearsEntry[]
   penalty_percentage: number
+  penalty_label: 'Penalty' | 'Late Payment Charges'
   discount_percentage: number
   due_date: string
   current_year_charges: {
@@ -113,6 +114,7 @@ export interface LetterCalculation {
     amount_payable_before_due: number
     amount_payable_after_due: number
     penalty_percentage: number
+    penalty_label: 'Penalty' | 'Late Payment Charges'
   }
   bank_details: {
     name: string
@@ -513,6 +515,10 @@ class DetailedMaintenanceLetterService {
     )
 
     const chargesConfig = projectService.getChargesConfig(projectId)
+    const penaltyLabel: 'Penalty' | 'Late Payment Charges' =
+      chargesConfig.penalty_label === 'Late Payment Charges'
+        ? 'Late Payment Charges'
+        : 'Penalty'
     const effectivePenaltyPercentage = this.getPenaltyPercentageForFinancialYear(
       projectId,
       financialYear,
@@ -537,6 +543,7 @@ class DetailedMaintenanceLetterService {
       unit_details: unitDetails,
       arrears_breakdown,
       penalty_percentage: effectivePenaltyPercentage,
+      penalty_label: penaltyLabel,
       discount_percentage: effectiveDiscountPercentage,
       due_date: currentLetter.due_date || getFYDeadline(financialYear),
       current_year_charges,
@@ -548,7 +555,8 @@ class DetailedMaintenanceLetterService {
         early_payment_discount,
         amount_payable_before_due,
         amount_payable_after_due,
-        penalty_percentage: effectivePenaltyPercentage
+        penalty_percentage: effectivePenaltyPercentage,
+        penalty_label: penaltyLabel
       },
       bank_details
     }

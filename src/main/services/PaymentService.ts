@@ -7,6 +7,7 @@ import { MaintenanceLetter } from './MaintenanceLetterService'
 import { normalizeMoney } from '../utils/money'
 import { getCurrentFinancialYear } from '../utils/dateUtils'
 import { getUserDataPath } from '../utils/runtimePaths'
+import type { BulkPaymentResult } from './BatchOperationsService'
 
 export interface Payment {
   id?: number
@@ -67,6 +68,15 @@ type ReceiptSnapshot = {
 }
 
 class PaymentService extends BasePDFGenerator {
+  private sanitizeFileComponent(value: string): string {
+    return String(value || '')
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '-')
+      .replace(/\s+/g, '_')
+      .replace(/-+/g, '-')
+      .replace(/^[-_.]+|[-_.]+$/g, '') || 'document'
+  }
+
   private getLetterWithAddonsById(letterId: number): LetterWithAddons | undefined {
     return dbService.get(
       `SELECT l.*,
@@ -325,6 +335,57 @@ class PaymentService extends BasePDFGenerator {
         this.layout.currentY -= 18
       }
 
+      const drawWrappedReceiptRow = (label: string, value: string): void => {
+        const maxValueWidth = 250
+        const words = (value || '-').split(/\s+/).filter(Boolean)
+        const lines: string[] = []
+        let currentLine = ''
+
+        for (const word of words) {
+          const candidate = currentLine ? `${currentLine} ${word}` : word
+          const candidateWidth = this.fonts.regular.widthOfTextAtSize(candidate, 11)
+          if (candidateWidth <= maxValueWidth || !currentLine) {
+            currentLine = candidate
+          } else {
+            lines.push(currentLine)
+            currentLine = word
+          }
+        }
+
+        if (currentLine) {
+          lines.push(currentLine)
+        }
+
+        this.page.drawText(label, {
+          x: this.MARGIN,
+          y: this.layout.currentY,
+          size: 11,
+          font: this.fonts.regular,
+          color: this.COLORS.TEXT
+        })
+
+        const lineHeight = 14
+        const valueX = this.layout.width - this.MARGIN - maxValueWidth
+        lines.forEach((line, index) => {
+          this.page.drawText(line, {
+            x: valueX,
+            y: this.layout.currentY - index * lineHeight,
+            size: 11,
+            font: this.fonts.regular,
+            color: this.COLORS.TEXT
+          })
+        })
+
+        this.layout.currentY -= Math.max(8, lines.length * lineHeight - 6)
+        this.page.drawLine({
+          start: { x: this.MARGIN, y: this.layout.currentY },
+          end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY },
+          thickness: 0.5,
+          color: this.COLORS.LIGHT_GRAY
+        })
+        this.layout.currentY -= 18
+      }
+
       // Format payment date
       const formatDate = (dateStr: string): string => {
         if (!dateStr) return '—'
@@ -338,79 +399,14 @@ class PaymentService extends BasePDFGenerator {
       drawReceiptRow('Financial Year', receiptSnapshot.financialYear || '—')
       drawReceiptRow('Unit Owner', payment.owner_name || '—')
       drawReceiptRow('Unit Number', payment.unit_number || '—')
-      drawReceiptRow('Project', payment.project_name || '—')
-      
-      const modeLabel = payment.payment_mode === 'Transfer' ? 'Bank Transfer / UPI' : payment.payment_mode || '—'
+      const modeLabel =
+        payment.payment_mode === 'Transfer' ? 'Bank Transfer / UPI' : payment.payment_mode || '—'
       drawReceiptRow('Payment Mode', modeLabel)
-
-      this.layout.currentY -= 10
-
-      // ── Payment Breakdown (itemized) ──
-      if (
-        receiptSnapshot.baseAmount > 0 ||
-        receiptSnapshot.addons.length > 0 ||
-        receiptSnapshot.arrearsAmount > 0 ||
-        receiptSnapshot.discountAmount > 0
-      ) {
-        // Draw breakdown header
-        this.layout.currentY -= 5
-        const breakdownText = 'Payment Breakdown'
-        const breakdownWidth = this.fonts.bold.widthOfTextAtSize(breakdownText, 12)
-        const breakdownX = (this.layout.width - breakdownWidth) / 2
-        
-        this.page.drawText(breakdownText, {
-          x: breakdownX,
-          y: this.layout.currentY,
-          size: 12,
-          font: this.fonts.bold,
-          color: this.COLORS.TEXT
-        })
-        this.layout.currentY -= 20
-
-        // Base maintenance amount
-        if (receiptSnapshot.baseAmount > 0) {
-          drawReceiptRow(
-            'Maintenance Charges',
-            `Rs. ${receiptSnapshot.baseAmount.toLocaleString('en-IN')}`
-          )
-        }
-
-        // Add-ons (filter out zero amounts)
-        receiptSnapshot.addons.forEach((addon: ReceiptAddon) => {
-          if (addon.addon_amount > 0) {
-            drawReceiptRow(
-              addon.addon_name,
-              `Rs. ${normalizeMoney(addon.addon_amount).toLocaleString('en-IN')}`
-            )
-          }
-        })
-
-        // Arrears if any
-        if (receiptSnapshot.arrearsAmount > 0) {
-          drawReceiptRow(
-            'Arrears (Previous Outstanding)',
-            `Rs. ${receiptSnapshot.arrearsAmount.toLocaleString('en-IN')}`
-          )
-        }
-
-        // Discount if any
-        if (receiptSnapshot.discountAmount > 0) {
-          drawReceiptRow(
-            'Early Payment Discount',
-            `-Rs. ${receiptSnapshot.discountAmount.toLocaleString('en-IN')}`
-          )
-        }
-
-        // Separator line before total
-        this.layout.currentY -= 5
-        this.page.drawLine({
-          start: { x: this.MARGIN, y: this.layout.currentY },
-          end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY },
-          thickness: 1,
-          color: this.COLORS.BORDER
-        })
-        this.layout.currentY -= 20
+      if (payment.remarks?.trim()) {
+        drawWrappedReceiptRow('Remarks', payment.remarks.trim())
       }
+
+      this.layout.currentY -= 8
 
       // ── Amount Received Box (green highlight) ──
       const amountLabel = 'Amount Received'
@@ -475,7 +471,7 @@ class PaymentService extends BasePDFGenerator {
       const pdfDir = path.join(getUserDataPath(), 'receipts')
       if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true })
 
-      const fileName = `Receipt_${payment.receipt_number || paymentId}.pdf`
+      const fileName = `Receipt_UnitID-${this.sanitizeFileComponent(String(payment.unit_id || 'NA'))}_${this.sanitizeFileComponent(payment.receipt_number || String(paymentId))}.pdf`
       const filePath = path.join(pdfDir, fileName)
       await fs.promises.writeFile(filePath, pdfBytes)
       return filePath
@@ -618,98 +614,104 @@ class PaymentService extends BasePDFGenerator {
     )
   }
 
-  public create(payment: Payment): number {
-    return dbService.transaction(() => {
-      const unitExists = dbService.get<{ id: number }>(
-        'SELECT id FROM units WHERE id = ? AND project_id = ?',
-        [payment.unit_id, payment.project_id]
+  public createInternal(payment: Payment): number {
+    const unitExists = dbService.get<{ id: number }>(
+      'SELECT id FROM units WHERE id = ? AND project_id = ?',
+      [payment.unit_id, payment.project_id]
+    )
+
+    if (!unitExists) {
+      throw new Error('Selected unit does not belong to the selected project')
+    }
+
+    const {
+      linkedLetter,
+      resolvedLetterId,
+      resolvedFinancialYear,
+      snapshot
+    } = this.resolveLinkedLetterAndSnapshot({
+      unitId: payment.unit_id,
+      letterId: payment.letter_id,
+      financialYear: payment.financial_year
+    })
+
+    if (!resolvedFinancialYear || !resolvedFinancialYear.match(/^\d{4}-(\d{2}|\d{4})$/)) {
+      throw new Error(
+        'Invalid or missing financial year. Please provide a valid financial year (e.g., 2024-25 or 2024-2025).'
       )
+    }
 
-      if (!unitExists) {
-        throw new Error('Selected unit does not belong to the selected project')
-      }
-
-      const {
-        linkedLetter,
+    const result = dbService.run(
+      `INSERT INTO payments (
+        project_id, unit_id, letter_id, financial_year, payment_date, payment_amount, 
+        payment_mode, cheque_number, remarks, payment_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payment.project_id,
+        payment.unit_id,
         resolvedLetterId,
         resolvedFinancialYear,
-        snapshot
-      } = this.resolveLinkedLetterAndSnapshot({
-        unitId: payment.unit_id,
-        letterId: payment.letter_id,
-        financialYear: payment.financial_year
-      })
+        payment.payment_date,
+        normalizeMoney(payment.payment_amount),
+        payment.payment_mode,
+        payment.cheque_number,
+        payment.remarks,
+        payment.payment_status || 'Received'
+      ]
+    )
 
-      // Validate financial year format - accepts both 2024-25 and 2024-2025
-      if (!resolvedFinancialYear || !resolvedFinancialYear.match(/^\d{4}-(\d{2}|\d{4})$/)) {
-        throw new Error(
-          'Invalid or missing financial year. Please provide a valid financial year (e.g., 2024-25 or 2024-2025).'
-        )
-      }
+    const paymentId = result.lastInsertRowid as number
 
-      const result = dbService.run(
-        `INSERT INTO payments (
-          project_id, unit_id, letter_id, financial_year, payment_date, payment_amount, 
-          payment_mode, cheque_number, remarks, payment_status
+    if (payment.payment_status !== 'Pending') {
+      const receiptNumber = payment.receipt_number || `REC-${paymentId}`
+      dbService.run(
+        `INSERT INTO receipts (
+          payment_id, receipt_number, receipt_date,
+          snapshot_letter_id, snapshot_financial_year, snapshot_base_amount,
+          snapshot_arrears, snapshot_discount_amount, snapshot_letter_total,
+          snapshot_addons_json
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          payment.project_id,
-          payment.unit_id,
-          resolvedLetterId,
-          resolvedFinancialYear,
+          paymentId,
+          receiptNumber,
           payment.payment_date,
-          normalizeMoney(payment.payment_amount),
-          payment.payment_mode,
-          payment.cheque_number,
-          payment.remarks,
-          payment.payment_status || 'Received'
+          linkedLetter?.id ?? snapshot.snapshot_letter_id,
+          snapshot.snapshot_financial_year,
+          snapshot.snapshot_base_amount,
+          snapshot.snapshot_arrears,
+          snapshot.snapshot_discount_amount,
+          snapshot.snapshot_letter_total,
+          snapshot.snapshot_addons_json
         ]
       )
+    }
 
-      const paymentId = result.lastInsertRowid as number
+    return paymentId
+  }
 
-      // Automatically generate a receipt number if not provided
-      if (payment.payment_status !== 'Pending') {
-        const receiptNumber = payment.receipt_number || `REC-${paymentId}`
+  public create(payment: Payment): number {
+    return dbService.transaction(() => this.createInternal(payment))
+  }
+
+  public createBulk(payments: Payment[]): BulkPaymentResult {
+    const results: BulkPaymentResult['results'] = []
+    let successful = 0
+    let failed = 0
+
+    return dbService.transaction(() => {
+      for (let index = 0; index < payments.length; index += 1) {
         try {
-          if (process.env.NODE_ENV !== 'production') {
-            console.log('[PAYMENTS] Creating receipt record')
-          }
-          dbService.run(
-            `INSERT INTO receipts (
-              payment_id, receipt_number, receipt_date,
-              snapshot_letter_id, snapshot_financial_year, snapshot_base_amount,
-              snapshot_arrears, snapshot_discount_amount, snapshot_letter_total,
-              snapshot_addons_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-              paymentId,
-              receiptNumber,
-              payment.payment_date,
-              linkedLetter?.id ?? snapshot.snapshot_letter_id,
-              snapshot.snapshot_financial_year,
-              snapshot.snapshot_base_amount,
-              snapshot.snapshot_arrears,
-              snapshot.snapshot_discount_amount,
-              snapshot.snapshot_letter_total,
-              snapshot.snapshot_addons_json
-            ]
-          )
-          if (process.env.NODE_ENV !== 'production') {
-            console.log('[PAYMENTS] Receipt record created successfully')
-          }
+          const paymentId = this.createInternal(payments[index])
+          results.push({ index, paymentId })
+          successful += 1
         } catch (error) {
-          if (process.env.NODE_ENV !== 'production') {
-            console.error('[PAYMENTS] Failed to create receipt record:', error)
-          }
-          // Don't fail the payment, just log the error
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+          results.push({ index, error: errorMessage })
+          failed += 1
         }
       }
 
-      // Letter status auto-calculation has been disabled to prevent incorrect Paid status
-      // Status must be managed through manual letter updates only
-
-      return paymentId
+      return { successful, failed, results }
     })
   }
 

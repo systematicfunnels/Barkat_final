@@ -213,7 +213,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
       }
     },
     {
-      title: `${calculation?.penalty_percentage ?? 0}% Penalty`,
+      title: `${calculation?.penalty_percentage ?? 0}% ${calculation?.penalty_label ?? 'Penalty'}`,
       dataIndex: 'penalty',
       key: 'penalty',
       align: 'right' as const,
@@ -421,7 +421,9 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
             <Title level={4}>Payment Summary</Title>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '10px' }}>
               <div>
-                <Text>Total Arrears with Penalty: </Text>
+                <Text>
+                  Total Arrears with {calculation?.totals.penalty_label ?? calculation?.penalty_label ?? 'Penalty'}:{' '}
+                </Text>
                 <Tag color="red">{formatCurrency(calculation.totals.total_arrears_with_penalty)}</Tag>
               </div>
               <div>

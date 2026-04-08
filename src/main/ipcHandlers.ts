@@ -25,6 +25,7 @@ import {
   LetterCalculation
 } from './services/DetailedMaintenanceLetterService'
 import { reportService, FinancialReportFilters } from './services/ReportService'
+import { exportFinancialReportToExcel, ReportExportPayload } from './services/ReportExportService'
 import { dryRunService } from './services/DryRunService'
 import { errorLogger, getSafeErrorMessage, ValidationError } from './utils/errorHandler'
 import { workerPool, WorkerTask } from './utils/workerPool'
@@ -214,7 +215,7 @@ export function registerIpcHandlers(): void {
 
       const seenSectors = new Set<string>()
       for (const config of configs) {
-        const hasAnyValue = [config.sector_code, config.qr_code_path].some(
+        const hasAnyValue = [config.sector_code, config.qr_code_path, config.letterhead_path].some(
           (value) => sanitizeText(value).length > 0
         )
         if (!hasAnyValue) continue
@@ -255,6 +256,12 @@ export function registerIpcHandlers(): void {
     }
     if (!isNonNegativeNumber(config?.penalty_percentage) || config?.penalty_percentage > 100) {
       throw new Error('Penalty percentage must be between 0 and 100')
+    }
+    if (
+      config?.penalty_label !== 'Penalty' &&
+      config?.penalty_label !== 'Late Payment Charges'
+    ) {
+      throw new Error('Penalty option must be Penalty or Late Payment Charges')
     }
     if (
       !isNonNegativeNumber(config?.early_payment_discount_percentage) ||
@@ -422,6 +429,13 @@ export function registerIpcHandlers(): void {
     }
     return reportService.getAvailableFinancialYears(projectId)
   })
+
+  ipcMain.handle(
+    'export-financial-report-excel',
+    async (_, payload: ReportExportPayload): Promise<{ savePath: string }> => {
+      return await exportFinancialReportToExcel(payload)
+    }
+  )
 
   ipcMain.handle('update-letter', (_, id: number, updates: Partial<MaintenanceLetter>): boolean => {
     return maintenanceLetterService.update(id, updates)

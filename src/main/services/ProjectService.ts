@@ -38,6 +38,7 @@ export interface ProjectSectorPaymentConfig {
   ifsc_code?: string
   branch?: string
   qr_code_path?: string
+  letterhead_path?: string
   created_at?: string
   updated_at?: string
 }
@@ -49,6 +50,7 @@ export interface ProjectChargesConfig {
   solar_contribution: number
   cable_charges: number
   penalty_percentage: number
+  penalty_label: 'Penalty' | 'Late Payment Charges'
   early_payment_discount_percentage: number
   created_at?: string
   updated_at?: string
@@ -268,7 +270,8 @@ class ProjectService {
       account_no: this.sanitizeText(config.account_no) || undefined,
       ifsc_code: this.sanitizeText(config.ifsc_code).toUpperCase() || undefined,
       branch: this.sanitizeText(config.branch) || undefined,
-      qr_code_path: this.sanitizeText(config.qr_code_path) || undefined
+      qr_code_path: this.sanitizeText(config.qr_code_path) || undefined,
+      letterhead_path: this.sanitizeText(config.letterhead_path) || undefined
     }
   }
 
@@ -279,8 +282,104 @@ class ProjectService {
       config.account_no,
       config.ifsc_code,
       config.branch,
-      config.qr_code_path
+      config.qr_code_path,
+      config.letterhead_path
     ].some((v) => this.sanitizeText(v).length > 0)
+  }
+
+  private getProjectDefaultSectorConfig(
+    project: Partial<Project>
+  ): Partial<ProjectSectorPaymentConfig> {
+    return {
+      account_name: this.sanitizeText(project.account_name) || undefined,
+      bank_name: this.sanitizeText(project.bank_name) || undefined,
+      account_no: this.sanitizeText(project.account_no) || undefined,
+      ifsc_code: this.sanitizeText(project.ifsc_code).toUpperCase() || undefined,
+      branch: this.sanitizeText(project.branch) || undefined,
+      qr_code_path: this.sanitizeText(project.qr_code_path) || undefined,
+      letterhead_path: this.sanitizeText(project.letterhead_path) || undefined
+    }
+  }
+
+  private buildImportedSectorConfigs(
+    project: Partial<Project>,
+    existingConfigs: Partial<ProjectSectorPaymentConfig>[],
+    incomingConfigs: Partial<ProjectSectorPaymentConfig>[],
+    rows: StandardWorkbookImportRow[]
+  ): Partial<ProjectSectorPaymentConfig>[] {
+    const defaultConfig = this.getProjectDefaultSectorConfig(project)
+    const existingConfigMap = new Map(
+      existingConfigs.map((config) => [
+        this.sanitizeText(config.sector_code).toUpperCase(),
+        config
+      ])
+    )
+    const incomingConfigMap = new Map(
+      incomingConfigs.map((config) => [
+        this.sanitizeText(config.sector_code).toUpperCase(),
+        config
+      ])
+    )
+
+    const detectedSectorCodes = new Set<string>()
+    for (const row of rows) {
+      const sectorCode = this.sanitizeText(row.sector_code).toUpperCase()
+      if (sectorCode) {
+        detectedSectorCodes.add(sectorCode)
+      }
+    }
+    for (const config of incomingConfigs) {
+      const sectorCode = this.sanitizeText(config.sector_code).toUpperCase()
+      if (sectorCode) {
+        detectedSectorCodes.add(sectorCode)
+      }
+    }
+    for (const config of existingConfigs) {
+      const sectorCode = this.sanitizeText(config.sector_code).toUpperCase()
+      if (sectorCode) {
+        detectedSectorCodes.add(sectorCode)
+      }
+    }
+
+    return Array.from(detectedSectorCodes)
+      .sort((a, b) => a.localeCompare(b))
+      .map((sectorCode) =>
+        this.normalizeSectorConfig({
+          sector_code: sectorCode,
+          account_name:
+            incomingConfigMap.get(sectorCode)?.account_name ||
+            existingConfigMap.get(sectorCode)?.account_name ||
+            defaultConfig.account_name,
+          bank_name:
+            incomingConfigMap.get(sectorCode)?.bank_name ||
+            existingConfigMap.get(sectorCode)?.bank_name ||
+            defaultConfig.bank_name,
+          account_no:
+            incomingConfigMap.get(sectorCode)?.account_no ||
+            existingConfigMap.get(sectorCode)?.account_no ||
+            defaultConfig.account_no,
+          ifsc_code:
+            incomingConfigMap.get(sectorCode)?.ifsc_code ||
+            existingConfigMap.get(sectorCode)?.ifsc_code ||
+            defaultConfig.ifsc_code,
+          branch:
+            incomingConfigMap.get(sectorCode)?.branch ||
+            existingConfigMap.get(sectorCode)?.branch ||
+            defaultConfig.branch,
+          qr_code_path:
+            incomingConfigMap.get(sectorCode)?.qr_code_path ||
+            existingConfigMap.get(sectorCode)?.qr_code_path ||
+            defaultConfig.qr_code_path,
+          letterhead_path:
+            incomingConfigMap.get(sectorCode)?.letterhead_path ||
+            existingConfigMap.get(sectorCode)?.letterhead_path ||
+            defaultConfig.letterhead_path
+        })
+      )
+      .filter(
+        (config): config is Partial<ProjectSectorPaymentConfig> =>
+          config !== null && this.hasSectorConfigDetails(config)
+      )
   }
 
   private normalizeUnitType(unitType: unknown): string {
@@ -752,8 +851,8 @@ class ProjectService {
 
         dbService.run(
           `INSERT INTO project_sector_payment_configs (
-            project_id, sector_code, account_name, bank_name, account_no, ifsc_code, branch, qr_code_path
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            project_id, sector_code, account_name, bank_name, account_no, ifsc_code, branch, qr_code_path, letterhead_path
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             projectId,
             sectorCode,
@@ -762,7 +861,8 @@ class ProjectService {
             config.account_no || null,
             config.ifsc_code ? config.ifsc_code.toUpperCase() : null,
             config.branch || null,
-            config.qr_code_path || null
+            config.qr_code_path || null,
+            config.letterhead_path || null
           ]
         )
       }
@@ -778,7 +878,13 @@ class ProjectService {
     )
 
     if (result.length > 0) {
-      return result[0]
+      return {
+        ...result[0],
+        penalty_label:
+          result[0].penalty_label === 'Late Payment Charges'
+            ? 'Late Payment Charges'
+            : 'Penalty'
+      }
     }
 
     // Return defaults if no config exists
@@ -788,6 +894,7 @@ class ProjectService {
       solar_contribution: 3000,
       cable_charges: 1000,
       penalty_percentage: 21,
+      penalty_label: 'Penalty',
       early_payment_discount_percentage: 10
     }
   }
@@ -820,6 +927,7 @@ class ProjectService {
                solar_contribution = ?,
                cable_charges = ?,
                penalty_percentage = ?,
+               penalty_label = ?,
                early_payment_discount_percentage = ?,
                updated_at = CURRENT_TIMESTAMP
            WHERE project_id = ?`,
@@ -828,6 +936,7 @@ class ProjectService {
             config.solar_contribution,
             config.cable_charges,
             config.penalty_percentage,
+            config.penalty_label,
             config.early_payment_discount_percentage,
             config.project_id
           ]
@@ -836,14 +945,15 @@ class ProjectService {
         dbService.run(
           `INSERT INTO project_charges_config (
             project_id, na_tax_rate_per_sqft, solar_contribution,
-            cable_charges, penalty_percentage, early_payment_discount_percentage
-          ) VALUES (?, ?, ?, ?, ?, ?)`,
+            cable_charges, penalty_percentage, penalty_label, early_payment_discount_percentage
+          ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
           [
             config.project_id,
             config.na_tax_rate_per_sqft,
             config.solar_contribution,
             config.cable_charges,
             config.penalty_percentage,
+            config.penalty_label,
             config.early_payment_discount_percentage
           ]
         )
@@ -895,43 +1005,27 @@ class ProjectService {
         : []
       console.log(`[PROJECT_SERVICE] Normalized sector configs: ${incomingSectorConfigs.length}`)
 
-      const incomingSectorDetailConfigs = incomingSectorConfigs.filter((config) =>
-        this.hasSectorConfigDetails(config)
+      let sectorConfigsMerged = false
+      const rows = Array.isArray(payload.rows) ? payload.rows : []
+      const importedSectorConfigs = this.buildImportedSectorConfigs(
+        mergedProject,
+        this.getSectorPaymentConfigs(projectId),
+        incomingSectorConfigs,
+        rows
       )
       console.log(
-        `[PROJECT_SERVICE] Sector configs with details: ${incomingSectorDetailConfigs.length}`
+        `[PROJECT_SERVICE] Sector configs resolved for import: ${importedSectorConfigs.length}`
       )
 
-      let sectorConfigsMerged = false
-      if (incomingSectorDetailConfigs.length > 0) {
+      if (importedSectorConfigs.length > 0) {
         console.log(`[PROJECT_SERVICE] Processing sector configs...`)
-        const existingSectorConfigMap = new Map<string, Partial<ProjectSectorPaymentConfig>>(
-          this.getSectorPaymentConfigs(projectId).map((config) => [
-            this.sanitizeText(config.sector_code).toUpperCase(),
-            {
-              sector_code: this.sanitizeText(config.sector_code).toUpperCase(),
-              account_name: config.account_name,
-              bank_name: config.bank_name,
-              account_no: config.account_no,
-              ifsc_code: config.ifsc_code,
-              branch: config.branch,
-              qr_code_path: config.qr_code_path
-            }
-          ])
-        )
-
-        for (const config of incomingSectorDetailConfigs) {
-          existingSectorConfigMap.set(String(config.sector_code), config)
-        }
-
-        this.saveSectorPaymentConfigs(projectId, Array.from(existingSectorConfigMap.values()))
+        this.saveSectorPaymentConfigs(projectId, importedSectorConfigs)
         sectorConfigsMerged = true
         console.log(`[PROJECT_SERVICE] Sector configs saved`)
       } else {
         console.log(`[PROJECT_SERVICE] No sector configs with details to save`)
       }
 
-      const rows = Array.isArray(payload.rows) ? payload.rows : []
       console.log(`[PROJECT_SERVICE] Processing rows: ${rows.length}`)
       if (rows.length > 0) {
         unitService.importLedger(projectId, rows as unknown as Record<string, unknown>[])
@@ -1228,6 +1322,7 @@ class ProjectService {
     const sectorConfigRows = dbService.query<{
       sector_code: string
       has_qr: number
+      has_letterhead: number
       account_name: string | null
       bank_name: string | null
       account_no: string | null
@@ -1240,6 +1335,10 @@ class ProjectService {
           WHEN TRIM(COALESCE(qr_code_path, '')) <> ''
           THEN 1 ELSE 0
         END as has_qr,
+        CASE
+          WHEN TRIM(COALESCE(letterhead_path, '')) <> ''
+          THEN 1 ELSE 0
+        END as has_letterhead,
         account_name,
         bank_name,
         account_no,
@@ -1283,11 +1382,15 @@ class ProjectService {
       !!String(project.account_no || '').trim() &&
       !!String(project.ifsc_code || '').trim()
 
-    const allSectorsConfigured = sectorCodes.length > 0 && 
-      sectorCodes.every(sc => sectorsWithBankDetails.some(swb => swb.sector_code === sc))
+    const allSectorsConfigured =
+      sectorCodes.length > 0 &&
+      sectorCodes.every(
+        (sc) => sectorsWithBankDetails.some((swb) => swb.sector_code === sc) || hasDefaultPaymentDetails
+      )
 
     const sectorsMissingCorePaymentConfig = sectorCodes.filter(
-      (sectorCode) => !sectorsWithBankDetails.some((row) => row.sector_code === sectorCode)
+      (sectorCode) =>
+        !sectorsWithBankDetails.some((row) => row.sector_code === sectorCode) && !hasDefaultPaymentDetails
     )
 
     const isBankDetailsReady =
@@ -1381,9 +1484,9 @@ class ProjectService {
       )
     }
 
-    if (hasDefaultPaymentDetails) {
+    if (hasDefaultPaymentDetails && sectorsMissingCorePaymentConfig.length > 0) {
       warnings.push(
-        'Project-level bank details are treated as legacy data. New maintenance letters use sector bank details only.'
+        'Some sectors will use the project default bank details because individual sector bank details are not configured yet.'
       )
     }
 

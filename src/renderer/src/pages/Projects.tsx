@@ -36,6 +36,7 @@ import {
 } from '@ant-design/icons'
 import {
   Project,
+  ProjectChargesConfig,
   ProjectSectorPaymentConfig,
   ProjectSetupSummary,
   StandardWorkbookProjectImportResult
@@ -66,8 +67,20 @@ const getABCSectorConfigs = (): Partial<ProjectSectorPaymentConfig>[] => [
 ]
 
 // Auto-populate sector configs from detected project sectors
-const getDetectedSectorConfigs = (sectorCodes: string[]): Partial<ProjectSectorPaymentConfig>[] => {
-  return sectorCodes.map(sector_code => ({ sector_code }))
+const getDetectedSectorConfigs = (
+  sectorCodes: string[],
+  defaultConfig?: Partial<ProjectSectorPaymentConfig>
+): Partial<ProjectSectorPaymentConfig>[] => {
+  return sectorCodes.map((sector_code) => ({
+    sector_code,
+    account_name: defaultConfig?.account_name,
+    bank_name: defaultConfig?.bank_name,
+    account_no: defaultConfig?.account_no,
+    ifsc_code: defaultConfig?.ifsc_code,
+    branch: defaultConfig?.branch,
+    qr_code_path: defaultConfig?.qr_code_path,
+    letterhead_path: defaultConfig?.letterhead_path
+  }))
 }
 
 const DEFAULT_PROJECT_FORM_VALUES: Partial<Project> = {
@@ -77,6 +90,28 @@ const DEFAULT_PROJECT_FORM_VALUES: Partial<Project> = {
   payment_modes: 'Cash, Cheque, DD, NEFT, RTGS, UPI',
   import_profile_key: 'standard_normalized'
 }
+
+const DEFAULT_PROJECT_CHARGES_CONFIG: ProjectChargesConfig = {
+  project_id: 0,
+  na_tax_rate_per_sqft: 0.09,
+  solar_contribution: 3000,
+  cable_charges: 1000,
+  penalty_percentage: 21,
+  penalty_label: 'Penalty',
+  early_payment_discount_percentage: 10
+}
+
+const getProjectDefaultSectorConfig = (
+  project: Partial<Project> | null | undefined
+): Partial<ProjectSectorPaymentConfig> => ({
+  account_name: String(project?.account_name || '').trim() || undefined,
+  bank_name: String(project?.bank_name || '').trim() || undefined,
+  account_no: String(project?.account_no || '').trim() || undefined,
+  ifsc_code: String(project?.ifsc_code || '').trim().toUpperCase() || undefined,
+  branch: String(project?.branch || '').trim() || undefined,
+  qr_code_path: String(project?.qr_code_path || '').trim() || undefined,
+  letterhead_path: String(project?.letterhead_path || '').trim() || undefined
+})
 
 const TEMPLATE_OPTIONS = [
   {
@@ -152,6 +187,9 @@ const Projects: React.FC = () => {
   const [sectorConfigs, setSectorConfigs] = useState<
     Partial<ProjectSectorPaymentConfig>[]
   >(getEmptySectorConfigs())
+  const [projectChargesConfig, setProjectChargesConfig] = useState<ProjectChargesConfig>(
+    DEFAULT_PROJECT_CHARGES_CONFIG
+  )
 
   const [form] = Form.useForm()
   const location = useLocation()
@@ -363,6 +401,39 @@ const Projects: React.FC = () => {
     }
   }
 
+  const pickSectorLetterheadFile = async (index: number): Promise<void> => {
+    try {
+      const selectedPath = await window.api.dialog.selectLocalFile({
+        title: 'Select Sector Letterhead Image',
+        filters: [
+          {
+            name: 'Image Files',
+            extensions: ['png', 'jpg', 'jpeg']
+          }
+        ]
+      })
+
+      if (selectedPath) {
+        const extension = selectedPath.split('.').pop() || 'png'
+        const sectorCode = String(sectorConfigs[index]?.sector_code || index + 1)
+          .trim()
+          .toUpperCase() || String(index + 1)
+        const targetPath = `assets/sector-letterheads/project-${editingProject?.id || 'draft'}-sector-${sectorCode}.${extension}`
+        const copyResult = await window.api.files.copyAssetFile(selectedPath, targetPath)
+
+        if (copyResult.success) {
+          handleSectorConfigChange(index, 'letterhead_path', targetPath)
+          message.success('Sector letterhead copied successfully')
+        } else {
+          message.error(`Failed to copy letterhead: ${copyResult.error}`)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to pick sector letterhead file:', error)
+      message.error('Failed to open file picker')
+    }
+  }
+
   const handleSectorConfigChange = (
     index: number,
     key: keyof ProjectSectorPaymentConfig,
@@ -455,13 +526,19 @@ const Projects: React.FC = () => {
       // Check for projects missing bank details
       const projectsMissingBankDetails = preview.projects
         .filter((p) => {
+          const hasDefaultWorkbookBankDetails =
+            !!String(p.project.account_name || '').trim() &&
+            !!String(p.project.bank_name || '').trim() &&
+            !!String(p.project.account_no || '').trim() &&
+            !!String(p.project.ifsc_code || '').trim()
+
           const hasSectorBankDetails =
             !!p.sector_configs &&
             p.sector_configs.some(
               (sc) => sc.account_name && sc.bank_name && sc.account_no && sc.ifsc_code
             )
 
-          return !hasSectorBankDetails
+          return !hasSectorBankDetails && !hasDefaultWorkbookBankDetails
         })
         .map((p) => p.project.name)
 
@@ -489,7 +566,7 @@ const Projects: React.FC = () => {
       // Show warning for projects missing bank details
       if (projectsMissingBankDetails.length > 0) {
         message.warning({
-          content: `Note: ${projectsMissingBankDetails.join(', ')} - missing sector bank details. Please edit the project and add sector payment configs.`,
+          content: `Note: ${projectsMissingBankDetails.join(', ')} - no sector bank details or default workbook bank option were found. Please update the project payment details before generating letters.`,
           key: 'bank_details_missing',
           duration: 6
         })
@@ -620,10 +697,17 @@ const Projects: React.FC = () => {
           account_no: String(config.account_no || '').trim() || undefined,
           ifsc_code: String(config.ifsc_code || '').trim().toUpperCase() || undefined,
           branch: String(config.branch || '').trim() || undefined,
-          qr_code_path: String(config.qr_code_path || '').trim() || undefined
+          qr_code_path: String(config.qr_code_path || '').trim() || undefined,
+          letterhead_path: String(config.letterhead_path || '').trim() || undefined
         }))
         .filter((config) =>
-          [config.sector_code, config.account_name, config.account_no, config.qr_code_path].some(
+          [
+            config.sector_code,
+            config.account_name,
+            config.account_no,
+            config.qr_code_path,
+            config.letterhead_path
+          ].some(
             (value) => (value || '').length > 0
           )
         )
@@ -648,8 +732,11 @@ const Projects: React.FC = () => {
         message.success('Project updated successfully')
       } else {
         projectId = await window.api.projects.create(normalizedValues as Project)
+      }
 
-        // Show next step guidance using utility
+      await window.api.projects.saveSectorPaymentConfigs(projectId, preparedSectorConfigs)
+      setIsModalOpen(false)
+      if (!editingProject?.id) {
         showCompletionWithNextStep(
           'projects',
           'Project created successfully',
@@ -657,9 +744,6 @@ const Projects: React.FC = () => {
           `Project "${normalizedValues.name}" has been added to the platform`
         )
       }
-
-      await window.api.projects.saveSectorPaymentConfigs(projectId, preparedSectorConfigs)
-      setIsModalOpen(false)
       fetchProjects()
     } catch (error) {
       console.error(error)
@@ -1150,7 +1234,7 @@ const Projects: React.FC = () => {
                       <Form.Item
                         name="template_type"
                         label="Letter Template"
-                        extra="The default choice is fine for most manual projects."
+                        extra="For most projects, keep Standard Letter."
                       >
                         <Select
                           options={TEMPLATE_OPTIONS.map((option) => ({
@@ -1165,13 +1249,16 @@ const Projects: React.FC = () => {
                     <Col span={24}>
                       <Form.Item
                         name="import_profile_key"
-                        label="Excel Import Profile"
-                        extra="Used mainly for workbook imports. Manual projects can keep the default profile."
+                        label="Excel Import Profile (Optional)"
+                        extra="Only used for Excel imports. If you are creating the project manually, leave it as Standard Platform Sheet."
                       >
                         <Select
                           options={IMPORT_PROFILE_OPTIONS.map((option) => ({
                             value: option.value,
-                            label: `${option.label} - ${option.description}`
+                            label:
+                              option.value === 'standard_normalized'
+                                ? `${option.label} (Recommended)`
+                                : option.label
                           }))}
                           style={{ width: '100%' }}
                         />
@@ -1181,16 +1268,67 @@ const Projects: React.FC = () => {
                 )
               },
               {
+                key: 'maintenance-rate',
+                label: 'Maintenance Rate',
+                icon: <ToolOutlined />,
+                children: (
+                  <div style={{ marginTop: 16 }}>
+                    <Title level={5} style={{ marginBottom: 16 }}>
+                      Penalty Settings
+                    </Title>
+                    <Paragraph type="secondary" style={{ marginBottom: 12 }}>
+                      Choose the penalty wording this project should use across maintenance
+                      billing. The percentage still comes from the selected maintenance rate, and
+                      falls back to the project-level penalty percentage when a rate leaves it blank.
+                    </Paragraph>
+                    <Alert
+                      type="info"
+                      showIcon
+                      style={{ marginBottom: 16 }}
+                      title="How this is applied"
+                      description="This setting controls how the penalty is named in billing and maintenance-letter output. Use “Penalty” for the standard terminology, or “Late Payment Charges” if that is the wording required by the project."
+                    />
+                    <Form.Item
+                      label="Penalty"
+                      required
+                      style={{ maxWidth: 420, marginBottom: 12 }}
+                    >
+                      <Select
+                        value={projectChargesConfig.penalty_label}
+                        onChange={(value: ProjectChargesConfig['penalty_label']) =>
+                          setProjectChargesConfig((prev) => ({
+                            ...prev,
+                            penalty_label: value
+                          }))
+                        }
+                        options={[
+                          { value: 'Penalty', label: 'Penalty' },
+                          {
+                            value: 'Late Payment Charges',
+                            label: 'Late Payment Charges'
+                          }
+                        ]}
+                      />
+                    </Form.Item>
+                    <Text type="secondary">
+                      Saved here, then reflected in maintenance billing output for this project.
+                    </Text>
+                  </div>
+                )
+              },
+              {
                 key: 'bank',
                 label: 'Bank Details',
                 icon: <BankOutlined />,
                 children: (
                   <div style={{ marginTop: 16 }}>
                     <div>
-                      <Title level={5} style={{ marginBottom: 16 }}>Sector Bank Details</Title>
+                      <Title level={5} style={{ marginBottom: 16 }}>
+                        Sector Bank Details & Letterhead
+                      </Title>
                       <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                        Manual and imported projects both use sector bank details. Add one payment
-                        config row for each sector that should appear on maintenance letters.
+                        Add one row per sector to store sector-specific payment routing and the
+                        matching maintenance-letter letterhead image.
                       </Paragraph>
 
                       <Alert
@@ -1198,7 +1336,7 @@ const Projects: React.FC = () => {
                         showIcon
                         style={{ marginBottom: 16 }}
                         title="Recommended flow"
-                        description="Manual flow: add units with sector codes first, then add matching sector bank configs here. Import flow: detected sectors from the workbook can be auto-populated here and completed manually."
+                        description="Manual flow: add units with sector codes first, then add matching sector bank details and optional sector letterheads here. Import flow: detected sectors from the workbook can be auto-populated here and completed manually."
                       />
 
                       {editingProjectSummary && editingProjectSummary.sector_codes.length > 0 && (
@@ -1216,10 +1354,17 @@ const Projects: React.FC = () => {
                               <Button 
                                 size="small" 
                                 type="link" 
-                                onClick={() => setSectorConfigs(getDetectedSectorConfigs(editingProjectSummary.sector_codes))}
+                                onClick={() =>
+                                  setSectorConfigs(
+                                    getDetectedSectorConfigs(
+                                      editingProjectSummary.sector_codes,
+                                      getProjectDefaultSectorConfig(editingProject)
+                                    )
+                                  )
+                                }
                                 style={{ padding: 0, height: 'auto' }}
                               >
-                                Auto-populate with detected sectors
+                                Auto-populate with detected sectors and project defaults
                               </Button>
                             </div>
                           }
@@ -1341,6 +1486,25 @@ const Projects: React.FC = () => {
                                   </Button>
                                 </div>
                               </div>
+
+                              <div className="project-sector-config-field project-sector-config-field-wide">
+                                <label className="project-sector-config-label">Sector Letterhead</label>
+                                <div className="project-sector-config-qr-row">
+                                  <Input
+                                    value={String(config.letterhead_path || '')}
+                                    onChange={(e) =>
+                                      handleSectorConfigChange(index, 'letterhead_path', e.target.value)
+                                    }
+                                    placeholder="Sector letterhead image path (.png/.jpg/.jpeg)"
+                                  />
+                                  <Button
+                                    icon={<FolderOpenOutlined />}
+                                    onClick={() => pickSectorLetterheadFile(index)}
+                                  >
+                                    Browse
+                                  </Button>
+                                </div>
+                              </div>
                             </div>
                           </Card>
                         ))}
@@ -1354,7 +1518,17 @@ const Projects: React.FC = () => {
                         </Button>
                         <Space>
                           {editingProjectSummary && editingProjectSummary.sector_codes.length > 0 ? (
-                            <Button size="small" onClick={() => setSectorConfigs(getDetectedSectorConfigs(editingProjectSummary.sector_codes))}>
+                            <Button
+                              size="small"
+                              onClick={() =>
+                                setSectorConfigs(
+                                  getDetectedSectorConfigs(
+                                    editingProjectSummary.sector_codes,
+                                    getProjectDefaultSectorConfig(editingProject)
+                                  )
+                                )
+                              }
+                            >
                               Use Detected Sectors ({editingProjectSummary.sector_codes.join(', ')})
                             </Button>
                           ) : (
@@ -1388,7 +1562,7 @@ const Projects: React.FC = () => {
                   </div>
                 )
               }
-            ]}
+            ].filter((item) => item.key !== 'maintenance-rate')}
           />
         </Form>
       </Modal>

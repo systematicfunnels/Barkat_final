@@ -218,11 +218,20 @@ export const parseStandardWorkbook = (workbook: WorkbookSheetRows): StandardWork
       state: text(getValue(row, ['state'])),
       pincode: text(getValue(row, ['pincode'])),
       status: normalizeProjectStatus(getValue(row, ['status'])),
+      letterhead_path: text(
+        getValue(row, [
+          'default_letterhead_path',
+          'default_letterhead_file',
+          'letterhead_path',
+          'letterhead_file'
+        ])
+      ),
       account_name: text(getValue(row, ['default_account_name', 'account_name'])),
       bank_name: text(getValue(row, ['default_bank_name', 'bank_name'])),
       account_no: text(getValue(row, ['default_account_no', 'account_no'])),
       ifsc_code: text(getValue(row, ['default_ifsc_code', 'ifsc_code'])).toUpperCase(),
       branch: text(getValue(row, ['default_branch', 'branch'])),
+      branch_address: text(getValue(row, ['default_branch_address', 'branch_address'])),
       qr_code_path: text(getValue(row, ['default_qr_file', 'default_qr_path', 'qr_code_path'])),
       template_type: normalizeTemplateType(getValue(row, ['template_type', 'template type'])),
       import_profile_key: normalizeImportProfile(
@@ -312,12 +321,19 @@ export const parseStandardWorkbook = (workbook: WorkbookSheetRows): StandardWork
       account_no: text(getValue(row, ['account_no'])) || undefined,
       ifsc_code: text(getValue(row, ['ifsc_code'])).toUpperCase() || undefined,
       branch: text(getValue(row, ['branch'])) || undefined,
-      qr_code_path: text(getValue(row, ['qr_file', 'qr_code_path'])) || undefined
+      qr_code_path: text(getValue(row, ['qr_file', 'qr_code_path'])) || undefined,
+      letterhead_path: text(getValue(row, ['letterhead_path', 'letterhead_file'])) || undefined
     }
 
     preview.sector_configs.push(sectorConfig)
 
-    const hasPaymentDetails = text(sectorConfig.qr_code_path).length > 0
+    const hasPaymentDetails = [
+      sectorConfig.account_name,
+      sectorConfig.bank_name,
+      sectorConfig.account_no,
+      sectorConfig.ifsc_code,
+      sectorConfig.qr_code_path
+    ].some((value) => text(value).length > 0)
 
     if (!hasPaymentDetails) {
       addWarning(

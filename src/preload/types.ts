@@ -164,11 +164,15 @@ export interface ProjectAddonTemplate {
 
 export interface ProjectChargesConfig {
   project_id: number
-  na_tax_per_sqft?: number
-  road_maintenance_charge?: number
-  cable_per_month?: number
-  gst_percent?: number
-  penalty_percent?: number
+  id?: number
+  na_tax_rate_per_sqft: number
+  solar_contribution: number
+  cable_charges: number
+  penalty_percentage: number
+  penalty_label: 'Penalty' | 'Late Payment Charges'
+  early_payment_discount_percentage: number
+  created_at?: string
+  updated_at?: string
 }
 
 export interface ProjectAddonTemplateInput {
@@ -195,6 +199,7 @@ export interface ProjectSectorPaymentConfig {
   ifsc_code?: string
   branch?: string
   qr_code_path?: string
+  letterhead_path?: string
   created_at?: string
   updated_at?: string
 }
@@ -356,6 +361,7 @@ export interface LetterCalculation {
   }
   arrears_breakdown: ArrearsEntry[]
   penalty_percentage: number
+  penalty_label?: 'Penalty' | 'Late Payment Charges'
   discount_percentage: number
   due_date: string
   current_year_charges: {
@@ -374,6 +380,7 @@ export interface LetterCalculation {
     amount_payable_before_due: number
     amount_payable_after_due: number
     penalty_percentage?: number
+    penalty_label?: 'Penalty' | 'Late Payment Charges'
   }
   bank_details: {
     name: string
@@ -514,6 +521,20 @@ declare global {
           filters?: FinancialReportFilters
         ) => Promise<FinancialReportSummary>
         getAvailableFinancialYears: (projectId?: number) => Promise<string[]>
+        exportFinancialReportExcel: (payload: {
+          savePath: string
+          rows: FinancialReportSummary['rows']
+          years: FinancialReportSummary['years']
+          yearlyTotals: FinancialReportSummary['yearlyTotals']
+          stats: FinancialReportSummary['stats']
+          selectedProjectName?: string
+          hasActiveFilters: boolean
+          selectedUnitType?: string | null
+          selectedStatus?: string | null
+          searchText?: string
+          outstandingRange?: [number | null, number | null]
+          generatedAt: string
+        }) => Promise<{ savePath: string }>
       }
       shell: {
         showItemInFolder: (path: string) => void

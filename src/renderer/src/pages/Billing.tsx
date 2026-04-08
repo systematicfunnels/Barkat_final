@@ -366,14 +366,14 @@ const Billing: React.FC = () => {
         if (dueDates.length === 1) {
           setRateDueDateHint(
             canAutoApply
-              ? `Due date synced from rate setup: ${dayjs(selectedDueDate).format('DD MMM YYYY')}`
-              : `Rate setup suggests due date ${dayjs(selectedDueDate).format('DD MMM YYYY')}. Your manually chosen due date was kept.`
+              ? `Due date taken from the Early Payment slab for FY ${batchFinancialYear}: ${dayjs(selectedDueDate).format('DD MMM YYYY')}`
+              : `The Early Payment slab for FY ${batchFinancialYear} suggests ${dayjs(selectedDueDate).format('DD MMM YYYY')}. Your manually chosen due date was kept.`
           )
         } else {
           setRateDueDateHint(
             canAutoApply
-              ? `Multiple due dates exist for ${batchFinancialYear}. The earliest configured due date (${dayjs(selectedDueDate).format('DD MMM YYYY')}) was applied.`
-              : `Multiple due dates exist for ${batchFinancialYear}. The earliest configured due date is ${dayjs(selectedDueDate).format('DD MMM YYYY')}, but your manual due date was kept.`
+              ? `Multiple Early Payment slab due dates exist for FY ${batchFinancialYear}. The earliest configured date (${dayjs(selectedDueDate).format('DD MMM YYYY')}) was applied.`
+              : `Multiple Early Payment slab due dates exist for FY ${batchFinancialYear}. The earliest configured date is ${dayjs(selectedDueDate).format('DD MMM YYYY')}, but your manual due date was kept.`
           )
         }
       } catch (error) {
@@ -497,14 +497,34 @@ const Billing: React.FC = () => {
     setIsModalOpen(true)
   }
 
-  const showProjectSetupBlockingModal = useCallback(
-    (summary: ProjectSetupSummary, projectId: number): void => {
+  const getProjectSetupAction = useCallback(
+    (
+      summary: ProjectSetupSummary,
+      projectId: number
+    ): {
+      label: string
+      state: { openEditProjectId: number } | { openRatesProjectId: number }
+    } => {
       const hasNonRateBlockers = summary.blockers.some(
         (blocker) => !blocker.toLowerCase().includes('rate')
       )
-      const navigationState = hasNonRateBlockers
-        ? { openEditProjectId: projectId }
-        : { openRatesProjectId: projectId }
+
+      return hasNonRateBlockers
+        ? {
+            label: 'Open Project Setup',
+            state: { openEditProjectId: projectId }
+          }
+        : {
+            label: 'Open Rates',
+            state: { openRatesProjectId: projectId }
+          }
+    },
+    []
+  )
+
+  const showProjectSetupBlockingModal = useCallback(
+    (summary: ProjectSetupSummary, projectId: number): void => {
+      const action = getProjectSetupAction(summary, projectId)
 
       Modal.confirm({
         title: 'Project setup incomplete',
@@ -530,17 +550,25 @@ const Billing: React.FC = () => {
             )}
           </div>
         ),
-        okText: hasNonRateBlockers ? 'Open Project Setup' : 'Open Rates',
+        okText: action.label,
         cancelText: 'Close',
         onOk: () => {
           setIsModalOpen(false)
           setBatchModalStep('config')
-          navigate('/projects', { state: navigationState })
+          navigate('/projects', { state: action.state })
         }
       })
     },
-    [navigate]
+    [getProjectSetupAction, navigate]
   )
+
+  const handleOpenProjectSetupFix = useCallback((): void => {
+    if (!projectSetupSummary || !batchProjectId) return
+    const action = getProjectSetupAction(projectSetupSummary, batchProjectId)
+    setIsModalOpen(false)
+    setBatchModalStep('config')
+    navigate('/projects', { state: action.state })
+  }, [batchProjectId, getProjectSetupAction, navigate, projectSetupSummary])
 
   const ensureProjectReadyForLetters = useCallback(
     async (projectId: number, financialYear: string): Promise<boolean> => {
@@ -773,64 +801,7 @@ const Billing: React.FC = () => {
   const handleViewPdf = async (id: number): Promise<void> => {
     try {
       message.loading({ content: 'Generating Letter...', key: 'pdf_gen' })
-      const { taskId } = (await window.api.worker.enqueueTask('batch-pdf', {
-        mode: 'letters',
-        letterIds: [id]
-      })) as { taskId: string }
-
-      const path = await new Promise<string>((resolve, reject) => {
-        const unsubscribe = window.api.worker.onProgress((event) => {
-          const progressEvent = event as {
-            taskId?: string
-            type?: 'complete' | 'error' | 'cancel'
-            error?: { message?: string }
-            data?: {
-              success?: boolean
-              result?: {
-                files: string[]
-                failed?: number
-                errors?: string[]
-              }
-            }
-          }
-
-          if (progressEvent.taskId !== taskId) {
-            return
-          }
-
-          if (progressEvent.type === 'complete') {
-            unsubscribe()
-            const result = progressEvent.data?.result
-            const firstPath = result?.files?.[0] || ''
-            const firstError = result?.errors?.[0]
-            const failedCount = result?.failed ?? 0
-
-            if (!firstPath) {
-              reject(
-                new Error(
-                  firstError ||
-                    (failedCount > 0
-                      ? 'Failed to generate letter'
-                      : 'Letter PDF was not created')
-                )
-              )
-              return
-            }
-
-            resolve(firstPath)
-          }
-
-          if (progressEvent.type === 'error') {
-            unsubscribe()
-            reject(new Error(progressEvent.error?.message || 'Failed to generate letter'))
-          }
-
-          if (progressEvent.type === 'cancel') {
-            unsubscribe()
-            reject(new Error('Letter generation was cancelled'))
-          }
-        })
-      })
+      const path = await window.api.letters.generatePdf(id)
 
       message.success({ content: 'Maintenance Letter generated successfully!', key: 'pdf_gen' })
       notification.success({
@@ -1905,6 +1876,13 @@ const Billing: React.FC = () => {
                           </div>
                         </div>
                       ) : null
+                    }
+                    action={
+                      projectSetupSummary && !projectSetupSummary.ready_for_letters ? (
+                        <Button size="small" type="primary" onClick={handleOpenProjectSetupFix}>
+                          {getProjectSetupAction(projectSetupSummary, batchProjectId).label}
+                        </Button>
+                      ) : undefined
                     }
                   />
                   {rateDueDateHint && (

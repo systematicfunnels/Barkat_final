@@ -141,7 +141,22 @@ const api = {
     getFinancialSummary: (projectId?: number, filters?: FinancialReportFilters) =>
       ipcRenderer.invoke('get-financial-report-summary', projectId, filters) as Promise<FinancialReportSummary>,
     getAvailableFinancialYears: (projectId?: number) =>
-      ipcRenderer.invoke('get-available-financial-years', projectId) as Promise<string[]>
+      ipcRenderer.invoke('get-available-financial-years', projectId) as Promise<string[]>,
+    exportFinancialReportExcel: (payload: {
+      savePath: string
+      rows: FinancialReportSummary['rows']
+      years: FinancialReportSummary['years']
+      yearlyTotals: FinancialReportSummary['yearlyTotals']
+      stats: FinancialReportSummary['stats']
+      selectedProjectName?: string
+      hasActiveFilters: boolean
+      selectedUnitType?: string | null
+      selectedStatus?: string | null
+      searchText?: string
+      outstandingRange?: [number | null, number | null]
+      generatedAt: string
+    }) =>
+      ipcRenderer.invoke('export-financial-report-excel', payload) as Promise<{ savePath: string }>
   },
   shell: {
     showItemInFolder: (path: string) => ipcRenderer.invoke('show-item-in-folder', path),

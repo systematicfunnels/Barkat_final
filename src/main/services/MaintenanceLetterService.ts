@@ -47,6 +47,7 @@ export interface MaintenanceLetter {
   snapshot_uses_sector_config?: boolean | number
   project_qr_code?: string
   sector_qr_code?: string
+  sector_letterhead_path?: string
   sector_account_name?: string
   sector_bank_name?: string
   sector_account_no?: string
@@ -163,6 +164,21 @@ class MaintenanceLetterService extends BasePDFGenerator {
     qrCodePath: string
     usesSectorConfig: 0 | 1
   } {
+    const projectDefaultBank = dbService.get<{
+      account_name?: string
+      bank_name?: string
+      account_no?: string
+      ifsc_code?: string
+      branch?: string
+      branch_address?: string
+      qr_code_path?: string
+    }>(
+      `SELECT account_name, bank_name, account_no, ifsc_code, branch, branch_address, qr_code_path
+       FROM projects
+       WHERE id = ?`,
+      [projectId]
+    )
+
     const sectorBank =
       sectorCode && String(sectorCode).trim() !== ''
         ? dbService.get<{
@@ -171,6 +187,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
             account_no?: string
             ifsc_code?: string
             branch?: string
+            branch_address?: string
             qr_code_path?: string
           }>(
             `SELECT account_name, bank_name, account_no, ifsc_code, branch, qr_code_path
@@ -186,13 +203,25 @@ class MaintenanceLetterService extends BasePDFGenerator {
     )
 
     return {
-      accountName: usesSectorConfig ? sectorBank?.account_name || '' : '',
-      bankName: usesSectorConfig ? sectorBank?.bank_name || '' : '',
-      accountNo: usesSectorConfig ? sectorBank?.account_no || '' : '',
-      ifscCode: usesSectorConfig ? sectorBank?.ifsc_code || '' : '',
-      branch: usesSectorConfig ? sectorBank?.branch || '' : '',
-      branchAddress: '',
-      qrCodePath: usesSectorConfig ? sectorBank?.qr_code_path || '' : '',
+      accountName: usesSectorConfig
+        ? sectorBank?.account_name || ''
+        : projectDefaultBank?.account_name || '',
+      bankName: usesSectorConfig
+        ? sectorBank?.bank_name || ''
+        : projectDefaultBank?.bank_name || '',
+      accountNo: usesSectorConfig
+        ? sectorBank?.account_no || ''
+        : projectDefaultBank?.account_no || '',
+      ifscCode: usesSectorConfig
+        ? sectorBank?.ifsc_code || ''
+        : projectDefaultBank?.ifsc_code || '',
+      branch: usesSectorConfig
+        ? sectorBank?.branch || ''
+        : projectDefaultBank?.branch || '',
+      branchAddress: usesSectorConfig ? sectorBank?.branch_address || '' : projectDefaultBank?.branch_address || '',
+      qrCodePath: usesSectorConfig
+        ? sectorBank?.qr_code_path || ''
+        : projectDefaultBank?.qr_code_path || '',
       usesSectorConfig: usesSectorConfig ? 1 : 0
     }
   }
@@ -315,6 +344,116 @@ class MaintenanceLetterService extends BasePDFGenerator {
     return null
   }
 
+  private async embedImageFromPath(imagePath: string) {
+    const resolvedPath = this.resolveQrCodePath(imagePath)
+    if (!resolvedPath) return null
+
+    const imageBytes = fs.readFileSync(resolvedPath)
+    const isPng =
+      imageBytes.length > 4 &&
+      imageBytes[0] === 0x89 &&
+      imageBytes[1] === 0x50 &&
+      imageBytes[2] === 0x4e &&
+      imageBytes[3] === 0x47
+    const isJpeg =
+      imageBytes.length > 3 &&
+      imageBytes[0] === 0xff &&
+      imageBytes[1] === 0xd8 &&
+      imageBytes[2] === 0xff
+
+    if (isPng) {
+      return this.pdfDoc.embedPng(imageBytes)
+    }
+    if (isJpeg) {
+      return this.pdfDoc.embedJpg(imageBytes)
+    }
+
+    const ext = path.extname(resolvedPath).toLowerCase()
+    return ext === '.png'
+      ? this.pdfDoc.embedPng(imageBytes)
+      : this.pdfDoc.embedJpg(imageBytes)
+  }
+
+  private getUnitReferenceNumber(letter: MaintenanceLetter): string {
+    const unit = dbService.get<{
+      unit_number?: string
+      sector_code?: string
+      unit_type?: string
+    }>('SELECT unit_number, sector_code, unit_type FROM units WHERE id = ?', [letter.unit_id])
+
+    const plotNumber = letter.unit_number || unit?.unit_number || String(letter.unit_id)
+    const sector = unit?.sector_code?.trim() || letter.sector_code?.trim() || ''
+    const unitType = unit?.unit_type || letter.unit_type || 'Plot'
+    const unitDisplay =
+      unitType === 'BMF'
+        ? `BMF-${plotNumber}`
+        : unitType === 'Bungalow'
+          ? `B-${plotNumber}`
+          : `${unitType.substring(0, 1)}-${plotNumber}`
+
+    return `${sector ? `${sector}/` : ''}${unitDisplay}`
+  }
+
+  private sanitizeFileComponent(value: string): string {
+    return String(value || '')
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '-')
+      .replace(/\s+/g, '_')
+      .replace(/-+/g, '-')
+      .replace(/^[-_.]+|[-_.]+$/g, '') || 'document'
+  }
+
+  private getEffectiveLetterheadPath(
+    letter: MaintenanceLetter,
+    projectLetterheadPath?: string
+  ): string {
+    return (
+      String(letter.sector_letterhead_path || '').trim() ||
+      String(letter.letterhead_path || '').trim() ||
+      String(projectLetterheadPath || '').trim()
+    )
+  }
+
+  private drawElectronicFooter(text: string): void {
+    const footerFont = this.fonts.italic ?? this.fonts.regular
+    const footerY = 16
+    const footerSize = 8.5
+    const textWidth = footerFont.widthOfTextAtSize(text, footerSize)
+    const footerX = (this.layout.width - textWidth) / 2
+    const lineGap = 14
+    const lineY = footerY + 4
+    const leftLineEndX = footerX - lineGap
+    const rightLineStartX = footerX + textWidth + lineGap
+
+    if (leftLineEndX - this.MARGIN > 24) {
+      this.page.drawLine({
+        start: { x: this.MARGIN, y: lineY },
+        end: { x: leftLineEndX, y: lineY },
+        thickness: 0.8,
+        color: this.COLORS.SECONDARY,
+        opacity: 0.55
+      })
+    }
+
+    if (this.layout.width - this.MARGIN - rightLineStartX > 24) {
+      this.page.drawLine({
+        start: { x: rightLineStartX, y: lineY },
+        end: { x: this.layout.width - this.MARGIN, y: lineY },
+        thickness: 0.8,
+        color: this.COLORS.SECONDARY,
+        opacity: 0.55
+      })
+    }
+
+    this.page.drawText(text, {
+      x: footerX,
+      y: footerY,
+      size: footerSize,
+      font: footerFont,
+      color: this.COLORS.GRAY
+    })
+  }
+
   public getAll(): MaintenanceLetter[] {
     return dbService.query<MaintenanceLetter>(`
       SELECT l.*, u.unit_number, u.owner_name, u.unit_type, p.name as project_name,
@@ -345,6 +484,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       SELECT l.*, u.unit_number, u.owner_name, u.contact_number, u.unit_type, u.sector_code,
              p.name as project_name,
              p.account_name, p.bank_name, p.branch, p.branch_address, p.account_no, p.ifsc_code,
+             p.letterhead_path,
              p.qr_code_path as project_qr_code,
              COALESCE((SELECT SUM(addon_amount) FROM add_ons WHERE letter_id = l.id), 0) as add_ons_total,
              ps.account_name as sector_account_name,
@@ -352,6 +492,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
              ps.account_no as sector_account_no,
              ps.ifsc_code as sector_ifsc_code,
              ps.branch as sector_branch,
+             ps.letterhead_path as sector_letterhead_path,
              ps.qr_code_path as sector_qr_code
       FROM maintenance_letters l
       JOIN units u ON l.unit_id = u.id
@@ -394,12 +535,12 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     await this.initializePDF()
 
-    this.drawLetterheadLetter(letter)
-    this.drawRecipientSection(letter)
+    await this.drawLetterheadLetter(letter)
+    await this.drawRecipientSection(letter)
     this.drawCenteredUnderlinedTitle(letter.financial_year)
     this.drawAmountTable(letter, addOns)
     await this.drawBankDetails(letter)
-    this.drawFooter('Authorized Signatory')
+    this.drawElectronicFooter('This is an electronically generated maintenance letter. No signature required.')
 
     const pdfBytes = await this.pdfDoc.save()
     const pdfDir = path.join(getUserDataPath(), 'maintenance-letters')
@@ -412,7 +553,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       throw new Error('Unable to create PDF output directory')
     }
 
-    const fileName = `MaintenanceLetter_${letter.id}.pdf`
+    const unitReference = this.sanitizeFileComponent(this.getUnitReferenceNumber(letter))
+    const fileName = `MaintenanceLetter_${unitReference}_${this.sanitizeFileComponent(letter.financial_year)}.pdf`
     const filePath = path.join(pdfDir, fileName)
     
     try {
@@ -650,7 +792,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
           if (missingSectorBankFields.length > 0) {
             throw new Error(
-              `Missing sector bank details for sector ${unit.sector_code}. Complete ${missingSectorBankFields.join(', ')} in Project Settings before generating maintenance letters.`
+              `Missing bank details for sector ${unit.sector_code}. Complete ${missingSectorBankFields.join(', ')} in Project Settings, or provide project default bank details, before generating maintenance letters.`
             )
           }
 
@@ -767,83 +909,33 @@ class MaintenanceLetterService extends BasePDFGenerator {
     return result?.id
   }
 
-  protected drawLetterheadLetter(letter: MaintenanceLetter): void {
+  protected async drawLetterheadLetter(letter: MaintenanceLetter): Promise<void> {
     const project = dbService.get<{ 
       name: string; 
       address?: string; 
       city?: string; 
       state?: string;
       registration_no?: string;
+      letterhead_path?: string;
     }>(
-      'SELECT name, address, city, state, registration_no FROM projects WHERE id = ?',
+      'SELECT name, address, city, state, registration_no, letterhead_path FROM projects WHERE id = ?',
       [letter.project_id]
     )
 
-    const brandDark = rgb(0.05, 0.09, 0.10)
-    const brandTeal = rgb(0.08, 0.55, 0.54)
     const brandTealLight = rgb(0.92, 0.97, 0.97)
     const societyName = project?.name || letter.project_name || 'Maintenance Letter'
     const regNo = project?.registration_no || ''
-    const generatedDate =
-      letter.generated_date && !Number.isNaN(new Date(letter.generated_date).getTime())
-        ? new Date(letter.generated_date)
-        : new Date()
-
-    const issueDate = generatedDate.toLocaleDateString('en-IN', {
-      day: 'numeric',
-      month: 'short',
-      year: 'numeric'
-    })
-    const dueDate = this.formatDate(letter.due_date || generatedDate)
-    const bannerHeight = 86
-    const bannerTopY = this.layout.currentY + 8
+    const effectiveLetterheadPath = this.getEffectiveLetterheadPath(letter, project?.letterhead_path)
+    const bannerHeight = effectiveLetterheadPath ? 138 : 118
+    const bannerTopY = this.layout.currentY + 4
     const bannerBottomY = bannerTopY - bannerHeight
-    const leftWidth = this.layout.contentWidth * 0.58
-    const rightWidth = this.layout.contentWidth - leftWidth
-    const leftX = this.MARGIN
-    const rightX = this.MARGIN + leftWidth
 
     this.page.drawRectangle({
       x: this.MARGIN,
-      y: bannerTopY,
+      y: bannerTopY + 2,
       width: this.layout.contentWidth,
-      height: 4,
-      color: brandTeal
-    })
-
-    this.page.drawRectangle({
-      x: leftX,
-      y: bannerBottomY,
-      width: leftWidth,
-      height: bannerHeight,
-      color: brandDark
-    })
-
-    this.page.drawRectangle({
-      x: rightX,
-      y: bannerBottomY,
-      width: rightWidth,
-      height: bannerHeight,
-      color: brandTeal
-    })
-
-    this.page.drawText('MAINTENANCE LETTER', {
-      x: leftX + 16,
-      y: bannerTopY - 18,
-      size: 8.5,
-      font: this.fonts.bold,
-      color: rgb(0.72, 0.89, 0.88)
-    })
-
-    const nameLines = this.wrapTextLines(societyName, leftWidth - 32, this.fonts.bold, 22)
-    nameLines.slice(0, 2).forEach((line, index) => {
-      this.page.drawText(line, {
-        x: leftX + 16,
-        y: bannerTopY - 38 - index * 22,
-        size: 22,
-        font: this.fonts.bold,
-        color: rgb(1, 1, 1)
-      })
+      height: 2.4,
+      color: rgb(0.08, 0.55, 0.54)
     })
 
     const sublineParts = [
@@ -851,73 +943,91 @@ class MaintenanceLetterService extends BasePDFGenerator {
       regNo ? `Regd. No. ${regNo}` : null
     ].filter(Boolean) as string[]
 
-    if (sublineParts.length > 0) {
-      this.page.drawText(sublineParts.join('  |  '), {
-        x: leftX + 16,
-        y: bannerBottomY + 12,
-        size: 8.5,
-        font: this.fonts.regular,
-        color: rgb(0.83, 0.89, 0.89)
-      })
+    let drewLetterhead = false
+    if (effectiveLetterheadPath) {
+      try {
+        const letterheadImage = await this.embedImageFromPath(effectiveLetterheadPath)
+        if (letterheadImage) {
+          const frameX = this.MARGIN
+          const frameY = bannerBottomY + 4
+          const frameWidth = this.layout.contentWidth
+          const frameHeight = bannerHeight - 2
+
+          this.page.drawRectangle({
+            x: frameX,
+            y: frameY,
+            width: frameWidth,
+            height: frameHeight,
+            color: rgb(1, 1, 1)
+          })
+
+          const imageAspectRatio = letterheadImage.width / letterheadImage.height
+          const frameAspectRatio = frameWidth / frameHeight
+          let drawWidth = frameWidth
+          let drawHeight = frameHeight
+
+          if (imageAspectRatio > frameAspectRatio) {
+            drawHeight = drawWidth / imageAspectRatio
+          } else {
+            drawWidth = drawHeight * imageAspectRatio
+          }
+
+          this.page.drawImage(letterheadImage, {
+            x: frameX + (frameWidth - drawWidth) / 2,
+            y: frameY + (frameHeight - drawHeight) / 2,
+            width: drawWidth,
+            height: drawHeight
+          })
+
+          drewLetterhead = true
+        }
+      } catch (error) {
+        console.error('Failed to draw header letterhead image:', error)
+      }
     }
 
-    const rightInnerX = rightX + 18
-    const rightContentWidth = rightWidth - 36
-    const metaCardY = bannerBottomY + 10
-    const metaCardHeight = 42
-    const metaCardColor = rgb(0.16, 0.61, 0.60)
-
-    this.page.drawText('MAINTENANCE', {
-      x: rightInnerX,
-      y: bannerTopY - 28,
-      size: 15.5,
-      font: this.fonts.bold,
-      color: rgb(1, 1, 1)
-    })
-
-    this.page.drawText('Statement', {
-      x: rightInnerX,
-      y: bannerTopY - 44,
-      size: 9,
-      font: this.fonts.regular,
-      color: rgb(0.86, 0.96, 0.96)
-    })
-
-    this.page.drawRectangle({
-      x: rightInnerX,
-      y: metaCardY,
-      width: rightContentWidth,
-      height: metaCardHeight,
-      color: metaCardColor
-    })
-
-    const metaLabelX = rightInnerX + 10
-    const metaValueX = rightInnerX + 76
-    ;[
-      ['Issue Date', issueDate],
-      ['Due Date', dueDate],
-      ['Statement FY', letter.financial_year]
-    ].forEach(([label, value], index) => {
-      const rowY = metaCardY + metaCardHeight - 14 - index * 12.5
-      this.page.drawText(`${label}:`, {
-        x: metaLabelX,
-        y: rowY,
-        size: 7.4,
-        font: this.fonts.bold,
-        color: rgb(0.83, 0.95, 0.95)
+    if (!drewLetterhead) {
+      this.page.drawRectangle({
+        x: this.MARGIN,
+        y: bannerBottomY,
+        width: this.layout.contentWidth,
+        height: bannerHeight,
+        color: rgb(0.98, 0.98, 0.97)
       })
-      this.page.drawText(String(value), {
-        x: metaValueX,
-        y: rowY,
-        size: 8.2,
-        font: this.fonts.bold,
-        color: rgb(1, 1, 1)
+
+      const nameLines = this.wrapTextLines(societyName, this.layout.contentWidth - 32, this.fonts.bold, 24)
+      nameLines.slice(0, 2).forEach((line, index) => {
+        this.page.drawText(line, {
+          x: this.MARGIN + 18,
+          y: bannerTopY - 34 - index * 24,
+          size: 24,
+          font: this.fonts.bold,
+          color: this.COLORS.SECONDARY
+        })
       })
-    })
 
-    this.layout.currentY = bannerBottomY - 18
+      this.page.drawText('Sector Maintenance Statement', {
+        x: this.MARGIN + 18,
+        y: bannerTopY - 58,
+        size: 10,
+        font: this.fonts.bold,
+        color: this.COLORS.ACCENT
+      })
 
-    if (project?.address) {
+      if (sublineParts.length > 0) {
+        this.page.drawText(sublineParts.join('  |  '), {
+          x: this.MARGIN + 18,
+          y: bannerBottomY + 20,
+          size: 8.5,
+          font: this.fonts.regular,
+          color: this.COLORS.TEXT
+        })
+      }
+    }
+
+    this.layout.currentY = bannerBottomY - (drewLetterhead ? 10 : 2)
+
+    if (project?.address && !drewLetterhead) {
       this.page.drawRectangle({
         x: this.MARGIN,
         y: this.layout.currentY - 18,
@@ -946,7 +1056,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       this.layout.currentY -= 30
     }
 
-    this.layout.currentY -= 12
+    this.layout.currentY -= drewLetterhead ? 20 : 10
   }
 
   private drawCenteredUnderlinedTitle(financialYear: string): void {
@@ -963,19 +1073,26 @@ class MaintenanceLetterService extends BasePDFGenerator {
     
     const endYear = endYearShort.length === 2 ? startYear.slice(0, 2) + endYearShort : startYear
     const titleText = `FOR APRIL ${startYear} - MARCH ${endYear}`
-
     this.page.drawText(titleText, {
       x: this.MARGIN,
       y: this.layout.currentY,
       size: 10.5,
       font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
+      color: this.COLORS.ACCENT
     })
 
-    this.layout.currentY -= 22
+    this.page.drawText('ITEMS & ARREARS', {
+      x: this.MARGIN,
+      y: this.layout.currentY - 18,
+      size: 11.5,
+      font: this.fonts.bold,
+      color: this.COLORS.TEXT
+    })
+
+    this.layout.currentY -= 30
   }
 
-  protected drawRecipientSection(letter: MaintenanceLetter): void {
+  protected async drawRecipientSection(letter: MaintenanceLetter): Promise<void> {
     const unit = dbService.get<{
       unit_number: string;
       owner_name: string;
@@ -986,11 +1103,20 @@ class MaintenanceLetterService extends BasePDFGenerator {
       'SELECT unit_number, owner_name, area_sqft, sector_code, unit_type FROM units WHERE id = ?',
       [letter.unit_id]
     )
-
     const owners = letter.owner_name || unit?.owner_name || 'N/A'
     const plotNumber = letter.unit_number || unit?.unit_number || '01'
     const sector = unit?.sector_code?.trim() || letter.sector_code?.trim() || ''
     const unitType = unit?.unit_type || 'Plot'
+    const generatedDate =
+      letter.generated_date && !Number.isNaN(new Date(letter.generated_date).getTime())
+        ? new Date(letter.generated_date)
+        : new Date()
+    const issueDate = generatedDate.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric'
+    })
+    const dueDate = this.formatDate(letter.due_date || generatedDate)
 
     const unitDisplay = unitType === 'BMF' 
       ? `BMF-${plotNumber}` 
@@ -998,78 +1124,165 @@ class MaintenanceLetterService extends BasePDFGenerator {
         ? `B-${plotNumber}` 
         : `${unitType.substring(0, 1)}-${plotNumber}`
     const sectionTopY = this.layout.currentY
-    const leftWidth = this.layout.contentWidth
+    const cardWidth = this.layout.contentWidth
     const leftX = this.MARGIN
     const badgeText = `${sector ? `${sector}/` : ''}${unitDisplay}`
-    const badgeWidth = this.fonts.bold.widthOfTextAtSize(badgeText, 9) + 20
-    const ownerMaxWidth = Math.max(200, leftWidth - badgeWidth - 42)
-    const ownerLines = this.wrapTextLines(owners, ownerMaxWidth, this.fonts.bold, 14).slice(0, 2)
-    const ownerBlockHeight = Math.max(18, ownerLines.length * 16)
+    const badgeWidth = this.fonts.bold.widthOfTextAtSize(badgeText, 8) + 20
+    const cardPaddingX = 14
+    const rightPaneWidth = 160
+    const summaryCardHeight = 72
+    const ownerContentWidth = Math.max(220, cardWidth - rightPaneWidth - 52)
+    const ownerMaxWidth = Math.max(200, ownerContentWidth - 14)
+    const ownerLines = this.wrapTextLines(owners, ownerMaxWidth, this.fonts.bold, 15).slice(0, 2)
+    const ownerBlockHeight = Math.max(20, ownerLines.length * 17)
     const metaLines = [
-      `Unit Type: ${unitType}`,
-      sector ? `Sector: ${sector}` : null,
-      `Unit Ref: ${sector ? `${sector}/` : ''}${unitDisplay}`
+      `UNIT REF: ${sector ? `${sector}/` : ''}${unitDisplay}`,
+      `TYPE: ${unitType}`,
+      sector ? `SECTOR: ${sector}` : null
     ].filter(Boolean) as string[]
-    const metaBlockHeight = metaLines.length * 12
-    const cardHeight = Math.max(92, 42 + ownerBlockHeight + metaBlockHeight)
+    const metaBlockHeight = metaLines.length * 13
+    const rightPaneHeight = 18 + 10 + summaryCardHeight
+    const cardHeight = Math.max(106, 38 + ownerBlockHeight + metaBlockHeight, rightPaneHeight + 28)
     const cardBottomY = sectionTopY - cardHeight
+
+    this.page.drawRectangle({
+      x: leftX + 2,
+      y: cardBottomY - 2,
+      width: cardWidth,
+      height: cardHeight,
+      color: rgb(0.88, 0.90, 0.91),
+      opacity: 0.18
+    })
 
     this.page.drawRectangle({
       x: leftX,
       y: cardBottomY,
-      width: leftWidth,
+      width: cardWidth,
       height: cardHeight,
-      color: rgb(1, 1, 1),
+      color: rgb(0.96, 0.97, 0.97),
       borderColor: this.COLORS.BORDER,
-      borderWidth: 1
+      borderWidth: 0.9
     })
 
     this.page.drawRectangle({
       x: leftX,
-      y: cardBottomY + cardHeight - 18,
-      width: leftWidth,
-      height: 18,
-      color: rgb(0.93, 0.97, 0.98)
+      y: cardBottomY + cardHeight - 17,
+      width: cardWidth,
+      height: 17,
+      color: rgb(0.945, 0.952, 0.953)
     })
 
-    const ownerTopY = cardBottomY + cardHeight - 42
+    this.page.drawText('CUSTOMER:', {
+      x: leftX + cardPaddingX,
+      y: cardBottomY + cardHeight - 13.5,
+      size: 7.8,
+      font: this.fonts.regular,
+      color: this.COLORS.GRAY
+    })
+
+    const ownerTopY = cardBottomY + cardHeight - 40
     ownerLines.forEach((line, index) => {
       this.page.drawText(line, {
-        x: leftX + 14,
-        y: ownerTopY - index * 16,
-        size: 14,
+        x: leftX + cardPaddingX,
+        y: ownerTopY - index * 17,
+        size: 15,
         font: this.fonts.bold,
         color: this.COLORS.TEXT
       })
     })
 
     metaLines.forEach((line, index) => {
-        this.page.drawText(String(line), {
-          x: leftX + 14,
-          y: ownerTopY - ownerBlockHeight - 4 - index * 12,
-          size: 8.5,
-          font: this.fonts.regular,
-          color: this.COLORS.GRAY
-        })
+      this.page.drawText(String(line), {
+        x: leftX + cardPaddingX,
+        y: ownerTopY - ownerBlockHeight - 9 - index * 13,
+        size: 8.6,
+        font: this.fonts.regular,
+        color: this.COLORS.TEXT
       })
+    })
 
-    const badgeX = leftX + leftWidth - badgeWidth - 14
-    const badgeY = cardBottomY + cardHeight - 42
+    const rightPaneX = leftX + cardWidth - rightPaneWidth - 16
+    const badgeX = rightPaneX + rightPaneWidth - badgeWidth
+    const badgeY = cardBottomY + cardHeight - 17
+    const summaryY = cardBottomY + 14
 
     this.page.drawRectangle({
       x: badgeX,
       y: badgeY,
       width: badgeWidth,
-      height: 20,
-      color: rgb(0.08, 0.55, 0.54)
+      height: 15,
+      color: rgb(0.16, 0.52, 0.70),
+      borderColor: rgb(0.12, 0.45, 0.60),
+      borderWidth: 0.4
     })
 
     this.page.drawText(badgeText, {
-      x: badgeX + 10,
-      y: badgeY + 6,
-      size: 9,
+      x: badgeX + 9,
+      y: badgeY + 4.2,
+      size: 8,
       font: this.fonts.bold,
       color: rgb(1, 1, 1)
+    })
+
+    this.page.drawRectangle({
+      x: rightPaneX + 2,
+      y: summaryY - 2,
+      width: rightPaneWidth,
+      height: summaryCardHeight,
+      color: rgb(0.10, 0.34, 0.33),
+      opacity: 0.12
+    })
+
+    this.page.drawRectangle({
+      x: rightPaneX,
+      y: summaryY,
+      width: rightPaneWidth,
+      height: summaryCardHeight,
+      color: rgb(0.08, 0.55, 0.54),
+      borderColor: rgb(0.05, 0.43, 0.42),
+      borderWidth: 0.6
+    })
+
+    this.page.drawText('MAINTENANCE', {
+      x: rightPaneX + 10,
+      y: summaryY + summaryCardHeight - 17,
+      size: 10.8,
+      font: this.fonts.bold,
+      color: rgb(1, 1, 1)
+    })
+
+    this.page.drawRectangle({
+      x: rightPaneX + 9,
+      y: summaryY + 8,
+      width: rightPaneWidth - 18,
+      height: summaryCardHeight - 28,
+      color: rgb(0.18, 0.64, 0.63)
+    })
+
+    const summaryLabelX = rightPaneX + 16
+    const summaryValueRightX = rightPaneX + rightPaneWidth - 16
+    ;[
+      ['Issue Date', issueDate],
+      ['Due Date', dueDate],
+      ['Statement FY', letter.financial_year]
+    ].forEach(([label, value], index) => {
+      const rowY = summaryY + summaryCardHeight - 31 - index * 12
+      const valueText = String(value)
+      const valueWidth = this.fonts.bold.widthOfTextAtSize(valueText, 7.55)
+      this.page.drawText(`${label}:`, {
+        x: summaryLabelX,
+        y: rowY,
+        size: 7.05,
+        font: this.fonts.bold,
+        color: rgb(0.88, 0.97, 0.96)
+      })
+      this.page.drawText(valueText, {
+        x: summaryValueRightX - valueWidth,
+        y: rowY,
+        size: 7.55,
+        font: this.fonts.bold,
+        color: rgb(1, 1, 1)
+      })
     })
 
     this.layout.currentY = cardBottomY - 20
@@ -1082,7 +1295,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       color: this.COLORS.TEXT
     })
 
-    this.layout.currentY -= 18
+    this.layout.currentY -= 16
 
     const introText =
       'Below is the maintenance statement for your unit, including the current maintenance amount, any add-ons, previous arrears, and the payable totals.'
@@ -1096,7 +1309,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       this.COLORS.GRAY
     )
 
-    this.layout.currentY -= Math.max(30, introHeight + 8)
+    this.layout.currentY -= Math.max(26, introHeight + 8)
   }
 
   private drawAmountTable(letter: MaintenanceLetter, addOns: LetterAddOn[]): void {
@@ -1129,6 +1342,11 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const totalAfter = normalizeMoney(totalBefore + discountAmount)
     const addOnsTotal = normalizedAddOns.reduce((sum, addon) => sum + addon.addon_amount, 0)
     const storedDiscountPercentage = Number(letter.snapshot_discount_percentage || 0)
+    const penaltyLabel =
+      projectService.getChargesConfig(letter.project_id).penalty_label ===
+      'Late Payment Charges'
+        ? 'Late Payment Charges'
+        : 'Penalty'
     const discountPercentage =
       storedDiscountPercentage > 0
         ? storedDiscountPercentage
@@ -1138,16 +1356,6 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const discountPercentageLabel = Number.isInteger(discountPercentage)
       ? String(discountPercentage)
       : discountPercentage.toFixed(2).replace(/\.00$/, '')
-
-    this.page.drawText('CHARGE SUMMARY', {
-      x: this.MARGIN,
-      y: this.layout.currentY + 8,
-      size: 10,
-      font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
-    })
-
-    this.layout.currentY -= 10
 
     const breakdownRows: Array<{
       title: string
@@ -1180,12 +1388,21 @@ class MaintenanceLetterService extends BasePDFGenerator {
       })
     }
 
+    const displayRows = [...breakdownRows]
+    while (displayRows.length < 5) {
+      displayRows.push({
+        title: '',
+        details: '',
+        amount: ''
+      })
+    }
+
     const tableX = this.MARGIN
-    const tableWidth = this.layout.contentWidth * 0.67
-    const totalsGap = 16
+    const tableWidth = this.layout.contentWidth * 0.655
+    const totalsGap = 14
     const totalsWidth = this.layout.contentWidth - tableWidth - totalsGap
     const totalsX = tableX + tableWidth + totalsGap
-    const headerHeight = 28
+    const headerHeight = 30
     const columnWidths = [
       tableWidth * 0.10,
       tableWidth * 0.31,
@@ -1200,15 +1417,19 @@ class MaintenanceLetterService extends BasePDFGenerator {
       tableX + tableWidth
     ]
 
-    const rowHeights = breakdownRows.map((row) => {
-      const titleLines = this.wrapTextLines(row.title, columnWidths[1] - 16, this.fonts.bold, 8.75)
-      const detailLines = this.wrapTextLines(row.details, columnWidths[2] - 16, this.fonts.regular, 8.25)
-      const lineCount = Math.max(titleLines.length, detailLines.length, 1)
-      return Math.max(26, 12 + lineCount * 10)
-    })
+    const rowHeights = displayRows.map((_row, index) => (index < 2 ? 28 : 24))
 
     const tableHeight = headerHeight + rowHeights.reduce((sum, height) => sum + height, 0)
     const tableY = this.layout.currentY - tableHeight
+
+    this.page.drawRectangle({
+      x: tableX + 2,
+      y: tableY - 2,
+      width: tableWidth,
+      height: tableHeight,
+      color: rgb(0.84, 0.86, 0.87),
+      opacity: 0.12
+    })
 
     this.page.drawRectangle({
       x: tableX,
@@ -1216,7 +1437,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       width: tableWidth,
       height: tableHeight,
       borderColor: this.COLORS.BORDER,
-      borderWidth: 1
+      borderWidth: 0.9
     })
 
     this.page.drawRectangle({
@@ -1224,7 +1445,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       y: tableY + tableHeight - headerHeight,
       width: tableWidth,
       height: headerHeight,
-      color: rgb(0.12, 0.32, 0.58)
+      color: rgb(0.18, 0.42, 0.31)
     })
 
     ;['No.', 'Item Description', 'Details', 'Amount'].forEach((header, index) => {
@@ -1232,7 +1453,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       const textWidth = this.fonts.bold.widthOfTextAtSize(header, 8.5)
       this.page.drawText(header, {
         x: columnPositions[index] + (width - textWidth) / 2,
-        y: tableY + tableHeight - 18,
+        y: tableY + tableHeight - 19,
         size: 8.5,
         font: this.fonts.bold,
         color: rgb(1, 1, 1)
@@ -1249,7 +1470,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
 
     let currentRowY = tableY + tableHeight - headerHeight
-    breakdownRows.forEach((row, rowIndex) => {
+    displayRows.forEach((row, rowIndex) => {
       const rowHeight = rowHeights[rowIndex]
       currentRowY -= rowHeight
 
@@ -1261,7 +1482,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
         color: rowIndex % 2 === 0 ? rgb(0.99, 0.995, 0.995) : rgb(1, 1, 1)
       })
 
-      if (rowIndex < breakdownRows.length - 1) {
+      if (rowIndex < displayRows.length - 1) {
         this.page.drawLine({
           start: { x: tableX, y: currentRowY },
           end: { x: tableX + tableWidth, y: currentRowY },
@@ -1281,7 +1502,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
         y: currentRowY + rowHeight - 14,
         size: 8.25,
         font: this.fonts.regular,
-        color: this.COLORS.GRAY
+        color: row.title ? this.COLORS.GRAY : rgb(0.82, 0.82, 0.82)
       })
 
       titleLines.forEach((line, lineIndex) => {
@@ -1304,22 +1525,25 @@ class MaintenanceLetterService extends BasePDFGenerator {
         })
       })
 
-      this.page.drawText(row.amount, {
-        x: columnPositions[3] + columnWidths[3] - amountWidth - 8,
-        y: currentRowY + rowHeight - 14,
-        size: 8.75,
-        font: this.fonts.bold,
-        color: this.COLORS.TEXT
-      })
+      if (row.amount) {
+        this.page.drawText(row.amount, {
+          x: columnPositions[3] + columnWidths[3] - amountWidth - 8,
+          y: currentRowY + rowHeight - 14,
+          size: 8.75,
+          font: this.fonts.bold,
+          color: this.COLORS.TEXT
+        })
+      }
     })
 
     const totalsRows: Array<{
       label: string
       value: string
+      note?: string
       tone?: 'default' | 'discount' | 'highlight'
     }> = [
       {
-        label: 'Statement Total',
+        label: 'Subtotal',
         value: this.formatCurrency(baseAmount + addOnsTotal + arrearsAmount)
       }
     ]
@@ -1333,21 +1557,73 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
 
     totalsRows.push({
-      label: 'Before Due Date',
+      label: 'TOTAL',
+      note: '(Before Due)',
       value: this.formatCurrency(totalBefore)
     })
 
     totalsRows.push({
-      label: 'After Due Date',
+      label: 'LATE PAYMENT (After Due)',
+      note: (() => {
+        const [, endYearShort] = String(letter.financial_year || '').split('-')
+        if (!endYearShort) return undefined
+        const fullEndYear =
+          endYearShort.length === 2
+            ? `${String(letter.financial_year).slice(0, 2)}${endYearShort}`
+            : endYearShort
+        return `Total (Inc. ${penaltyLabel})\nPenalty Period: Before 31st March ${fullEndYear}`
+      })(),
       value: this.formatCurrency(totalAfter),
       tone: 'highlight'
     })
 
-    const totalsRowHeights = totalsRows.map((row) => (row.tone === 'highlight' ? 38 : 30))
-    const totalsHeaderHeight = 36
-    const totalsHeight = totalsHeaderHeight + totalsRowHeights.reduce((sum, height) => sum + height, 0)
-    const totalsY = this.layout.currentY - totalsHeight
     const totalsInsetX = 16
+    const totalsRowMetrics = totalsRows.map((row, index) => {
+      const labelFontSize = row.tone === 'highlight' ? 8 : 8
+      const valueFontSize = row.tone === 'highlight' ? 9.25 : 9
+      const labelLineHeight = row.tone === 'highlight' ? 10 : 10
+      const noteFontSize = 7
+      const noteLineHeight = 9
+      const valueWidth = this.fonts.bold.widthOfTextAtSize(row.value, valueFontSize)
+      const availableLabelWidth = Math.max(78, totalsWidth - totalsInsetX * 2 - valueWidth - 14)
+      const labelLines = this.wrapTextLines(row.label, availableLabelWidth, this.fonts.bold, labelFontSize)
+      const noteLines = row.note
+        ? String(row.note)
+            .split('\n')
+            .flatMap((noteLine) =>
+              this.wrapTextLines(noteLine, totalsWidth - totalsInsetX * 2, this.fonts.regular, noteFontSize)
+            )
+        : []
+      const labelBlockHeight = labelLines.length * labelLineHeight
+      const noteBlockHeight = noteLines.length > 0 ? 4 + noteLines.length * noteLineHeight : 0
+      const minimumHeight = row.tone === 'highlight' ? 54 : index === 2 ? 40 : 28
+      const rowHeight = Math.max(minimumHeight, 14 + Math.max(labelBlockHeight, valueFontSize + 2) + noteBlockHeight + 10)
+
+      return {
+        ...row,
+        labelFontSize,
+        valueFontSize,
+        labelLineHeight,
+        noteFontSize,
+        noteLineHeight,
+        valueWidth,
+        labelLines,
+        noteLines,
+        rowHeight
+      }
+    })
+    const totalsHeaderHeight = 36
+    const totalsHeight = totalsHeaderHeight + totalsRowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
+    const totalsY = this.layout.currentY - totalsHeight
+
+    this.page.drawRectangle({
+      x: totalsX + 2,
+      y: totalsY - 2,
+      width: totalsWidth,
+      height: totalsHeight,
+      color: rgb(0.84, 0.86, 0.87),
+      opacity: 0.12
+    })
 
     this.page.drawRectangle({
       x: totalsX,
@@ -1356,7 +1632,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       height: totalsHeight,
       color: rgb(0.985, 0.99, 0.99),
       borderColor: this.COLORS.BORDER,
-      borderWidth: 1
+      borderWidth: 0.9
     })
 
     this.page.drawRectangle({
@@ -1364,24 +1640,21 @@ class MaintenanceLetterService extends BasePDFGenerator {
       y: totalsY + totalsHeight - totalsHeaderHeight,
       width: totalsWidth,
       height: totalsHeaderHeight,
-      color: rgb(0.08, 0.55, 0.54)
+      color: rgb(0.18, 0.42, 0.31)
     })
 
-    this.page.drawText('PAYMENT SUMMARY', {
+    this.page.drawText('PAYMENT OVERVIEW', {
       x: totalsX + totalsInsetX,
       y: totalsY + totalsHeight - 22,
-      size: 9,
+      size: 10,
       font: this.fonts.bold,
       color: rgb(1, 1, 1)
     })
 
     let totalsCursorY = totalsY + totalsHeight - totalsHeaderHeight
-    totalsRows.forEach((row, index) => {
-      const rowHeight = totalsRowHeights[index]
+    totalsRowMetrics.forEach((row, index) => {
+      const rowHeight = row.rowHeight
       totalsCursorY -= rowHeight
-
-      const labelFontSize = row.tone === 'highlight' ? 9 : 8
-      const valueFontSize = row.tone === 'highlight' ? 9.5 : 9
 
       if (row.tone === 'highlight') {
         this.page.drawRectangle({
@@ -1389,7 +1662,13 @@ class MaintenanceLetterService extends BasePDFGenerator {
           y: totalsCursorY,
           width: totalsWidth,
           height: rowHeight,
-          color: rgb(0.08, 0.55, 0.54)
+          color: rgb(0.985, 0.985, 0.97)
+        })
+        this.page.drawLine({
+          start: { x: totalsX + totalsInsetX, y: totalsCursorY + rowHeight },
+          end: { x: totalsX + totalsWidth - totalsInsetX, y: totalsCursorY + rowHeight },
+          thickness: 0.6,
+          color: this.COLORS.BORDER
         })
       } else if (index > 0) {
         this.page.drawLine({
@@ -1402,31 +1681,44 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
       const rowColor =
         row.tone === 'highlight'
-          ? rgb(1, 1, 1)
+          ? this.COLORS.TEXT
           : row.tone === 'discount'
-            ? this.COLORS.SUCCESS
+            ? this.COLORS.WARNING
             : this.COLORS.TEXT
-      const valueWidth = this.fonts.bold.widthOfTextAtSize(row.value, valueFontSize)
-      const textTopPadding = row.tone === 'highlight' ? 23 : 20
+      const noteColor = row.tone === 'highlight' ? this.COLORS.TEXT : this.COLORS.GRAY
+      const topLineY = totalsCursorY + rowHeight - (row.tone === 'highlight' ? 18 : 22)
 
-      this.page.drawText(row.label, {
-        x: totalsX + totalsInsetX,
-        y: totalsCursorY + rowHeight - textTopPadding,
-        size: labelFontSize,
-        font: this.fonts.bold,
-        color: rowColor
+      row.labelLines.forEach((line, lineIndex) => {
+        this.page.drawText(line, {
+          x: totalsX + totalsInsetX,
+          y: topLineY - lineIndex * row.labelLineHeight,
+          size: row.labelFontSize,
+          font: this.fonts.bold,
+          color: rowColor
+        })
       })
 
       this.page.drawText(row.value, {
-        x: totalsX + totalsWidth - valueWidth - totalsInsetX,
-        y: totalsCursorY + rowHeight - textTopPadding,
-        size: valueFontSize,
+        x: totalsX + totalsWidth - row.valueWidth - totalsInsetX,
+        y: topLineY,
+        size: row.tone === 'highlight' ? 10.1 : row.valueFontSize,
         font: this.fonts.bold,
-        color: rowColor
+        color: row.tone === 'discount' || row.tone === 'highlight' ? this.COLORS.WARNING : rowColor
+      })
+
+      row.noteLines.forEach((line, lineIndex) => {
+        const noteStartY = topLineY - row.labelLines.length * row.labelLineHeight - (row.tone === 'highlight' ? 6 : 4)
+        this.page.drawText(line, {
+          x: totalsX + totalsInsetX,
+          y: noteStartY - lineIndex * row.noteLineHeight,
+          size: row.tone === 'highlight' && lineIndex === 0 ? 7.6 : row.noteFontSize,
+          font: row.tone === 'highlight' && lineIndex === 0 ? this.fonts.bold : this.fonts.regular,
+          color: noteColor
+        })
       })
     })
 
-    this.layout.currentY = Math.min(tableY, totalsY) - 24
+    this.layout.currentY = Math.min(tableY, totalsY) - 14
   }
 
   protected drawStyledTable(
@@ -1695,28 +1987,40 @@ class MaintenanceLetterService extends BasePDFGenerator {
   protected async drawBankDetails(letter: MaintenanceLetter): Promise<void> {
     const effectiveBankDetails = this.resolveLetterBankDetails(letter)
 
-    this.layout.currentY -= 10
+    this.layout.currentY -= 6
 
     const headerText = effectiveBankDetails.usesSectorConfig
-      ? `PAYMENT DETAILS - SECTOR ${letter.sector_code || ''}`
-      : 'BANK DETAILS FOR PAYMENT'
+      ? `PAYMENT OPTIONS - SECTOR ${letter.sector_code || ''}`
+      : 'PAYMENT OPTIONS'
     this.page.drawText(headerText, {
       x: this.MARGIN,
       y: this.layout.currentY,
-      size: 10,
+      size: 10.5,
       font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
+      color: this.COLORS.TEXT
     })
 
-    this.layout.currentY -= 18
+    const headingWidth = this.fonts.bold.widthOfTextAtSize(headerText, 10.5)
+    const dividerStartX = Math.max(this.MARGIN + 180, this.MARGIN + headingWidth + 18)
+    this.page.drawLine({
+      start: { x: dividerStartX, y: this.layout.currentY + 4 },
+      end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY + 4 },
+      thickness: 1.2,
+      color: this.COLORS.SECONDARY
+    })
+
+    this.layout.currentY -= 16
+
+    const branchValue = [effectiveBankDetails.branch || '', effectiveBankDetails.branchAddress || '']
+      .filter(Boolean)
+      .join(', ')
 
     const bankData: [string, string][] = [
+      ['Bank', effectiveBankDetails.bankName || ''],
+      ['Branch', branchValue],
       ['Account Name', effectiveBankDetails.accountName || ''],
       ['Account No.', effectiveBankDetails.accountNo || ''],
-      ['IFSC Code', effectiveBankDetails.ifscCode || ''],
-      ['Bank Name', effectiveBankDetails.bankName || ''],
-      ['Branch', effectiveBankDetails.branch || ''],
-      ['Branch Address', effectiveBankDetails.branchAddress || '']
+      ['IFSC Code', effectiveBankDetails.ifscCode || '']
     ].filter(([, value]) => value && value.trim() !== '') as [string, string][]
 
     if (bankData.length === 0) {
@@ -1732,27 +2036,66 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
 
     const qrCodePath = effectiveBankDetails.qrCodePath
+    const footerTextY = 16
+    const footerReserveTopY = footerTextY + 36
     const sectionWidth = this.layout.width - (this.MARGIN * 2)
-    const sectionGap = qrCodePath ? 16 : 0
-    const qrColumnWidth = qrCodePath ? 178 : 0
+    const sectionGap = qrCodePath ? 18 : 0
+    const qrColumnWidth = qrCodePath ? 170 : 0
     const tableWidth = qrCodePath ? sectionWidth - qrColumnWidth - sectionGap : sectionWidth
     const sectionTopY = this.layout.currentY
     const tableX = this.MARGIN
 
-    const cardHeaderHeight = 24
+    const cardHeaderHeight = 31
     const labelColumnWidth = tableWidth * 0.26
-    const rowMetrics = bankData.map(([label, value]) => {
-      const labelLines = this.wrapTextLines(label, labelColumnWidth - 18, this.fonts.bold, 8)
-      const valueLines = this.wrapTextLines(value, tableWidth - labelColumnWidth - 18, this.fonts.regular, 8.5)
+    const baseRowMetrics = bankData.map(([label, value]) => {
+      const labelLines = this.wrapTextLines(label, labelColumnWidth - 20, this.fonts.bold, 7.7)
+      const valueLines = this.wrapTextLines(
+        value,
+        tableWidth - labelColumnWidth - 20,
+        this.fonts.regular,
+        8.2
+      )
       const lineCount = Math.max(labelLines.length, valueLines.length)
       return {
         labelLines,
         valueLines,
-        rowHeight: Math.max(30, 12 + lineCount * 10)
+        rowHeight: Math.max(29, 12 + lineCount * 10)
       }
     })
-    const tableHeight = cardHeaderHeight + rowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
+    const availableCardHeight = Math.max(118, sectionTopY - footerReserveTopY - 4)
+    const desiredBodyHeight = baseRowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
+    const targetCardHeight = Math.min(158, availableCardHeight)
+    const maxBodyHeight = Math.max(88, targetCardHeight - cardHeaderHeight)
+    const rowScale = desiredBodyHeight > maxBodyHeight ? maxBodyHeight / desiredBodyHeight : 1
+    let rowMetrics = baseRowMetrics.map((row) => ({
+      ...row,
+      rowHeight: Math.max(20, Math.round(row.rowHeight * rowScale))
+    }))
+    let scaledBodyHeight = rowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
+    if (scaledBodyHeight > maxBodyHeight) {
+      let overflow = scaledBodyHeight - maxBodyHeight
+      rowMetrics = rowMetrics.map((row) => {
+        if (overflow <= 0) return row
+        const reducible = Math.min(overflow, Math.max(0, row.rowHeight - 18))
+        overflow -= reducible
+        return {
+          ...row,
+          rowHeight: row.rowHeight - reducible
+        }
+      })
+      scaledBodyHeight = rowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
+    }
+    const tableHeight = Math.min(targetCardHeight, cardHeaderHeight + scaledBodyHeight)
     const tableY = sectionTopY - tableHeight
+
+    this.page.drawRectangle({
+      x: tableX + 2,
+      y: tableY - 2,
+      width: tableWidth,
+      height: tableHeight,
+      color: rgb(0.84, 0.86, 0.87),
+      opacity: 0.12
+    })
 
     this.page.drawRectangle({
       x: tableX,
@@ -1761,7 +2104,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       height: tableHeight,
       color: rgb(1, 1, 1),
       borderColor: this.COLORS.BORDER,
-      borderWidth: 1
+      borderWidth: 0.9
     })
 
     this.page.drawRectangle({
@@ -1769,15 +2112,15 @@ class MaintenanceLetterService extends BasePDFGenerator {
       y: tableY + tableHeight - cardHeaderHeight,
       width: tableWidth,
       height: cardHeaderHeight,
-      color: rgb(0.93, 0.97, 0.98)
+      color: rgb(0.94, 0.95, 0.96)
     })
 
-    this.page.drawText('BANK TRANSFER DETAILS', {
+    this.page.drawText('BANK TRANSFER', {
       x: tableX + 12,
-      y: tableY + tableHeight - 16,
-      size: 8,
+      y: tableY + tableHeight - 19.5,
+      size: 10.2,
       font: this.fonts.bold,
-      color: this.COLORS.PRIMARY
+      color: this.COLORS.TEXT
     })
 
     let rowCursorY = tableY + tableHeight - cardHeaderHeight
@@ -1803,8 +2146,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       metric.labelLines.forEach((line, lineIndex) => {
         this.page.drawText(line.toUpperCase(), {
           x: tableX + 10,
-          y: rowCursorY + metric.rowHeight - 12 - lineIndex * 9,
-          size: 8,
+          y: rowCursorY + metric.rowHeight - 11.5 - lineIndex * 8.5,
+          size: 7.7,
           font: this.fonts.bold,
           color: this.COLORS.GRAY
         })
@@ -1813,8 +2156,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       metric.valueLines.forEach((line, lineIndex) => {
         this.page.drawText(line, {
           x: tableX + labelColumnWidth + 10,
-          y: rowCursorY + metric.rowHeight - 13 - lineIndex * 10,
-          size: 8.5,
+          y: rowCursorY + metric.rowHeight - 12.5 - lineIndex * 9.5,
+          size: 8.2,
           font: this.fonts.regular,
           color: this.COLORS.TEXT
         })
@@ -1823,18 +2166,27 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     if (qrCodePath) {
       const qrLabel = effectiveBankDetails.usesSectorConfig
-        ? `SCAN TO PAY - SECTOR ${letter.sector_code || ''}`
-        : 'SCAN TO PAY'
+        ? 'UPI SCAN & PAY'
+        : 'UPI SCAN & PAY'
 
       const qrCardX = tableX + tableWidth + sectionGap
-      const qrCardHeight = Math.max(tableHeight, 220)
+      const qrCardHeight = tableHeight
       const qrCardY = sectionTopY - qrCardHeight
-      const qrHeaderHeight = 28
+      const qrHeaderHeight = 31
       const qrFrameInset = 14
       const qrFrameX = qrCardX + qrFrameInset
-      const qrFrameY = qrCardY + 46
+      const qrFrameY = qrCardY + 24
       const qrFrameWidth = qrColumnWidth - qrFrameInset * 2
-      const qrFrameHeight = qrCardHeight - qrHeaderHeight - 72
+      const qrFrameHeight = Math.max(60, qrCardHeight - qrHeaderHeight - 48)
+
+      this.page.drawRectangle({
+        x: qrCardX + 2,
+        y: qrCardY - 2,
+        width: qrColumnWidth,
+        height: qrCardHeight,
+        color: rgb(0.84, 0.86, 0.87),
+        opacity: 0.12
+      })
 
       this.page.drawRectangle({
         x: qrCardX,
@@ -1843,7 +2195,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
         height: qrCardHeight,
         color: rgb(0.97, 0.99, 0.99),
         borderColor: this.COLORS.BORDER,
-        borderWidth: 1
+        borderWidth: 0.9
       })
 
       this.page.drawRectangle({
@@ -1851,31 +2203,37 @@ class MaintenanceLetterService extends BasePDFGenerator {
         y: qrCardY + qrCardHeight - qrHeaderHeight,
         width: qrColumnWidth,
         height: qrHeaderHeight,
-        color: rgb(0.08, 0.55, 0.54)
+        color: rgb(0.94, 0.95, 0.96)
       })
 
       const qrLabelWidth = this.fonts.bold.widthOfTextAtSize(qrLabel, 8.5)
       this.page.drawText(qrLabel, {
         x: qrCardX + (qrColumnWidth - qrLabelWidth) / 2,
-        y: qrCardY + qrCardHeight - 18,
-        size: 8.5,
+        y: qrCardY + qrCardHeight - 19.5,
+        size: 10.2,
         font: this.fonts.bold,
-        color: rgb(1, 1, 1)
+        color: this.COLORS.TEXT
       })
 
-      const qrHint1 = 'Use any UPI app to scan'
-      const qrHint2 = 'and complete payment instantly'
+      const merchantLabel = (effectiveBankDetails.accountName || letter.project_name || 'Maintenance Payment')
+        .replace(/\s+/g, ' ')
+        .trim()
+      const merchantLines = this.wrapTextLines(merchantLabel, qrColumnWidth - 32, this.fonts.regular, 6.9)
+      merchantLines.slice(0, 2).forEach((line, index) => {
+        const lineWidth = this.fonts.regular.widthOfTextAtSize(line, 6.9)
+        this.page.drawText(line, {
+          x: qrCardX + (qrColumnWidth - lineWidth) / 2,
+          y: qrCardY + qrCardHeight - 44 - index * 8,
+          size: 6.9,
+          font: this.fonts.regular,
+          color: this.COLORS.TEXT
+        })
+      })
+
+      const qrHint1 = 'Scan to pay using any UPI app'
       this.page.drawText(qrHint1, {
         x: qrCardX + (qrColumnWidth - this.fonts.regular.widthOfTextAtSize(qrHint1, 7.5)) / 2,
-        y: qrCardY + 24,
-        size: 7.5,
-        font: this.fonts.regular,
-        color: this.COLORS.GRAY
-      })
-
-      this.page.drawText(qrHint2, {
-        x: qrCardX + (qrColumnWidth - this.fonts.regular.widthOfTextAtSize(qrHint2, 7.5)) / 2,
-        y: qrCardY + 14,
+        y: qrCardY + 12,
         size: 7.5,
         font: this.fonts.regular,
         color: this.COLORS.GRAY
@@ -1951,11 +2309,11 @@ class MaintenanceLetterService extends BasePDFGenerator {
         // QR code embedding failed - continue without it
       }
 
-      this.layout.currentY = Math.min(tableY, qrCardY) - 20
+      this.layout.currentY = footerReserveTopY
       return
     }
 
-    this.layout.currentY = tableY - 20
+    this.layout.currentY = footerReserveTopY
   }
 }
 
