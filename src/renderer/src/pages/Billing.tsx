@@ -903,20 +903,29 @@ const Billing: React.FC = () => {
     }
   }
 
-  const handleBatchPdf = async (): Promise<void> => {
-    if (selectedRowKeys.length === 0) {
-      message.warning('Please select letters to generate PDFs for')
+  const handleBatchPdf = async (
+    letterIdsOverride?: number[],
+    options?: {
+      emptyMessage?: string
+      failureMessage?: string
+    }
+  ): Promise<void> => {
+    const letterIds = (letterIdsOverride ?? selectedRowKeys.map((key) => Number(key))).filter((id) =>
+      Number.isFinite(id)
+    )
+
+    if (letterIds.length === 0) {
+      message.warning(options?.emptyMessage || 'Please select letters to generate PDFs for')
       return
     }
 
     setGeneratingPdf(true)
     setPdfProgress({
       current: 0,
-      total: selectedRowKeys.length,
+      total: letterIds.length,
       completed: []
     })
 
-    const letterIds = selectedRowKeys as number[]
     const { taskId } = (await window.api.worker.enqueueTask('batch-pdf', {
       mode: 'letters',
       letterIds
@@ -986,7 +995,11 @@ const Billing: React.FC = () => {
 
           if (successCount === 0 && failCount > 0) {
             reject(
-              new Error(firstError || 'Failed to generate selected maintenance letter PDFs')
+              new Error(
+                firstError ||
+                  options?.failureMessage ||
+                  'Failed to generate selected maintenance letter PDFs'
+              )
             )
             return
           }
@@ -1047,6 +1060,34 @@ const Billing: React.FC = () => {
       if (errorMessage !== 'Batch PDF generation cancelled') {
         message.error(errorMessage)
       }
+    })
+  }
+
+  const handleGenerateFilteredPdfs = (): void => {
+    if (filteredLetterIds.length === 0) {
+      message.warning('No maintenance letters match the current filters')
+      return
+    }
+
+    const runBulkPdf = async (): Promise<void> => {
+      await handleBatchPdf(filteredLetterIds, {
+        emptyMessage: 'No maintenance letters match the current filters',
+        failureMessage: 'Failed to generate maintenance letter PDFs for the visible list'
+      })
+    }
+
+    if (filteredLetterIds.length === 1) {
+      void runBulkPdf()
+      return
+    }
+
+    Modal.confirm({
+      title: `Generate PDFs for ${filteredLetterIds.length} visible letters?`,
+      content:
+        'This uses the current filters. For a smaller set, select specific rows from the table below.',
+      okText: `Generate ${filteredLetterIds.length} PDFs`,
+      cancelText: 'Cancel',
+      onOk: runBulkPdf
     })
   }
 
@@ -1136,6 +1177,14 @@ const Billing: React.FC = () => {
       matchUnitType
     )
   })
+
+  const filteredLetterIds = useMemo(
+    () =>
+      filteredLetters
+        .map((letter) => Number(letter.id))
+        .filter((id): id is number => Number.isFinite(id)),
+    [filteredLetters]
+  )
 
   const uniqueYears = useMemo(() => {
     const yearSet = new Set(letters.map((l) => l.financial_year).filter(Boolean))
@@ -1298,12 +1347,13 @@ const Billing: React.FC = () => {
       title: 'Unit',
       dataIndex: 'unit_number',
       key: 'unit_number',
+      width: 220,
       sorter: (a: MaintenanceLetter, b: MaintenanceLetter) =>
         (a.unit_number || '').localeCompare(b.unit_number || ''),
       render: (unitNumber: string, record: MaintenanceLetter) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>{unitNumber}</div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
+        <div className="billing-letter-unit-cell">
+          <div className="billing-letter-unit-value">{unitNumber}</div>
+          <div className="billing-letter-unit-owner">
             {record.owner_name || 'No owner assigned'}
           </div>
         </div>
@@ -1321,6 +1371,7 @@ const Billing: React.FC = () => {
       title: 'Add-ons',
       dataIndex: 'add_ons_total',
       key: 'add_ons_total',
+      width: 120,
       align: 'right' as const,
       render: (val: number) => (
         <Button type="link" size="small">
@@ -1338,6 +1389,7 @@ const Billing: React.FC = () => {
       title: 'Final',
       dataIndex: 'final_amount',
       key: 'final_amount',
+      width: 132,
       align: 'right' as const,
       render: (val: number) => <strong>Rs. {Math.round(val || 0).toLocaleString()}</strong>,
       sorter: (a: MaintenanceLetter, b: MaintenanceLetter) => a.final_amount - b.final_amount
@@ -1346,6 +1398,7 @@ const Billing: React.FC = () => {
       title: 'Letter Date',
       dataIndex: 'generated_date',
       key: 'generated_date',
+      width: 126,
       render: (date: string) => (date ? dayjs(date).format('DD MMM YYYY') : '-'),
       sorter: (a: MaintenanceLetter, b: MaintenanceLetter) =>
         dayjs(a.generated_date || '').valueOf() - dayjs(b.generated_date || '').valueOf()
@@ -1354,6 +1407,7 @@ const Billing: React.FC = () => {
       title: 'Due Date',
       dataIndex: 'due_date',
       key: 'due_date',
+      width: 156,
       render: (date: string, record: MaintenanceLetter) => {
         const isOverdue = getDisplayStatus(record) === 'Overdue'
         return (
@@ -1372,6 +1426,7 @@ const Billing: React.FC = () => {
       title: 'Status',
       dataIndex: 'status',
       key: 'status',
+      width: 118,
       render: (_status: string, record: MaintenanceLetter) => {
         const status = getDisplayStatus(record)
         const tagColor = 
@@ -1503,7 +1558,7 @@ const Billing: React.FC = () => {
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Use this screen to generate letters first, then review status, PDFs, and payment readiness.
+              Use this screen to generate letters first, then review status, PDFs, and payment readiness. Use filters with Bulk PDF to export the visible list.
             </Text>
           </div>
           <Space className="responsive-action-bar">
@@ -1526,6 +1581,14 @@ const Billing: React.FC = () => {
                 }
               ]}
             />
+            <Button
+              icon={<FilePdfOutlined />}
+              onClick={handleGenerateFilteredPdfs}
+              disabled={filteredLetterIds.length === 0}
+              loading={generatingPdf}
+            >
+              Bulk PDF ({filteredLetterIds.length})
+            </Button>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleBatchGenerate}>
               Generate Maintenance Letters
             </Button>
@@ -1542,7 +1605,7 @@ const Billing: React.FC = () => {
             <Button
               type="primary"
               icon={<FilePdfOutlined />}
-              onClick={handleBatchPdf}
+              onClick={() => void handleBatchPdf()}
               loading={generatingPdf}
             >
               Generate PDFs ({selectedRowKeys.length})
@@ -1684,7 +1747,9 @@ const Billing: React.FC = () => {
       </Modal>
 
       <Table
+        className="billing-letters-table"
         rowSelection={{
+          columnWidth: 46,
           selectedRowKeys,
           onChange: setSelectedRowKeys
         }}
@@ -1700,7 +1765,7 @@ const Billing: React.FC = () => {
           onShowSizeChange: (_, size) => setPageSize(size)
         }}
         virtual={filteredLetters.length > 100}
-        scroll={{ x: 'max-content', y: filteredLetters.length > 100 ? 620 : undefined }}
+        scroll={{ x: 1260, y: filteredLetters.length > 100 ? 620 : undefined }}
         size="small"
         rowClassName={(record) => {
           const status = getDisplayStatus(record)

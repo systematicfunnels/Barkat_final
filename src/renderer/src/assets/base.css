@@ -3598,6 +3598,71 @@ svg.anticon {
   padding-top: 0;
 }
 
+.billing-letters-table .ant-table-container {
+  border-radius: 16px;
+  overflow: hidden;
+}
+
+.billing-letters-table .ant-table-thead > tr > th {
+  white-space: nowrap;
+}
+
+.billing-letters-table .ant-table-thead > tr > th .ant-table-column-sorters {
+  width: 100%;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.billing-letters-table .ant-table-thead > tr > th .ant-table-column-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.billing-letters-table .ant-table-selection-column {
+  min-width: 46px;
+  width: 46px;
+  padding-inline: 12px 8px !important;
+}
+
+.billing-letters-table .ant-table-tbody > tr > td {
+  vertical-align: top;
+}
+
+.billing-letter-unit-cell {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.billing-letter-unit-value {
+  font-weight: 700;
+  line-height: 1.25;
+  color: #111827;
+  white-space: nowrap;
+}
+
+.billing-letter-unit-owner {
+  color: #667085;
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+@media (max-width: 768px) {
+  .billing-letters-table .ant-table {
+    min-width: 1260px;
+  }
+
+  .billing-letters-table .ant-table-selection-column {
+    padding-inline: 10px 6px !important;
+  }
+
+  .billing-letter-unit-owner {
+    max-width: 170px;
+  }
+}
+
 .payments-filter-card .ant-card-body {
   gap: 14px;
 }

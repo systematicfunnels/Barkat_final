@@ -113,6 +113,27 @@ const getProjectDefaultSectorConfig = (
   letterhead_path: String(project?.letterhead_path || '').trim() || undefined
 })
 
+const normalizeAssetImageExtension = (selectedPath: string): string => {
+  const rawExtension = selectedPath.split('.').pop()?.trim().toLowerCase() || 'png'
+  if (rawExtension === 'jpeg') return 'jpg'
+  return ['png', 'jpg'].includes(rawExtension) ? rawExtension : 'png'
+}
+
+const buildVersionedAssetPath = (
+  directory: string,
+  fileStem: string,
+  extension: string
+): string => {
+  const safeStem =
+    fileStem
+      .trim()
+      .replace(/[^a-z0-9-_]+/gi, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '') || 'asset'
+
+  return `${directory}/${safeStem}-${Date.now()}.${extension}`
+}
+
 const TEMPLATE_OPTIONS = [
   {
     value: 'standard',
@@ -414,16 +435,27 @@ const Projects: React.FC = () => {
       })
 
       if (selectedPath) {
-        const extension = selectedPath.split('.').pop() || 'png'
+        const extension = normalizeAssetImageExtension(selectedPath)
         const sectorCode = String(sectorConfigs[index]?.sector_code || index + 1)
           .trim()
           .toUpperCase() || String(index + 1)
-        const targetPath = `assets/sector-letterheads/project-${editingProject?.id || 'draft'}-sector-${sectorCode}.${extension}`
+        const targetPath = buildVersionedAssetPath(
+          'assets/sector-letterheads',
+          `project-${editingProject?.id || 'draft'}-sector-${sectorCode}`,
+          extension
+        )
         const copyResult = await window.api.files.copyAssetFile(selectedPath, targetPath)
 
         if (copyResult.success) {
+          const hadPreviousLetterhead = Boolean(
+            String(sectorConfigs[index]?.letterhead_path || '').trim()
+          )
           handleSectorConfigChange(index, 'letterhead_path', targetPath)
-          message.success('Sector letterhead copied successfully')
+          message.success(
+            hadPreviousLetterhead
+              ? 'Sector letterhead updated in the form. Click Save to replace the old one.'
+              : 'Sector letterhead added in the form. Click Save to apply it.'
+          )
         } else {
           message.error(`Failed to copy letterhead: ${copyResult.error}`)
         }

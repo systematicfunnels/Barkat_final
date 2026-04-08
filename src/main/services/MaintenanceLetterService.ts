@@ -3,7 +3,7 @@ import { projectService } from './ProjectService'
 import { BasePDFGenerator } from './BasePDFGenerator'
 import fs from 'fs'
 import path from 'path'
-import { rgb } from 'pdf-lib'
+import { PDFFont, rgb } from 'pdf-lib'
 import { normalizeMoney } from '../utils/money'
 import { getUserDataPath } from '../utils/runtimePaths'
 
@@ -86,27 +86,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
     align: 'left' | 'center' = 'left',
     lineHeight: number = size + 4
   ): number {
-    const words = text.trim().split(/\s+/).filter(Boolean)
-    if (words.length === 0) return 0
-
-    const lines: string[] = []
-    let currentLine = ''
-
-    for (const word of words) {
-      const nextLine = currentLine ? `${currentLine} ${word}` : word
-      const nextWidth = font.widthOfTextAtSize(nextLine, size)
-
-      if (nextWidth <= maxWidth || currentLine === '') {
-        currentLine = nextLine
-      } else {
-        lines.push(currentLine)
-        currentLine = word
-      }
-    }
-
-    if (currentLine) {
-      lines.push(currentLine)
-    }
+    const lines = this.wrapTextLines(text, maxWidth, font, size).filter(Boolean)
+    if (lines.length === 0) return 0
 
     lines.forEach((line, index) => {
       const lineWidth = font.widthOfTextAtSize(line, size)
@@ -152,6 +133,20 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     if (currentLine) lines.push(currentLine)
     return lines
+  }
+
+  private formatUnitReference(plotNumber: string, sector?: string, unitType?: string): string {
+    const normalizedPlotNumber = String(plotNumber || '').trim() || '01'
+    const normalizedSector = String(sector || '').trim()
+    const normalizedUnitType = String(unitType || 'Plot').trim() || 'Plot'
+    const unitDisplay =
+      normalizedUnitType === 'BMF'
+        ? `BMF-${normalizedPlotNumber}`
+        : normalizedUnitType === 'Bungalow'
+          ? `B-${normalizedPlotNumber}`
+          : `${normalizedUnitType.substring(0, 1)}-${normalizedPlotNumber}`
+
+    return `${normalizedSector ? `${normalizedSector}/` : ''}${unitDisplay}`
   }
 
   private getCurrentBankSnapshot(projectId: number, sectorCode?: string): {
@@ -318,7 +313,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       return null
     }
     
-    const possiblePaths = [
+    const possiblePaths = Array.from(new Set([
       qrCodePath,
       path.resolve(qrCodePath),
       path.join(process.cwd(), qrCodePath),
@@ -327,21 +322,9 @@ class MaintenanceLetterService extends BasePDFGenerator {
       qrCodePath.startsWith('assets/') 
         ? path.join(getUserDataPath(), qrCodePath)
         : null
-    ].filter((p): p is string => Boolean(p))
-    
-    const foundPath = possiblePaths.find((p) => fs.existsSync(p))
-    
-    if (foundPath) {
-      return foundPath
-    }
-    
-    for (const possiblePath of possiblePaths) {
-      if (fs.existsSync(possiblePath)) {
-        return possiblePath
-      }
-    }
-    
-    return null
+    ].filter((p): p is string => Boolean(p))))
+
+    return possiblePaths.find((possiblePath) => fs.existsSync(possiblePath)) ?? null
   }
 
   private async embedImageFromPath(imagePath: string) {
@@ -384,14 +367,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const plotNumber = letter.unit_number || unit?.unit_number || String(letter.unit_id)
     const sector = unit?.sector_code?.trim() || letter.sector_code?.trim() || ''
     const unitType = unit?.unit_type || letter.unit_type || 'Plot'
-    const unitDisplay =
-      unitType === 'BMF'
-        ? `BMF-${plotNumber}`
-        : unitType === 'Bungalow'
-          ? `B-${plotNumber}`
-          : `${unitType.substring(0, 1)}-${plotNumber}`
 
-    return `${sector ? `${sector}/` : ''}${unitDisplay}`
+    return this.formatUnitReference(plotNumber, sector, unitType)
   }
 
   private sanitizeFileComponent(value: string): string {
@@ -430,8 +407,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
         start: { x: this.MARGIN, y: lineY },
         end: { x: leftLineEndX, y: lineY },
         thickness: 0.8,
-        color: this.COLORS.SECONDARY,
-        opacity: 0.55
+        color: this.COLORS.ACCENT
       })
     }
 
@@ -440,8 +416,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
         start: { x: rightLineStartX, y: lineY },
         end: { x: this.layout.width - this.MARGIN, y: lineY },
         thickness: 0.8,
-        color: this.COLORS.SECONDARY,
-        opacity: 0.55
+        color: this.COLORS.ACCENT
       })
     }
 
@@ -452,6 +427,66 @@ class MaintenanceLetterService extends BasePDFGenerator {
       font: footerFont,
       color: this.COLORS.GRAY
     })
+  }
+
+  private drawCenteredSectionDivider(
+    text: string,
+    options?: {
+      size?: number
+      lineGap?: number
+      lineThickness?: number
+      textColor?: ReturnType<typeof rgb>
+      lineColor?: ReturnType<typeof rgb>
+      minLineWidth?: number
+      advanceAfter?: number
+      font?: PDFFont
+    }
+  ): void {
+    const headingText = String(text || '').trim()
+    if (!headingText) return
+
+    const size = options?.size ?? 10.4
+    const lineGap = options?.lineGap ?? 14
+    const lineThickness = options?.lineThickness ?? 0.8
+    const textColor = options?.textColor ?? this.COLORS.TEXT
+    const lineColor = options?.lineColor ?? this.COLORS.ACCENT
+    const minLineWidth = options?.minLineWidth ?? 28
+    const font = options?.font ?? this.fonts.bold
+    const textWidth = font.widthOfTextAtSize(headingText, size)
+    const textX = (this.layout.width - textWidth) / 2
+    const lineY = this.layout.currentY + Math.max(3.6, size * 0.42)
+    const leftLineEndX = textX - lineGap
+    const rightLineStartX = textX + textWidth + lineGap
+
+    if (leftLineEndX - this.MARGIN > minLineWidth) {
+      this.page.drawLine({
+        start: { x: this.MARGIN, y: lineY },
+        end: { x: leftLineEndX, y: lineY },
+        thickness: lineThickness,
+        color: lineColor
+      })
+    }
+
+    if (this.layout.width - this.MARGIN - rightLineStartX > minLineWidth) {
+      this.page.drawLine({
+        start: { x: rightLineStartX, y: lineY },
+        end: { x: this.layout.width - this.MARGIN, y: lineY },
+        thickness: lineThickness,
+        color: lineColor
+      })
+    }
+
+    this.page.drawText(headingText, {
+      x: textX,
+      y: this.layout.currentY,
+      size,
+      font,
+      color: textColor
+    })
+
+    if (typeof options?.advanceAfter === 'number') {
+      this.layout.currentY -= options.advanceAfter
+    }
   }
 
   public getAll(): MaintenanceLetter[] {
@@ -930,14 +965,6 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const bannerTopY = this.layout.currentY + 4
     const bannerBottomY = bannerTopY - bannerHeight
 
-    this.page.drawRectangle({
-      x: this.MARGIN,
-      y: bannerTopY + 2,
-      width: this.layout.contentWidth,
-      height: 2.4,
-      color: rgb(0.08, 0.55, 0.54)
-    })
-
     const sublineParts = [
       letter.sector_code?.trim() ? `Sector ${letter.sector_code.trim()}` : null,
       regNo ? `Regd. No. ${regNo}` : null
@@ -1057,6 +1084,11 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
 
     this.layout.currentY -= drewLetterhead ? 20 : 10
+    this.drawCenteredSectionDivider('MAINTENANCE LETTER', {
+      size: 10.3,
+      advanceAfter: 18,
+      lineThickness: 0.8
+    })
   }
 
   private drawCenteredUnderlinedTitle(financialYear: string): void {
@@ -1073,23 +1105,21 @@ class MaintenanceLetterService extends BasePDFGenerator {
     
     const endYear = endYearShort.length === 2 ? startYear.slice(0, 2) + endYearShort : startYear
     const titleText = `FOR APRIL ${startYear} - MARCH ${endYear}`
-    this.page.drawText(titleText, {
-      x: this.MARGIN,
-      y: this.layout.currentY,
-      size: 10.5,
-      font: this.fonts.bold,
-      color: this.COLORS.ACCENT
+    this.drawCenteredSectionDivider(titleText, {
+      size: 10.2,
+      advanceAfter: 18,
+      lineThickness: 0.8
     })
 
     this.page.drawText('ITEMS & ARREARS', {
       x: this.MARGIN,
-      y: this.layout.currentY - 18,
-      size: 11.5,
+      y: this.layout.currentY,
+      size: 10.8,
       font: this.fonts.bold,
       color: this.COLORS.TEXT
     })
 
-    this.layout.currentY -= 30
+    this.layout.currentY -= 18
   }
 
   protected async drawRecipientSection(letter: MaintenanceLetter): Promise<void> {
@@ -1117,26 +1147,20 @@ class MaintenanceLetterService extends BasePDFGenerator {
       year: 'numeric'
     })
     const dueDate = this.formatDate(letter.due_date || generatedDate)
-
-    const unitDisplay = unitType === 'BMF' 
-      ? `BMF-${plotNumber}` 
-      : unitType === 'Bungalow' 
-        ? `B-${plotNumber}` 
-        : `${unitType.substring(0, 1)}-${plotNumber}`
     const sectionTopY = this.layout.currentY
     const cardWidth = this.layout.contentWidth
     const leftX = this.MARGIN
-    const badgeText = `${sector ? `${sector}/` : ''}${unitDisplay}`
+    const badgeText = this.formatUnitReference(plotNumber, sector, unitType)
     const badgeWidth = this.fonts.bold.widthOfTextAtSize(badgeText, 8) + 20
     const cardPaddingX = 14
-    const rightPaneWidth = 160
-    const summaryCardHeight = 72
+    const rightPaneWidth = 166
+    const summaryCardHeight = 76
     const ownerContentWidth = Math.max(220, cardWidth - rightPaneWidth - 52)
     const ownerMaxWidth = Math.max(200, ownerContentWidth - 14)
     const ownerLines = this.wrapTextLines(owners, ownerMaxWidth, this.fonts.bold, 15).slice(0, 2)
     const ownerBlockHeight = Math.max(20, ownerLines.length * 17)
     const metaLines = [
-      `UNIT REF: ${sector ? `${sector}/` : ''}${unitDisplay}`,
+      `UNIT REF: ${badgeText}`,
       `TYPE: ${unitType}`,
       sector ? `SECTOR: ${sector}` : null
     ].filter(Boolean) as string[]
@@ -1146,22 +1170,13 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const cardBottomY = sectionTopY - cardHeight
 
     this.page.drawRectangle({
-      x: leftX + 2,
-      y: cardBottomY - 2,
-      width: cardWidth,
-      height: cardHeight,
-      color: rgb(0.88, 0.90, 0.91),
-      opacity: 0.18
-    })
-
-    this.page.drawRectangle({
       x: leftX,
       y: cardBottomY,
       width: cardWidth,
       height: cardHeight,
-      color: rgb(0.96, 0.97, 0.97),
+      color: rgb(0.985, 0.987, 0.988),
       borderColor: this.COLORS.BORDER,
-      borderWidth: 0.9
+      borderWidth: 0.65
     })
 
     this.page.drawRectangle({
@@ -1204,7 +1219,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const rightPaneX = leftX + cardWidth - rightPaneWidth - 16
     const badgeX = rightPaneX + rightPaneWidth - badgeWidth
     const badgeY = cardBottomY + cardHeight - 17
-    const summaryY = cardBottomY + 14
+    const summaryY = cardBottomY + 12
 
     this.page.drawRectangle({
       x: badgeX,
@@ -1225,61 +1240,54 @@ class MaintenanceLetterService extends BasePDFGenerator {
     })
 
     this.page.drawRectangle({
-      x: rightPaneX + 2,
-      y: summaryY - 2,
-      width: rightPaneWidth,
-      height: summaryCardHeight,
-      color: rgb(0.10, 0.34, 0.33),
-      opacity: 0.12
-    })
-
-    this.page.drawRectangle({
       x: rightPaneX,
       y: summaryY,
       width: rightPaneWidth,
       height: summaryCardHeight,
-      color: rgb(0.08, 0.55, 0.54),
-      borderColor: rgb(0.05, 0.43, 0.42),
-      borderWidth: 0.6
+      color: rgb(0.10, 0.56, 0.55),
+      borderColor: rgb(0.07, 0.44, 0.43),
+      borderWidth: 0.55
     })
 
     this.page.drawText('MAINTENANCE', {
-      x: rightPaneX + 10,
-      y: summaryY + summaryCardHeight - 17,
-      size: 10.8,
+      x: rightPaneX + 11,
+      y: summaryY + summaryCardHeight - 18,
+      size: 10.9,
       font: this.fonts.bold,
       color: rgb(1, 1, 1)
     })
 
     this.page.drawRectangle({
-      x: rightPaneX + 9,
-      y: summaryY + 8,
-      width: rightPaneWidth - 18,
-      height: summaryCardHeight - 28,
-      color: rgb(0.18, 0.64, 0.63)
+      x: rightPaneX + 10,
+      y: summaryY + 9,
+      width: rightPaneWidth - 20,
+      height: summaryCardHeight - 31,
+      color: rgb(0.23, 0.67, 0.66)
     })
 
-    const summaryLabelX = rightPaneX + 16
-    const summaryValueRightX = rightPaneX + rightPaneWidth - 16
+    const summaryLabelX = rightPaneX + 19
+    const summaryValueRightX = rightPaneX + rightPaneWidth - 18
+    const summaryRowStartY = summaryY + summaryCardHeight - 34
+    const summaryRowGap = 13
     ;[
       ['Issue Date', issueDate],
       ['Due Date', dueDate],
       ['Statement FY', letter.financial_year]
     ].forEach(([label, value], index) => {
-      const rowY = summaryY + summaryCardHeight - 31 - index * 12
+      const rowY = summaryRowStartY - index * summaryRowGap
       const valueText = String(value)
-      const valueWidth = this.fonts.bold.widthOfTextAtSize(valueText, 7.55)
+      const valueWidth = this.fonts.bold.widthOfTextAtSize(valueText, 7.9)
       this.page.drawText(`${label}:`, {
         x: summaryLabelX,
         y: rowY,
-        size: 7.05,
-        font: this.fonts.bold,
-        color: rgb(0.88, 0.97, 0.96)
+        size: 7.25,
+        font: this.fonts.regular,
+        color: rgb(0.92, 0.985, 0.98)
       })
       this.page.drawText(valueText, {
         x: summaryValueRightX - valueWidth,
         y: rowY,
-        size: 7.55,
+        size: 7.9,
         font: this.fonts.bold,
         color: rgb(1, 1, 1)
       })
@@ -1389,7 +1397,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
 
     const displayRows = [...breakdownRows]
-    while (displayRows.length < 5) {
+    while (displayRows.length < 4) {
       displayRows.push({
         title: '',
         details: '',
@@ -1423,21 +1431,12 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const tableY = this.layout.currentY - tableHeight
 
     this.page.drawRectangle({
-      x: tableX + 2,
-      y: tableY - 2,
-      width: tableWidth,
-      height: tableHeight,
-      color: rgb(0.84, 0.86, 0.87),
-      opacity: 0.12
-    })
-
-    this.page.drawRectangle({
       x: tableX,
       y: tableY,
       width: tableWidth,
       height: tableHeight,
       borderColor: this.COLORS.BORDER,
-      borderWidth: 0.9
+      borderWidth: 0.65
     })
 
     this.page.drawRectangle({
@@ -1479,7 +1478,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
         y: currentRowY,
         width: tableWidth,
         height: rowHeight,
-        color: rowIndex % 2 === 0 ? rgb(0.99, 0.995, 0.995) : rgb(1, 1, 1)
+        color: rowIndex % 2 === 0 ? rgb(0.992, 0.994, 0.994) : rgb(1, 1, 1)
       })
 
       if (rowIndex < displayRows.length - 1) {
@@ -1617,22 +1616,13 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const totalsY = this.layout.currentY - totalsHeight
 
     this.page.drawRectangle({
-      x: totalsX + 2,
-      y: totalsY - 2,
-      width: totalsWidth,
-      height: totalsHeight,
-      color: rgb(0.84, 0.86, 0.87),
-      opacity: 0.12
-    })
-
-    this.page.drawRectangle({
       x: totalsX,
       y: totalsY,
       width: totalsWidth,
       height: totalsHeight,
       color: rgb(0.985, 0.99, 0.99),
       borderColor: this.COLORS.BORDER,
-      borderWidth: 0.9
+      borderWidth: 0.65
     })
 
     this.page.drawRectangle({
@@ -1718,272 +1708,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       })
     })
 
-    this.layout.currentY = Math.min(tableY, totalsY) - 14
+    this.layout.currentY = Math.min(tableY, totalsY) - 8
   }
-
-  protected drawStyledTable(
-    headers: string[], 
-    rows: string[][], 
-    rowTypes: Array<'normal' | 'yellow' | 'orange'>
-  ): void {
-    if (headers.length === 0 || rows.length === 0) return
-    
-    const { contentWidth } = this.layout
-    const borderWidth = 1.5
-    
-    // Rebalanced widths so financial values have enough room without clipping.
-    const columnWidths = [
-      contentWidth * 0.20, // Particulars
-      contentWidth * 0.08, // Plot Area
-      contentWidth * 0.09, // Rate per year
-      contentWidth * 0.12, // Amount
-      contentWidth * 0.115, // Penalty
-      contentWidth * 0.11, // Discount
-      contentWidth * 0.1425, // Before
-      contentWidth * 0.1425 // After
-    ]
-    
-    const calculateRowHeight = (row: string[]): number => {
-      const hasLongText = row.some((cell, i) => cell.length > 40 && i === 0)
-      return hasLongText ? 36 : 30  // Slightly taller rows for better spacing
-    }
-    
-    const headerHeight = 45
-    const totalRowsHeight = rows.reduce((sum, row) => sum + calculateRowHeight(row), 0)
-    const totalTableHeight = headerHeight + totalRowsHeight
-    
-    const tableX = this.MARGIN
-    const tableY = this.layout.currentY - totalTableHeight
-    const tableWidth = contentWidth
-
-    this.page.drawRectangle({
-      x: tableX,
-      y: tableY,
-      width: tableWidth,
-      height: totalTableHeight,
-      borderColor: this.COLORS.BORDER,
-      borderWidth: borderWidth,
-      color: undefined
-    })
-
-    this.page.drawRectangle({
-      x: tableX + borderWidth,
-      y: tableY + totalTableHeight - headerHeight,
-      width: tableWidth - (borderWidth * 2),
-      height: headerHeight - borderWidth,
-      color: rgb(0.92, 0.95, 0.99),
-      borderWidth: 0
-    })
-
-    let colX = tableX + borderWidth
-    const colPositions: number[] = [colX]
-    for (let i = 0; i < columnWidths.length; i++) {
-      colX += columnWidths[i]
-      colPositions.push(colX)
-    }
-
-    for (let i = 1; i < colPositions.length - 1; i++) {
-      const x = colPositions[i]
-      this.page.drawLine({
-        start: { x: x, y: tableY + totalTableHeight - borderWidth },
-        end: { x: x, y: tableY + borderWidth },
-        thickness: 1,
-        color: this.COLORS.BORDER
-      })
-    }
-
-    for (let i = 0; i < headers.length; i++) {
-      const header = headers[i]
-      const x = colPositions[i]
-      const colWidth = columnWidths[i]
-      const lines = header.split('\n')
-      
-      lines.forEach((line, lineIndex) => {
-        // FIX: Truncate header text if too wide
-        let displayLine = line
-        const lineWidth = this.fonts.bold.widthOfTextAtSize(line, 9)
-        if (lineWidth > colWidth - 8) {
-          // Truncate with ellipsis
-          let left = 0
-          let right = line.length
-          let result = ''
-          while (left <= right) {
-            const mid = Math.floor((left + right) / 2)
-            const testStr = line.substring(0, mid) + '...'
-            const testWidth = this.fonts.bold.widthOfTextAtSize(testStr, 9)
-            if (testWidth <= colWidth - 8) {
-              result = testStr
-              left = mid + 1
-            } else {
-              right = mid - 1
-            }
-          }
-          displayLine = result || line.substring(0, 3) + '...'
-        }
-        
-        const displayWidth = this.fonts.bold.widthOfTextAtSize(displayLine, 9)
-        const textX = x + (colWidth - displayWidth) / 2
-        const textY = tableY + totalTableHeight - headerHeight + 28 - (lineIndex * 12)
-        
-        this.page.drawText(displayLine, {
-          x: textX,
-          y: textY,
-          size: 9,
-          font: this.fonts.bold,
-          color: this.COLORS.PRIMARY
-        })
-      })
-    }
-
-    this.page.drawLine({
-      start: { x: tableX + borderWidth, y: tableY + totalTableHeight - headerHeight },
-      end: { x: tableX + tableWidth - borderWidth, y: tableY + totalTableHeight - headerHeight },
-      thickness: 1,
-      color: this.COLORS.BORDER
-    })
-
-    let currentRowY = tableY + totalTableHeight - headerHeight
-    
-    // Only truncate long descriptive text. Financial values should stay complete.
-    const truncateText = (text: string, maxWidth: number, font: typeof this.fonts.regular, size: number): string => {
-      const textWidth = font.widthOfTextAtSize(text, size)
-      if (textWidth <= maxWidth) return text
-      
-      // Binary search for max chars that fit
-      let left = 0
-      let right = text.length
-      let result = ''
-      
-      while (left <= right) {
-        const mid = Math.floor((left + right) / 2)
-        const testStr = text.substring(0, mid) + '...'
-        const testWidth = font.widthOfTextAtSize(testStr, size)
-        
-        if (testWidth <= maxWidth) {
-          result = testStr
-          left = mid + 1
-        } else {
-          right = mid - 1
-        }
-      }
-      
-      return result || text.substring(0, 3) + '...'
-    }
-
-    const fitCellText = (
-      text: string,
-      maxWidth: number,
-      font: typeof this.fonts.regular,
-      preferredSize: number,
-      allowTruncate: boolean
-    ): { text: string; size: number; width: number } => {
-      for (const size of [preferredSize, 8.5, 8, 7.5, 7]) {
-        const width = font.widthOfTextAtSize(text, size)
-        if (width <= maxWidth) {
-          return { text, size, width }
-        }
-      }
-
-      if (!allowTruncate) {
-        const width = font.widthOfTextAtSize(text, 7)
-        return { text, size: 7, width }
-      }
-
-      const truncatedText = truncateText(text, maxWidth, font, preferredSize)
-      return {
-        text: truncatedText,
-        size: preferredSize,
-        width: font.widthOfTextAtSize(truncatedText, preferredSize)
-      }
-    }
-    
-    rows.forEach((row, rowIndex) => {
-      const rowHeight = calculateRowHeight(row)
-      currentRowY -= rowHeight
-      
-      const rowType = rowTypes[rowIndex]
-      
-      if (rowType === 'yellow') {
-        this.page.drawRectangle({
-          x: tableX + borderWidth,
-          y: currentRowY,
-          width: tableWidth - (borderWidth * 2),
-          height: rowHeight,
-          color: rgb(0.95, 0.98, 0.92),
-          borderWidth: 0
-        })
-      } else if (rowType === 'orange') {
-        this.page.drawRectangle({
-          x: tableX + borderWidth,
-          y: currentRowY,
-          width: tableWidth - (borderWidth * 2),
-          height: rowHeight,
-          color: rgb(0.98, 0.94, 0.86),
-          borderWidth: 0
-        })
-      } else if (rowIndex % 2 === 0) {
-        this.page.drawRectangle({
-          x: tableX + borderWidth,
-          y: currentRowY,
-          width: tableWidth - (borderWidth * 2),
-          height: rowHeight,
-          color: rgb(0.985, 0.985, 0.985),
-          borderWidth: 0
-        })
-      }
-      
-      for (let colIndex = 0; colIndex < row.length; colIndex++) {
-        const originalCell = row[colIndex]
-        const x = colPositions[colIndex]
-        const colWidth = columnWidths[colIndex]
-        
-        const isHighlightRow = rowType === 'yellow' || rowType === 'orange'
-        const font = isHighlightRow ? this.fonts.bold : this.fonts.regular
-        
-        const padding = colIndex === 0 ? 8 : 10 // Left=8, Right-aligned needs 10
-        const safetyMargin = 2 // Extra safety margin to prevent touching borders
-        const availableWidth = colWidth - padding - safetyMargin
-
-        const isDescriptionColumn = colIndex === 0
-        const fittedCell = fitCellText(
-          originalCell,
-          availableWidth,
-          font,
-          9,
-          isDescriptionColumn
-        )
-        const cellY = currentRowY + (rowHeight / 2) - (fittedCell.size / 3)
-        
-        let textX
-        
-        if (isDescriptionColumn) {
-          textX = x + 4 // Left padding
-        } else {
-          textX = x + colWidth - fittedCell.width - 5 // Right padding
-        }
-        
-        this.page.drawText(fittedCell.text, {
-          x: textX,
-          y: cellY,
-          size: fittedCell.size,
-          font: font,
-          color: this.COLORS.TEXT
-        })
-      }
-      
-      if (rowIndex < rows.length - 1) {
-        this.page.drawLine({
-          start: { x: tableX + borderWidth, y: currentRowY },
-          end: { x: tableX + tableWidth - borderWidth, y: currentRowY },
-          thickness: 0.5,
-          color: this.COLORS.BORDER
-        })
-      }
-    })
-
-    this.layout.currentY = tableY - 20
-  }
-
   protected async drawBankDetails(letter: MaintenanceLetter): Promise<void> {
     const effectiveBankDetails = this.resolveLetterBankDetails(letter)
 
@@ -1992,24 +1718,11 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const headerText = effectiveBankDetails.usesSectorConfig
       ? `PAYMENT OPTIONS - SECTOR ${letter.sector_code || ''}`
       : 'PAYMENT OPTIONS'
-    this.page.drawText(headerText, {
-      x: this.MARGIN,
-      y: this.layout.currentY,
-      size: 10.5,
-      font: this.fonts.bold,
-      color: this.COLORS.TEXT
+    this.drawCenteredSectionDivider(headerText, {
+      size: 10.2,
+      advanceAfter: 10,
+      lineThickness: 0.8
     })
-
-    const headingWidth = this.fonts.bold.widthOfTextAtSize(headerText, 10.5)
-    const dividerStartX = Math.max(this.MARGIN + 180, this.MARGIN + headingWidth + 18)
-    this.page.drawLine({
-      start: { x: dividerStartX, y: this.layout.currentY + 4 },
-      end: { x: this.layout.width - this.MARGIN, y: this.layout.currentY + 4 },
-      thickness: 1.2,
-      color: this.COLORS.SECONDARY
-    })
-
-    this.layout.currentY -= 16
 
     const branchValue = [effectiveBankDetails.branch || '', effectiveBankDetails.branchAddress || '']
       .filter(Boolean)
@@ -2036,16 +1749,16 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
 
     const qrCodePath = effectiveBankDetails.qrCodePath
-    const footerTextY = 16
-    const footerReserveTopY = footerTextY + 36
+    const footerTextY = 12
+    const footerReserveTopY = footerTextY + 26
     const sectionWidth = this.layout.width - (this.MARGIN * 2)
-    const sectionGap = qrCodePath ? 18 : 0
-    const qrColumnWidth = qrCodePath ? 170 : 0
+    const sectionGap = qrCodePath ? 14 : 0
+    const qrColumnWidth = qrCodePath ? 182 : 0
     const tableWidth = qrCodePath ? sectionWidth - qrColumnWidth - sectionGap : sectionWidth
     const sectionTopY = this.layout.currentY
     const tableX = this.MARGIN
 
-    const cardHeaderHeight = 31
+    const cardHeaderHeight = 28
     const labelColumnWidth = tableWidth * 0.26
     const baseRowMetrics = bankData.map(([label, value]) => {
       const labelLines = this.wrapTextLines(label, labelColumnWidth - 20, this.fonts.bold, 7.7)
@@ -2062,40 +1775,33 @@ class MaintenanceLetterService extends BasePDFGenerator {
         rowHeight: Math.max(29, 12 + lineCount * 10)
       }
     })
-    const availableCardHeight = Math.max(118, sectionTopY - footerReserveTopY - 4)
+    const actualAvailableCardHeight = Math.max(0, sectionTopY - footerReserveTopY - 6)
     const desiredBodyHeight = baseRowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
-    const targetCardHeight = Math.min(158, availableCardHeight)
-    const maxBodyHeight = Math.max(88, targetCardHeight - cardHeaderHeight)
-    const rowScale = desiredBodyHeight > maxBodyHeight ? maxBodyHeight / desiredBodyHeight : 1
+    const targetCardHeight = Math.max(0, Math.min(qrCodePath ? 188 : 156, actualAvailableCardHeight))
+    const availableBodyHeight = Math.max(0, targetCardHeight - cardHeaderHeight)
+    const bodyScale =
+      desiredBodyHeight > 0 ? Math.min(1, availableBodyHeight / desiredBodyHeight) : 1
     let rowMetrics = baseRowMetrics.map((row) => ({
       ...row,
-      rowHeight: Math.max(20, Math.round(row.rowHeight * rowScale))
+      rowHeight: row.rowHeight * bodyScale
     }))
     let scaledBodyHeight = rowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
-    if (scaledBodyHeight > maxBodyHeight) {
-      let overflow = scaledBodyHeight - maxBodyHeight
-      rowMetrics = rowMetrics.map((row) => {
-        if (overflow <= 0) return row
-        const reducible = Math.min(overflow, Math.max(0, row.rowHeight - 18))
-        overflow -= reducible
-        return {
-          ...row,
-          rowHeight: row.rowHeight - reducible
-        }
-      })
+    if (scaledBodyHeight > 0 && availableBodyHeight > 0 && scaledBodyHeight !== availableBodyHeight) {
+      const normalizeScale = availableBodyHeight / scaledBodyHeight
+      rowMetrics = rowMetrics.map((row) => ({
+        ...row,
+        rowHeight: row.rowHeight * normalizeScale
+      }))
       scaledBodyHeight = rowMetrics.reduce((sum, row) => sum + row.rowHeight, 0)
     }
-    const tableHeight = Math.min(targetCardHeight, cardHeaderHeight + scaledBodyHeight)
+    const tableHeight = cardHeaderHeight + scaledBodyHeight
     const tableY = sectionTopY - tableHeight
-
-    this.page.drawRectangle({
-      x: tableX + 2,
-      y: tableY - 2,
-      width: tableWidth,
-      height: tableHeight,
-      color: rgb(0.84, 0.86, 0.87),
-      opacity: 0.12
-    })
+    const readableScale = Math.max(bodyScale, 0.88)
+    const bankHeaderFontSize = readableScale < 0.94 ? 9.7 : 10.2
+    const bankLabelFontSize = Math.max(6.8, 7.7 * readableScale)
+    const bankValueFontSize = Math.max(7.2, 8.2 * readableScale)
+    const bankLabelLineHeight = Math.max(7.4, bankLabelFontSize + 1.15)
+    const bankValueLineHeight = Math.max(7.8, bankValueFontSize + 1.25)
 
     this.page.drawRectangle({
       x: tableX,
@@ -2104,7 +1810,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       height: tableHeight,
       color: rgb(1, 1, 1),
       borderColor: this.COLORS.BORDER,
-      borderWidth: 0.9
+      borderWidth: 0.65
     })
 
     this.page.drawRectangle({
@@ -2117,8 +1823,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     this.page.drawText('BANK TRANSFER', {
       x: tableX + 12,
-      y: tableY + tableHeight - 19.5,
-      size: 10.2,
+      y: tableY + tableHeight - 18.2,
+      size: bankHeaderFontSize,
       font: this.fonts.bold,
       color: this.COLORS.TEXT
     })
@@ -2143,11 +1849,18 @@ class MaintenanceLetterService extends BasePDFGenerator {
         color: this.COLORS.BORDER
       })
 
+      const labelBlockHeight = metric.labelLines.length * bankLabelLineHeight
+      const valueBlockHeight = metric.valueLines.length * bankValueLineHeight
+      const labelStartY =
+        rowCursorY + (metric.rowHeight + labelBlockHeight) / 2 - bankLabelFontSize
+      const valueStartY =
+        rowCursorY + (metric.rowHeight + valueBlockHeight) / 2 - bankValueFontSize
+
       metric.labelLines.forEach((line, lineIndex) => {
         this.page.drawText(line.toUpperCase(), {
           x: tableX + 10,
-          y: rowCursorY + metric.rowHeight - 11.5 - lineIndex * 8.5,
-          size: 7.7,
+          y: labelStartY - lineIndex * bankLabelLineHeight,
+          size: bankLabelFontSize,
           font: this.fonts.bold,
           color: this.COLORS.GRAY
         })
@@ -2156,8 +1869,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       metric.valueLines.forEach((line, lineIndex) => {
         this.page.drawText(line, {
           x: tableX + labelColumnWidth + 10,
-          y: rowCursorY + metric.rowHeight - 12.5 - lineIndex * 9.5,
-          size: 8.2,
+          y: valueStartY - lineIndex * bankValueLineHeight,
+          size: bankValueFontSize,
           font: this.fonts.regular,
           color: this.COLORS.TEXT
         })
@@ -2165,145 +1878,46 @@ class MaintenanceLetterService extends BasePDFGenerator {
     })
 
     if (qrCodePath) {
-      const qrLabel = effectiveBankDetails.usesSectorConfig
-        ? 'UPI SCAN & PAY'
-        : 'UPI SCAN & PAY'
-
       const qrCardX = tableX + tableWidth + sectionGap
       const qrCardHeight = tableHeight
       const qrCardY = sectionTopY - qrCardHeight
-      const qrHeaderHeight = 31
-      const qrFrameInset = 14
-      const qrFrameX = qrCardX + qrFrameInset
-      const qrFrameY = qrCardY + 24
-      const qrFrameWidth = qrColumnWidth - qrFrameInset * 2
-      const qrFrameHeight = Math.max(60, qrCardHeight - qrHeaderHeight - 48)
-
-      this.page.drawRectangle({
-        x: qrCardX + 2,
-        y: qrCardY - 2,
-        width: qrColumnWidth,
-        height: qrCardHeight,
-        color: rgb(0.84, 0.86, 0.87),
-        opacity: 0.12
-      })
-
-      this.page.drawRectangle({
-        x: qrCardX,
-        y: qrCardY,
-        width: qrColumnWidth,
-        height: qrCardHeight,
-        color: rgb(0.97, 0.99, 0.99),
-        borderColor: this.COLORS.BORDER,
-        borderWidth: 0.9
-      })
-
-      this.page.drawRectangle({
-        x: qrCardX,
-        y: qrCardY + qrCardHeight - qrHeaderHeight,
-        width: qrColumnWidth,
-        height: qrHeaderHeight,
-        color: rgb(0.94, 0.95, 0.96)
-      })
-
-      const qrLabelWidth = this.fonts.bold.widthOfTextAtSize(qrLabel, 8.5)
-      this.page.drawText(qrLabel, {
-        x: qrCardX + (qrColumnWidth - qrLabelWidth) / 2,
-        y: qrCardY + qrCardHeight - 19.5,
-        size: 10.2,
-        font: this.fonts.bold,
-        color: this.COLORS.TEXT
-      })
-
-      const merchantLabel = (effectiveBankDetails.accountName || letter.project_name || 'Maintenance Payment')
-        .replace(/\s+/g, ' ')
-        .trim()
-      const merchantLines = this.wrapTextLines(merchantLabel, qrColumnWidth - 32, this.fonts.regular, 6.9)
-      merchantLines.slice(0, 2).forEach((line, index) => {
-        const lineWidth = this.fonts.regular.widthOfTextAtSize(line, 6.9)
-        this.page.drawText(line, {
-          x: qrCardX + (qrColumnWidth - lineWidth) / 2,
-          y: qrCardY + qrCardHeight - 44 - index * 8,
-          size: 6.9,
-          font: this.fonts.regular,
-          color: this.COLORS.TEXT
-        })
-      })
-
-      const qrHint1 = 'Scan to pay using any UPI app'
-      this.page.drawText(qrHint1, {
-        x: qrCardX + (qrColumnWidth - this.fonts.regular.widthOfTextAtSize(qrHint1, 7.5)) / 2,
-        y: qrCardY + 12,
-        size: 7.5,
-        font: this.fonts.regular,
-        color: this.COLORS.GRAY
-      })
+      const qrFrameInset = 0
+      const qrFrameAvailableWidth = qrColumnWidth - qrFrameInset * 2
+      const qrFrameAvailableHeight = qrCardHeight - qrFrameInset * 2
+      const qrFrameSize = Math.max(
+        0,
+        Math.min(qrFrameAvailableWidth, qrFrameAvailableHeight)
+      )
+      const qrFrameX = qrCardX + (qrColumnWidth - qrFrameSize) / 2
+      const qrFrameY = qrCardY + (qrCardHeight - qrFrameSize) / 2
+      const qrFrameWidth = qrFrameSize
+      const qrFrameHeight = qrFrameSize
 
       try {
-        const resolvedQrPath = this.resolveQrCodePath(qrCodePath)
+        const qrImage = await this.embedImageFromPath(qrCodePath)
 
-        if (resolvedQrPath) {
-          const qrImageBytes = fs.readFileSync(resolvedQrPath)
+        if (qrImage) {
+          const imageAspectRatio = qrImage.width / qrImage.height
+          const frameAspectRatio = qrFrameWidth / qrFrameHeight
 
-          const isPng =
-            qrImageBytes.length > 4 &&
-            qrImageBytes[0] === 0x89 &&
-            qrImageBytes[1] === 0x50 &&
-            qrImageBytes[2] === 0x4e &&
-            qrImageBytes[3] === 0x47
+          let drawWidth = qrFrameWidth
+          let drawHeight = qrFrameHeight
 
-          const isJpeg =
-            qrImageBytes.length > 3 &&
-            qrImageBytes[0] === 0xff &&
-            qrImageBytes[1] === 0xd8 &&
-            qrImageBytes[2] === 0xff
-
-          let qrImage
-          if (isPng) {
-            qrImage = await this.pdfDoc.embedPng(qrImageBytes)
-          } else if (isJpeg) {
-            qrImage = await this.pdfDoc.embedJpg(qrImageBytes)
+          if (imageAspectRatio > frameAspectRatio) {
+            drawHeight = drawWidth / imageAspectRatio
           } else {
-            const ext = path.extname(resolvedQrPath).toLowerCase()
-            qrImage =
-              ext === '.png'
-                ? await this.pdfDoc.embedPng(qrImageBytes)
-                : await this.pdfDoc.embedJpg(qrImageBytes)
+            drawWidth = drawHeight * imageAspectRatio
           }
 
-          if (qrImage) {
-            this.page.drawRectangle({
-              x: qrFrameX,
-              y: qrFrameY,
-              width: qrFrameWidth,
-              height: qrFrameHeight,
-              color: rgb(1, 1, 1),
-              borderColor: this.COLORS.BORDER,
-              borderWidth: 1
-            })
+          const drawX = qrFrameX + (qrFrameWidth - drawWidth) / 2
+          const drawY = qrFrameY + (qrFrameHeight - drawHeight) / 2
 
-            const imageAspectRatio = qrImage.width / qrImage.height
-            const frameAspectRatio = qrFrameWidth / qrFrameHeight
-
-            let drawWidth = qrFrameWidth - 14
-            let drawHeight = qrFrameHeight - 14
-
-            if (imageAspectRatio > frameAspectRatio) {
-              drawHeight = drawWidth / imageAspectRatio
-            } else {
-              drawWidth = drawHeight * imageAspectRatio
-            }
-
-            const drawX = qrFrameX + (qrFrameWidth - drawWidth) / 2
-            const drawY = qrFrameY + (qrFrameHeight - drawHeight) / 2
-
-            this.page.drawImage(qrImage, {
-              x: drawX,
-              y: drawY,
-              width: drawWidth,
-              height: drawHeight
-            })
-          }
+          this.page.drawImage(qrImage, {
+            x: drawX,
+            y: drawY,
+            width: drawWidth,
+            height: drawHeight
+          })
         }
       } catch (error) {
         // QR code embedding failed - continue without it

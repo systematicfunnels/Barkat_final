@@ -1,7 +1,7 @@
 import { dbService } from '../db/database'
 import fs from 'fs'
 import path from 'path'
-import { rgb } from 'pdf-lib'
+import { PDFFont, rgb } from 'pdf-lib'
 import { BasePDFGenerator } from './BasePDFGenerator'
 import { MaintenanceLetter } from './MaintenanceLetterService'
 import { normalizeMoney } from '../utils/money'
@@ -33,6 +33,11 @@ export interface Payment {
   ifsc_code?: string
   branch?: string
   branch_address?: string
+  sector_code?: string
+  city?: string
+  state?: string
+  project_letterhead_path?: string
+  sector_letterhead_path?: string
 }
 
 export interface Receipt {
@@ -68,6 +73,76 @@ type ReceiptSnapshot = {
 }
 
 class PaymentService extends BasePDFGenerator {
+  private drawCenteredReceiptDivider(
+    text: string,
+    options?: {
+      y?: number
+      size?: number
+      lineGap?: number
+      lineThickness?: number
+      textColor?: ReturnType<typeof rgb>
+      lineColor?: ReturnType<typeof rgb>
+      minLineWidth?: number
+      font?: PDFFont
+    }
+  ): void {
+    const headingText = String(text || '').trim()
+    if (!headingText) return
+
+    const size = options?.size ?? 10.5
+    const lineGap = options?.lineGap ?? 14
+    const lineThickness = options?.lineThickness ?? 0.8
+    const textColor = options?.textColor ?? this.COLORS.TEXT
+    const lineColor = options?.lineColor ?? this.COLORS.ACCENT
+    const minLineWidth = options?.minLineWidth ?? 28
+    const font = options?.font ?? this.fonts.bold
+    const textY = options?.y ?? this.layout.currentY
+    const textWidth = font.widthOfTextAtSize(headingText, size)
+    const textX = (this.layout.width - textWidth) / 2
+    const lineY = textY + Math.max(3.6, size * 0.42)
+    const leftLineEndX = textX - lineGap
+    const rightLineStartX = textX + textWidth + lineGap
+
+    if (leftLineEndX - this.MARGIN > minLineWidth) {
+      this.page.drawLine({
+        start: { x: this.MARGIN, y: lineY },
+        end: { x: leftLineEndX, y: lineY },
+        thickness: lineThickness,
+        color: lineColor
+      })
+    }
+
+    if (this.layout.width - this.MARGIN - rightLineStartX > minLineWidth) {
+      this.page.drawLine({
+        start: { x: rightLineStartX, y: lineY },
+        end: { x: this.layout.width - this.MARGIN, y: lineY },
+        thickness: lineThickness,
+        color: lineColor
+      })
+    }
+
+    this.page.drawText(headingText, {
+      x: textX,
+      y: textY,
+      size,
+      font,
+      color: textColor
+    })
+  }
+
+  private drawReceiptFooter(text: string, y?: number): void {
+    const footerFont = this.fonts.italic ?? this.fonts.regular
+    this.drawCenteredReceiptDivider(text, {
+      y: typeof y === 'number' ? y : 16,
+      size: 8.5,
+      lineGap: 14,
+      lineThickness: 0.8,
+      textColor: this.COLORS.GRAY,
+      lineColor: this.COLORS.ACCENT,
+      font: footerFont
+    })
+  }
+
   private sanitizeFileComponent(value: string): string {
     return String(value || '')
       .trim()
@@ -75,6 +150,195 @@ class PaymentService extends BasePDFGenerator {
       .replace(/\s+/g, '_')
       .replace(/-+/g, '-')
       .replace(/^[-_.]+|[-_.]+$/g, '') || 'document'
+  }
+
+  private resolveAssetPath(assetPath: string): string | null {
+    if (!assetPath) return null
+
+    const normalizedPath = path.normalize(assetPath)
+    if (normalizedPath.includes('..')) {
+      return null
+    }
+
+    const possiblePaths = [
+      assetPath,
+      path.resolve(assetPath),
+      path.join(process.cwd(), assetPath),
+      path.join(getUserDataPath(), assetPath),
+      path.join(getUserDataPath(), 'assets', assetPath),
+      assetPath.startsWith('assets/') ? path.join(getUserDataPath(), assetPath) : null
+    ].filter((candidate): candidate is string => Boolean(candidate))
+
+    return possiblePaths.find((candidate) => fs.existsSync(candidate)) || null
+  }
+
+  private async embedImageFromPath(imagePath: string) {
+    const resolvedPath = this.resolveAssetPath(imagePath)
+    if (!resolvedPath) return null
+
+    const imageBytes = fs.readFileSync(resolvedPath)
+    const isPng =
+      imageBytes.length > 4 &&
+      imageBytes[0] === 0x89 &&
+      imageBytes[1] === 0x50 &&
+      imageBytes[2] === 0x4e &&
+      imageBytes[3] === 0x47
+    const isJpeg =
+      imageBytes.length > 3 &&
+      imageBytes[0] === 0xff &&
+      imageBytes[1] === 0xd8 &&
+      imageBytes[2] === 0xff
+
+    if (isPng) {
+      return this.pdfDoc.embedPng(imageBytes)
+    }
+    if (isJpeg) {
+      return this.pdfDoc.embedJpg(imageBytes)
+    }
+
+    const ext = path.extname(resolvedPath).toLowerCase()
+    return ext === '.png'
+      ? this.pdfDoc.embedPng(imageBytes)
+      : this.pdfDoc.embedJpg(imageBytes)
+  }
+
+  private getEffectiveReceiptLetterheadPath(payment: Payment): string {
+    return (
+      String(payment.sector_letterhead_path || '').trim() ||
+      String(payment.project_letterhead_path || '').trim()
+    )
+  }
+
+  private async drawReceiptHeader(payment: Payment): Promise<void> {
+    const projectName = payment.project_name || 'Barkat'
+    const locationParts = [payment.city, payment.state].filter(Boolean) as string[]
+    const effectiveLetterheadPath = this.getEffectiveReceiptLetterheadPath(payment)
+    const bannerHeight = effectiveLetterheadPath ? 138 : 118
+    const bannerTopY = this.layout.currentY + 4
+    const bannerBottomY = bannerTopY - bannerHeight
+    const brandTealLight = rgb(0.92, 0.97, 0.97)
+
+    let drewLetterhead = false
+    if (effectiveLetterheadPath) {
+      try {
+        const letterheadImage = await this.embedImageFromPath(effectiveLetterheadPath)
+        if (letterheadImage) {
+          const frameX = this.MARGIN
+          const frameY = bannerBottomY + 4
+          const frameWidth = this.layout.contentWidth
+          const frameHeight = bannerHeight - 2
+          const imageAspectRatio = letterheadImage.width / letterheadImage.height
+          const frameAspectRatio = frameWidth / frameHeight
+          let drawWidth = frameWidth
+          let drawHeight = frameHeight
+
+          if (imageAspectRatio > frameAspectRatio) {
+            drawHeight = drawWidth / imageAspectRatio
+          } else {
+            drawWidth = drawHeight * imageAspectRatio
+          }
+
+          this.page.drawRectangle({
+            x: frameX,
+            y: frameY,
+            width: frameWidth,
+            height: frameHeight,
+            color: rgb(1, 1, 1)
+          })
+
+          this.page.drawImage(letterheadImage, {
+            x: frameX + (frameWidth - drawWidth) / 2,
+            y: frameY + (frameHeight - drawHeight) / 2,
+            width: drawWidth,
+            height: drawHeight
+          })
+
+          drewLetterhead = true
+        }
+      } catch {
+        drewLetterhead = false
+      }
+    }
+
+    if (!drewLetterhead) {
+      this.page.drawRectangle({
+        x: this.MARGIN,
+        y: bannerBottomY,
+        width: this.layout.contentWidth,
+        height: bannerHeight,
+        color: rgb(0.98, 0.98, 0.97)
+      })
+
+      const projectNameWidth = this.fonts.bold.widthOfTextAtSize(projectName, 18)
+      const centerX = (this.layout.width - projectNameWidth) / 2
+
+      this.page.drawText(projectName, {
+        x: centerX,
+        y: bannerTopY - 34,
+        size: 18,
+        font: this.fonts.bold,
+        color: this.COLORS.SECONDARY
+      })
+
+      if (locationParts.length > 0) {
+        const locationText = locationParts.join(', ')
+        const locationWidth = this.fonts.regular.widthOfTextAtSize(locationText, 10)
+        const locationCenterX = (this.layout.width - locationWidth) / 2
+
+        this.page.drawText(locationText, {
+          x: locationCenterX,
+          y: bannerBottomY + 20,
+          size: 8.5,
+          font: this.fonts.regular,
+          color: this.COLORS.TEXT
+        })
+      }
+
+      this.page.drawText('Electronic Payment Receipt', {
+        x: this.MARGIN + 18,
+        y: bannerTopY - 56,
+        size: 10,
+        font: this.fonts.bold,
+        color: this.COLORS.ACCENT
+      })
+    }
+
+    this.layout.currentY = bannerBottomY - (drewLetterhead ? 10 : 2)
+
+    if (!drewLetterhead && locationParts.length > 0) {
+      const locationText = locationParts.join(', ')
+      const locationWidth = this.fonts.regular.widthOfTextAtSize(locationText, 8.5)
+
+      this.page.drawRectangle({
+        x: this.MARGIN,
+        y: this.layout.currentY - 18,
+        width: this.layout.contentWidth,
+        height: 18,
+        color: brandTealLight
+      })
+
+      this.page.drawText(locationText, {
+        x: this.MARGIN + (this.layout.contentWidth - locationWidth) / 2,
+        y: this.layout.currentY - 12,
+        size: 8.5,
+        font: this.fonts.regular,
+        color: this.COLORS.TEXT
+      })
+
+      this.layout.currentY -= 30
+    }
+
+    this.layout.currentY -= drewLetterhead ? 20 : 10
+
+    const titleText = 'PAYMENT RECEIPT'
+    this.drawCenteredReceiptDivider(titleText, {
+      size: 14,
+      lineGap: 18,
+      lineThickness: 0.9,
+      textColor: this.COLORS.TEXT,
+      lineColor: this.COLORS.ACCENT
+    })
+    this.layout.currentY -= 35
   }
 
   private getLetterWithAddonsById(letterId: number): LetterWithAddons | undefined {
@@ -203,17 +467,24 @@ class PaymentService extends BasePDFGenerator {
             city?: string
             state?: string
             sector_code?: string
+            project_letterhead_path?: string
+            sector_letterhead_path?: string
           }
       >(
         `SELECT p.*, u.unit_number, u.owner_name, u.contact_number, u.sector_code,
                 pr.name as project_name, pr.address, pr.city, pr.state,
+                pr.letterhead_path as project_letterhead_path,
                 pr.contact_email, pr.contact_phone,
+                ps.letterhead_path as sector_letterhead_path,
                 r.receipt_number, r.snapshot_letter_id, r.snapshot_financial_year,
                 r.snapshot_base_amount, r.snapshot_arrears, r.snapshot_discount_amount,
                 r.snapshot_letter_total, r.snapshot_addons_json
          FROM payments p
          JOIN units u ON p.unit_id = u.id
          JOIN projects pr ON p.project_id = pr.id
+         LEFT JOIN project_sector_payment_configs ps
+           ON ps.project_id = p.project_id
+          AND UPPER(TRIM(ps.sector_code)) = UPPER(TRIM(u.sector_code))
          LEFT JOIN receipts r ON p.id = r.payment_id
          WHERE p.id = ?`,
         [paymentId]
@@ -247,9 +518,13 @@ class PaymentService extends BasePDFGenerator {
           }
 
       await this.initializePDF()
+      await this.drawReceiptHeader(payment as Payment)
+
+      if (false && payment) {
+      const legacyPayment = payment as Payment
 
       // ── Header: Project Name (centered, green) ──
-      const projectName = payment.project_name || 'Barkat'
+      const projectName = legacyPayment.project_name || 'Barkat'
       const projectNameWidth = this.fonts.bold.widthOfTextAtSize(projectName, 18)
       const centerX = (this.layout.width - projectNameWidth) / 2
       
@@ -263,7 +538,7 @@ class PaymentService extends BasePDFGenerator {
       this.layout.currentY -= 22
 
       // ── Location (centered, gray) ──
-      const rawPayment = payment as unknown as Record<string, string>
+      const rawPayment = legacyPayment as unknown as Record<string, string>
       const locationParts = [rawPayment.city, rawPayment.state].filter(Boolean)
       if (locationParts.length > 0) {
         const locationText = locationParts.join(', ')
@@ -304,6 +579,8 @@ class PaymentService extends BasePDFGenerator {
       this.layout.currentY -= 35
 
       // ── Receipt Details (key-value pairs) ──
+      }
+
       const drawReceiptRow = (label: string, value: string): void => {
         // Draw label (left aligned)
         this.page.drawText(label, {
@@ -451,21 +728,11 @@ class PaymentService extends BasePDFGenerator {
         color: this.COLORS.SUCCESS
       })
       
-      this.layout.currentY -= boxHeight + 25
+      this.layout.currentY -= boxHeight + 18
 
       // ── Footer ──
       const footerText = 'This is an electronically generated receipt. No signature required.'
-      const footerWidth = this.fonts.italic?.widthOfTextAtSize(footerText, 9) || 
-                         this.fonts.regular.widthOfTextAtSize(footerText, 9)
-      const footerCenterX = (this.layout.width - footerWidth) / 2
-      
-      this.page.drawText(footerText, {
-        x: footerCenterX,
-        y: this.layout.currentY,
-        size: 9,
-        font: this.fonts.italic || this.fonts.regular,
-        color: this.COLORS.GRAY
-      })
+      this.drawReceiptFooter(footerText, this.layout.currentY)
 
       const pdfBytes = await this.pdfDoc.save()
       const pdfDir = path.join(getUserDataPath(), 'receipts')
