@@ -72,6 +72,13 @@ type ReceiptSnapshot = {
   snapshot_addons_json: string
 }
 
+type ReceiptRecordParams = {
+  paymentId: number
+  receiptDate: string
+  receiptNumber?: string | null
+  snapshot: ReceiptSnapshot
+}
+
 class PaymentService extends BasePDFGenerator {
   private drawCenteredReceiptDivider(
     text: string,
@@ -419,6 +426,105 @@ class PaymentService extends BasePDFGenerator {
     }
   }
 
+  private formatReceiptNumber(sequence: number): string {
+    return `REC-${sequence}`
+  }
+
+  private getNextReceiptSequence(_receiptRowId: number): number {
+    const maxAssignedSequence =
+      dbService.get<{ max_sequence: number }>(
+        `
+          SELECT MAX(CAST(SUBSTR(receipt_number, 5) AS INTEGER)) AS max_sequence
+          FROM receipts
+          WHERE receipt_number GLOB 'REC-[0-9]*'
+        `
+      )?.max_sequence || 0
+
+    return Math.max(1, maxAssignedSequence + 1)
+  }
+
+  public ensureReceiptRecordForPayment({
+    paymentId,
+    receiptDate,
+    receiptNumber,
+    snapshot
+  }: ReceiptRecordParams): string {
+    const normalizedReceiptNumber = receiptNumber?.trim() || null
+    const existingReceipt = dbService.get<{ id: number; receipt_number?: string }>(
+      'SELECT id, receipt_number FROM receipts WHERE payment_id = ?',
+      [paymentId]
+    )
+
+    if (existingReceipt?.id) {
+      const ensuredReceiptNumber =
+        existingReceipt.receipt_number?.trim() ||
+        normalizedReceiptNumber ||
+        this.formatReceiptNumber(this.getNextReceiptSequence(existingReceipt.id))
+
+      dbService.run(
+        `UPDATE receipts
+         SET receipt_number = ?,
+             receipt_date = ?,
+             snapshot_letter_id = ?,
+             snapshot_financial_year = ?,
+             snapshot_base_amount = ?,
+             snapshot_arrears = ?,
+             snapshot_discount_amount = ?,
+             snapshot_letter_total = ?,
+             snapshot_addons_json = ?
+         WHERE id = ?`,
+        [
+          ensuredReceiptNumber,
+          receiptDate,
+          snapshot.snapshot_letter_id,
+          snapshot.snapshot_financial_year,
+          snapshot.snapshot_base_amount,
+          snapshot.snapshot_arrears,
+          snapshot.snapshot_discount_amount,
+          snapshot.snapshot_letter_total,
+          snapshot.snapshot_addons_json,
+          existingReceipt.id
+        ]
+      )
+
+      return ensuredReceiptNumber
+    }
+
+    const insertResult = dbService.run(
+      `INSERT INTO receipts (
+        payment_id, receipt_number, receipt_date,
+        snapshot_letter_id, snapshot_financial_year, snapshot_base_amount,
+        snapshot_arrears, snapshot_discount_amount, snapshot_letter_total,
+        snapshot_addons_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        paymentId,
+        normalizedReceiptNumber,
+        receiptDate,
+        snapshot.snapshot_letter_id,
+        snapshot.snapshot_financial_year,
+        snapshot.snapshot_base_amount,
+        snapshot.snapshot_arrears,
+        snapshot.snapshot_discount_amount,
+        snapshot.snapshot_letter_total,
+        snapshot.snapshot_addons_json
+      ]
+    )
+
+    const receiptId = insertResult.lastInsertRowid as number
+    const ensuredReceiptNumber =
+      normalizedReceiptNumber || this.formatReceiptNumber(this.getNextReceiptSequence(receiptId))
+
+    if (!normalizedReceiptNumber) {
+      dbService.run('UPDATE receipts SET receipt_number = ? WHERE id = ?', [
+        ensuredReceiptNumber,
+        receiptId
+      ])
+    }
+
+    return ensuredReceiptNumber
+  }
+
   private resolveLinkedLetterAndSnapshot(params: {
     unitId: number
     letterId?: number
@@ -517,10 +623,25 @@ class PaymentService extends BasePDFGenerator {
             addons: this.parseReceiptAddons(fallbackLetter?.addons)
           }
 
+      payment.receipt_number = this.ensureReceiptRecordForPayment({
+        paymentId,
+        receiptDate: payment.payment_date,
+        receiptNumber: payment.receipt_number,
+        snapshot: {
+          snapshot_letter_id: payment.snapshot_letter_id ?? fallbackLetter?.id ?? null,
+          snapshot_financial_year: receiptSnapshot.financialYear,
+          snapshot_base_amount: receiptSnapshot.baseAmount,
+          snapshot_arrears: receiptSnapshot.arrearsAmount,
+          snapshot_discount_amount: receiptSnapshot.discountAmount,
+          snapshot_letter_total: receiptSnapshot.letterTotal,
+          snapshot_addons_json: JSON.stringify(receiptSnapshot.addons)
+        }
+      })
+
       await this.initializePDF()
       await this.drawReceiptHeader(payment as Payment)
 
-      if (false && payment) {
+      if (process.env.BARKAT_ENABLE_LEGACY_RECEIPT_LAYOUT === '1' && payment) {
       const legacyPayment = payment as Payment
 
       // ── Header: Project Name (centered, green) ──
@@ -738,7 +859,9 @@ class PaymentService extends BasePDFGenerator {
       const pdfDir = path.join(getUserDataPath(), 'receipts')
       if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true })
 
-      const fileName = `Receipt_UnitID-${this.sanitizeFileComponent(String(payment.unit_id || 'NA'))}_${this.sanitizeFileComponent(payment.receipt_number || String(paymentId))}.pdf`
+      const unitIdentifier = payment.unit_number || String(payment.unit_id || 'NA')
+      const receiptIdentifier = payment.receipt_number || `REC-${paymentId}`
+      const fileName = `Receipt_UnitID-${this.sanitizeFileComponent(unitIdentifier)}_${this.sanitizeFileComponent(receiptIdentifier)}.pdf`
       const filePath = path.join(pdfDir, fileName)
       await fs.promises.writeFile(filePath, pdfBytes)
       return filePath
@@ -930,27 +1053,15 @@ class PaymentService extends BasePDFGenerator {
     const paymentId = result.lastInsertRowid as number
 
     if (payment.payment_status !== 'Pending') {
-      const receiptNumber = payment.receipt_number || `REC-${paymentId}`
-      dbService.run(
-        `INSERT INTO receipts (
-          payment_id, receipt_number, receipt_date,
-          snapshot_letter_id, snapshot_financial_year, snapshot_base_amount,
-          snapshot_arrears, snapshot_discount_amount, snapshot_letter_total,
-          snapshot_addons_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          paymentId,
-          receiptNumber,
-          payment.payment_date,
-          linkedLetter?.id ?? snapshot.snapshot_letter_id,
-          snapshot.snapshot_financial_year,
-          snapshot.snapshot_base_amount,
-          snapshot.snapshot_arrears,
-          snapshot.snapshot_discount_amount,
-          snapshot.snapshot_letter_total,
-          snapshot.snapshot_addons_json
-        ]
-      )
+      this.ensureReceiptRecordForPayment({
+        paymentId,
+        receiptDate: payment.payment_date,
+        receiptNumber: payment.receipt_number,
+        snapshot: {
+          ...snapshot,
+          snapshot_letter_id: linkedLetter?.id ?? snapshot.snapshot_letter_id
+        }
+      })
     }
 
     return paymentId

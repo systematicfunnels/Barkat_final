@@ -6,6 +6,17 @@ import { registerIpcHandlers } from './ipcHandlers'
 import { workerPool } from './utils/workerPool'
 import { backupService } from './services/BackupService'
 
+const SAFE_EXTERNAL_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+
+function canOpenExternalUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return SAFE_EXTERNAL_PROTOCOLS.has(parsed.protocol)
+  } catch {
+    return false
+  }
+}
+
 function createWindow(): void {
   // Create the browser window.
   const mainWindow = new BrowserWindow({
@@ -17,6 +28,8 @@ function createWindow(): void {
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
       sandbox: false,
       offscreen: false
     }
@@ -34,7 +47,9 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url)
+    if (canOpenExternalUrl(details.url)) {
+      void shell.openExternal(details.url)
+    }
     return { action: 'deny' }
   })
 
@@ -62,7 +77,7 @@ app.whenReady().then(() => {
   }
 
   // Set app user model id for windows
-  electronApp.setAppUserModelId('com.electron')
+  electronApp.setAppUserModelId('com.barkat.desktop')
 
   // Default open or close DevTools by F12 in development
   // and ignore CommandOrControl + R in production.

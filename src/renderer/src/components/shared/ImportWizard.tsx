@@ -129,12 +129,12 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
       setCurrentStep(1)
       return false // Prevent auto-upload
     } catch {
-      message.error('Failed to read file')
+      message.error('Could not read the file')
       return false
     }
   }, [onUpload, maxPreviewRows])
 
-  async function handleMap() {
+  const handleMap = useCallback(async () => {
     try {
       let mapped: ImportPreview[]
       if (onMap) {
@@ -158,9 +158,9 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
       setPreviewData(mapped)
       setSelectedRows(mapped.filter((p) => p.status !== 'invalid').map((p) => p.id))
     } catch {
-      message.error('Data mapping failed')
+      message.error('Could not map the data')
     }
-  }
+  }, [onMap, rawData, validationErrors])
 
   const handleValidate = useCallback(async () => {
     try {
@@ -194,14 +194,14 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
         setCurrentStep(1)
       }
     } catch {
-      message.error('Validation failed')
+      message.error('Could not validate the data')
     }
   }, [rawData, columns, onValidate, handleMap])
 
   const handleImport = useCallback(async () => {
     const validRows = previewData.filter(p => selectedRows.includes(p.id) && p.status !== 'invalid')
     if (validRows.length === 0) {
-      message.warning('No valid rows selected for import')
+      message.warning('Select at least one valid row to import')
       return
     }
 
@@ -289,7 +289,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
     <Space orientation="vertical" style={{ width: '100%' }} size="large">
       <Alert
         title="Supported Formats"
-        description="Upload Excel (.xlsx, .xls) or CSV files. Maximum 10,000 rows."
+        description="Upload Excel or CSV files. Maximum 10,000 rows."
         type="info"
         showIcon
       />
@@ -338,7 +338,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
     <Space orientation="vertical" style={{ width: '100%' }} size="large">
       <Alert
         title={`Found ${rawData.length} rows`}
-        description={`${errorCount} errors, ${warningCount} warnings detected`}
+        description={`${errorCount} errors, ${warningCount} warnings`}
         type={errorCount > 0 ? 'error' : warningCount > 0 ? 'warning' : 'success'}
         showIcon
       />
@@ -401,7 +401,7 @@ export const ImportWizard: React.FC<ImportWizardProps> = ({
     <Space orientation="vertical" style={{ width: '100%' }} size="large">
       <Alert
         title={`${validCount} valid, ${invalidCount} invalid rows`}
-        description="Select rows to import. Click Edit to fix issues."
+        description="Choose the rows you want to import."
         type="info"
         showIcon
       />

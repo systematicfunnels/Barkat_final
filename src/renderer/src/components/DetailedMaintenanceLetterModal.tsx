@@ -121,10 +121,10 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
         values.financialYear
       )
       setCalculation(result)
-      message.success('Letter calculation generated successfully')
+      message.success('Letter calculation ready')
     } catch (error) {
       console.error('Error generating calculation:', error)
-      message.error('Failed to generate letter calculation')
+      message.error('Could not generate the letter calculation')
     } finally {
       setLoading(false)
     }
@@ -141,11 +141,11 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
         formValues.unitId,
         formValues.financialYear
       )
-      message.success('PDF generated successfully')
+      message.success('PDF ready')
       window.api.shell.showItemInFolder(filePath)
     } catch (error) {
       console.error('Error generating PDF:', error)
-      message.error('Failed to generate PDF')
+      message.error('Could not generate the PDF')
     } finally {
       setPdfGenerating(false)
     }
@@ -254,7 +254,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
 
   return (
     <Modal
-      title="Detailed Maintenance Letter Generator"
+      title="Detailed maintenance letter"
       open={visible}
       onCancel={handleCancel}
       footer={null}
@@ -302,7 +302,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
             <Form.Item
               name="financialYear"
               label="Financial Year"
-              extra={`Working FY: ${workingFY}. Next FY: ${getUpcomingFinancialYear(workingFY)}. The selected working financial year is the recommended default.`}
+              extra={`Default FY: ${workingFY}`}
               rules={[{ required: true, message: 'Please select a financial year' }]}
             >
               <Select placeholder="Select financial year" disabled={!selectedProjectId}>
@@ -339,7 +339,7 @@ const DetailedMaintenanceLetterModal: React.FC<DetailedMaintenanceLetterModalPro
         <div>
           <Alert
             title="Letter Calculation Generated"
-            description="This preview is rendered from backend-prepared values for the selected project, unit, and financial year."
+            description="This preview uses the selected project, unit, and financial year."
             type="success"
             showIcon
             style={{ marginBottom: 16 }}

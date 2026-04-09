@@ -124,7 +124,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       setRates(data || [])
     } catch (error) {
       console.error('Failed to fetch rates:', error)
-      message.error('Failed to fetch rates')
+      message.error('Could not load rates')
     } finally {
       setLoading(false)
     }
@@ -160,6 +160,13 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
     }
   }, [projectId])
 
+  const resetBillingDates = useCallback((): void => {
+    rateForm.setFieldsValue({
+      due_date: undefined,
+      discount_percentage: undefined
+    })
+  }, [rateForm])
+
   useEffect(() => {
     if (visible && projectId) {
       fetchRates()
@@ -175,7 +182,16 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       rateForm.resetFields()
       slabForm.resetFields()
     }
-  }, [visible, projectId, fetchProjectChargesConfig, fetchRates, rateForm, slabForm, workingFinancialYear])
+  }, [
+    visible,
+    projectId,
+    fetchProjectChargesConfig,
+    fetchRates,
+    rateForm,
+    resetBillingDates,
+    slabForm,
+    workingFinancialYear
+  ])
 
   const fyOptions = useMemo(() => {
     const years = Array.from(
@@ -294,7 +310,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       )
 
       if (isDuplicate) {
-        message.error('A rate with this Financial Year and Unit Type already exists')
+        message.error('A rate already exists for this financial year and unit type')
         return
       }
 
@@ -316,7 +332,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           project_id: projectId,
           penalty_label: normalizedPenaltyLabel
         })
-        message.success('Rate updated successfully')
+        message.success('Rate updated')
       } else {
         await window.api.rates.create({
           ...values,
@@ -332,7 +348,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           penalty_label: normalizedPenaltyLabel
         })
 
-        message.success('Rate added successfully')
+        message.success('Rate added')
       }
 
       setIsAddingRate(false)
@@ -342,7 +358,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       fetchRates()
     } catch (error) {
       if (!isFormValidationError(error)) {
-        message.error(getErrorMessage(error, 'Failed to save rate'))
+        message.error(getErrorMessage(error, 'Could not save the rate'))
       }
     } finally {
       setLoading(false)
@@ -367,7 +383,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const handleDeleteRate = async (id: number): Promise<void> => {
     try {
       await window.api.rates.delete(id)
-      message.success('Rate deleted successfully')
+      message.success('Rate deleted')
       fetchRates()
       if (selectedRate?.id === id) {
         setSelectedRate(null)
@@ -381,15 +397,8 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       }
     } catch (error) {
       console.error('Failed to delete rate:', error)
-      message.error('Failed to delete rate')
+      message.error('Could not delete the rate')
     }
-  }
-
-  const resetBillingDates = (): void => {
-    rateForm.setFieldsValue({
-      due_date: undefined,
-      discount_percentage: undefined
-    })
   }
 
   const handleViewSlabs = async (rate: MaintenanceRate): Promise<void> => {
@@ -400,7 +409,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       setSlabs(data || [])
     } catch (error) {
       console.error('Failed to fetch slabs:', error)
-      message.error('Failed to fetch slabs')
+      message.error('Could not load slabs')
     } finally {
       setLoadingSlabs(false)
     }
@@ -408,7 +417,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
   const handleAddSlab = async (): Promise<void> => {
     if (!selectedRate) {
-      message.warning('Please select a rate first')
+      message.warning('Select a rate first')
       return
     }
 
@@ -433,13 +442,13 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
         is_early_payment: true
       } as MaintenanceSlab)
 
-      message.success('Slab added successfully')
+      message.success('Slab added')
       setIsAddingSlab(false)
       slabForm.resetFields()
       handleViewSlabs(selectedRate)
     } catch (error) {
       if (!isFormValidationError(error)) {
-        message.error(getErrorMessage(error, 'Failed to add slab'))
+        message.error(getErrorMessage(error, 'Could not add the slab'))
       }
     } finally {
       setLoadingSlabs(false)
@@ -449,11 +458,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const handleDeleteSlab = async (id: number): Promise<void> => {
     try {
       await window.api.rates.deleteSlab(id)
-      message.success('Slab deleted successfully')
+      message.success('Slab deleted')
       if (selectedRate) handleViewSlabs(selectedRate)
     } catch (error) {
       console.error('Failed to delete slab:', error)
-      message.error('Failed to delete slab')
+      message.error('Could not delete the slab')
     }
   }
 
@@ -556,11 +565,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
             Slabs
           </Button>
           <Popconfirm
-            title="Are you sure you want to delete this rate?"
-            description="This action cannot be undone."
+            title="Delete rate?"
+            description="This cannot be undone."
             onConfirm={() => handleDeleteRate(record.id!)}
-            okText="Yes"
-            cancelText="No"
+            okText="Delete"
+            cancelText="Cancel"
           >
             <Button
               size="small"
@@ -599,11 +608,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       key: 'action',
       render: (_: unknown, record: MaintenanceSlab): React.ReactNode => (
         <Popconfirm
-          title="Are you sure you want to delete this slab?"
-          description="This action cannot be undone."
+          title="Delete slab?"
+          description="This cannot be undone."
           onConfirm={() => handleDeleteSlab(record.id!)}
-          okText="Yes"
-          cancelText="No"
+          okText="Delete"
+          cancelText="Cancel"
         >
           <Button
             size="small"
@@ -630,7 +639,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
   return (
     <Modal
-      title={`Maintenance Rates - ${projectName}`}
+      title={`Maintenance rates: ${projectName}`}
       open={visible}
       onCancel={onCancel}
       footer={null}
@@ -647,13 +656,13 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
           </Text>
           <Text type="secondary">
             {workingFinancialYear
-              ? `Working FY: ${workingFinancialYear}. Add or review rates for this billing year first, then manage early-payment slabs for the selected rate below.`
-              : 'Add rates for the financial year you want to bill, then manage early-payment slabs for the selected rate below.'}
+              ? `Working FY: ${workingFinancialYear}. Review rates for this year, then manage slabs below.`
+              : 'Add rates for the billing year, then manage slabs below.'}
           </Text>
         </div>
         <Alert
-          title="Penalty source of truth"
-          description="Set late-payment penalty here for each financial year and unit type. If a rate penalty is blank, the project-level charges configuration is used as the fallback. Unit-level penalty values are legacy/import fields and are not the source of truth for new maintenance letters."
+          title="Penalty setting"
+          description="Set late-payment penalty here. If blank, the project default is used."
           type="warning"
           showIcon
           style={{ marginBottom: 12 }}
@@ -664,7 +673,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
               <Title level={5} style={{ margin: 0 }}>
                 Rates
               </Title>
-              <Text type="secondary">Filter existing rates or add a new one for this project.</Text>
+              <Text type="secondary">Filter existing rates or add a new one.</Text>
             </div>
             <FilterPanel
               filters={rateFilterFields}
@@ -674,23 +683,32 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
               showActiveFilters={hasActiveFilters}
               variant="plain"
             >
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => {
-                  setEditingRateId(null)
-                  rateForm.resetFields()
-                  rateForm.setFieldsValue({
-                    financial_year: workingFinancialYear,
-                    unit_type: 'Bungalow',
-                    billing_frequency: 'YEARLY'
-                  })
-                  setIsAddingRate(true)
-                }}
-                disabled={isAddingRate}
-              >
-                {workingFinancialYear ? `Add Rate for ${workingFinancialYear}` : 'Add Rate'}
-              </Button>
+              <div className="app-filter-field" style={{ width: 'auto', minWidth: 'fit-content' }}>
+                <span
+                  className="app-filter-field-label"
+                  aria-hidden="true"
+                  style={{ visibility: 'hidden' }}
+                >
+                  Action
+                </span>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setEditingRateId(null)
+                    rateForm.resetFields()
+                    rateForm.setFieldsValue({
+                      financial_year: workingFinancialYear,
+                      unit_type: 'Bungalow',
+                      billing_frequency: 'YEARLY'
+                    })
+                    setIsAddingRate(true)
+                  }}
+                  disabled={isAddingRate}
+                >
+                  {workingFinancialYear ? `Add Rate for ${workingFinancialYear}` : 'Add Rate'}
+                </Button>
+              </div>
             </FilterPanel>
           </Space>
         </Card>
@@ -754,7 +772,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                   name="gst_percent"
                   label="GST %"
                   initialValue={0}
-                  tooltip="GST percentage applied on top of base maintenance (e.g. 18 for 18%)"
+                  tooltip="GST added on top of maintenance"
               >
                 <InputNumber
                   min={0}
@@ -793,7 +811,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                   <div className="maintenance-rate-afterdue-fields">
                     <Form.Item
                       label="Charge Name"
-                      tooltip="Choose the wording that should be shown in billing output for this project"
+                      tooltip="Label shown in billing output"
                     >
                       <Select
                         value={projectChargesConfig.penalty_label}
@@ -814,7 +832,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                     <Form.Item<RateFormValues>
                       name="penalty_percentage"
                       label="Rate (%)"
-                      tooltip="Numeric percentage added after the due date for this rate and financial year"
+                      tooltip="Rate added after the due date"
                     >
                       <InputNumber
                         min={0}
@@ -831,8 +849,8 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
               <Divider style={{ margin: '18px 0 14px' }} />
               <Alert
-                title="Early payment discounts are managed in slabs"
-                description="Use the Slabs action below to manage due dates and early payment discount percentages. The top rate form now saves only the maintenance rate and penalty settings."
+                title="Manage early payment discounts in slabs"
+                description="Set due dates and early payment discounts below."
                 type="info"
                 showIcon
                 style={{ marginBottom: 16 }}
@@ -961,7 +979,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
             ) : (
               <Alert
                 title="No early payment slabs"
-                description="Add slabs to offer discounts for payments made before due dates."
+                description="Add slabs to offer early payment discounts."
                 type="info"
                 showIcon
               />

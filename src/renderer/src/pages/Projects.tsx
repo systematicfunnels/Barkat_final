@@ -230,7 +230,7 @@ const Projects: React.FC = () => {
       if (process.env.NODE_ENV === 'development') {
         console.error('[PROJECTS] Error fetching projects:', error)
       }
-      message.error('Failed to fetch projects')
+      message.error('Could not load projects')
     } finally {
       setLoading(false)
     }
@@ -239,6 +239,33 @@ const Projects: React.FC = () => {
   useEffect(() => {
     fetchProjects()
   }, [fetchProjects])
+
+  const handleEdit = useCallback(async (record: Project): Promise<void> => {
+    setEditingProject(record)
+
+    // Fetch existing sector configs from database
+    try {
+      const existingSectorConfigs = await window.api.projects.getSectorPaymentConfigs(record.id!)
+      setSectorConfigs(existingSectorConfigs || [])
+    } catch (error) {
+      if (process.env.NODE_ENV === 'development') {
+        console.error('[EDIT PROJECT] Failed to fetch sector configs:', error)
+      }
+      // Fallback to empty configs if fetch fails
+      setSectorConfigs(getEmptySectorConfigs())
+    }
+
+    const formValues = {
+      ...DEFAULT_PROJECT_FORM_VALUES,
+      ...record,
+      status: record.status || 'Active',
+      city: record.city || '',
+      template_type: record.template_type || 'standard',
+      import_profile_key: record.import_profile_key || 'standard_normalized'
+    }
+    form.setFieldsValue(formValues)
+    setIsModalOpen(true)
+  }, [form])
 
   useEffect(() => {
     const state = location.state as {
@@ -264,7 +291,7 @@ const Projects: React.FC = () => {
     setSelectedProject(p)
     setIsRateModalOpen(true)
     window.history.replaceState({}, document.title)
-  }, [location, projects])
+  }, [handleEdit, location, projects])
 
   // Get unique cities for filter
   const uniqueCities = useMemo(() => {
@@ -355,16 +382,18 @@ const Projects: React.FC = () => {
   }, [])
 
   // Filtered data
-  const filteredProjects = useMemo(() => {
-    return projects.filter((p) => {
-      const matchesSearch =
-        p.name.toLowerCase().includes(searchText.toLowerCase()) ||
-        (p.project_code || '').toLowerCase().includes(searchText.toLowerCase()) ||
-        (p.city || '').toLowerCase().includes(searchText.toLowerCase())
+    const filteredProjects = useMemo(() => {
+      const normalizedSearch = searchText.toLowerCase()
+      return projects.filter((p) => {
+        const matchesSearch =
+          p.name.toLowerCase().includes(normalizedSearch) ||
+          (p.project_code || '').toLowerCase().includes(normalizedSearch) ||
+          (p.address || '').toLowerCase().includes(normalizedSearch) ||
+          (p.city || '').toLowerCase().includes(normalizedSearch)
 
-      const projectStatus = p.status || 'Active'
-      const matchesStatus = !statusFilter || projectStatus === statusFilter
-      const matchesCity = !cityFilter || p.city === cityFilter
+        const projectStatus = p.status || 'Active'
+        const matchesStatus = !statusFilter || projectStatus === statusFilter
+        const matchesCity = !cityFilter || p.city === cityFilter
 
       return matchesSearch && matchesStatus && matchesCity
     })
@@ -411,14 +440,14 @@ const Projects: React.FC = () => {
         
         if (copyResult.success) {
           handleSectorConfigChange(index, 'qr_code_path', targetPath)
-          message.success('Sector QR Code copied successfully')
+          message.success('QR code added')
         } else {
-          message.error(`Failed to copy QR Code: ${copyResult.error}`)
+          message.error(`Could not add the QR code: ${copyResult.error}`)
         }
       }
     } catch (error) {
       console.error('Failed to pick sector QR file:', error)
-      message.error('Failed to open file picker')
+      message.error('Could not open the file picker')
     }
   }
 
@@ -453,16 +482,16 @@ const Projects: React.FC = () => {
           handleSectorConfigChange(index, 'letterhead_path', targetPath)
           message.success(
             hadPreviousLetterhead
-              ? 'Sector letterhead updated in the form. Click Save to replace the old one.'
-              : 'Sector letterhead added in the form. Click Save to apply it.'
+              ? 'Sector letterhead updated. Save the project to apply it.'
+              : 'Sector letterhead added. Save the project to apply it.'
           )
         } else {
-          message.error(`Failed to copy letterhead: ${copyResult.error}`)
+          message.error(`Could not add the letterhead: ${copyResult.error}`)
         }
       }
     } catch (error) {
       console.error('Failed to pick sector letterhead file:', error)
-      message.error('Failed to open file picker')
+      message.error('Could not open the file picker')
     }
   }
 
@@ -511,7 +540,7 @@ const Projects: React.FC = () => {
 
       if (parsedWorkbook.workbook_blockers.length > 0) {
         message.error({
-          content: `Cannot import: ${parsedWorkbook.workbook_blockers[0]}`,
+          content: `Import blocked: ${parsedWorkbook.workbook_blockers[0]}`,
           key: 'excel_read',
           duration: 5
         })
@@ -524,7 +553,7 @@ const Projects: React.FC = () => {
       console.error('Error reading Excel file:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       message.error({
-        content: `Failed to read Excel file: ${errorMessage}`,
+        content: `Could not read the workbook: ${errorMessage}`,
         key: 'excel_read',
         duration: 5
       })
@@ -590,7 +619,7 @@ const Projects: React.FC = () => {
       ].filter(Boolean).join(', ')
 
       message.success({
-        content: `Successfully imported ${parts}.`,
+        content: `Imported ${parts}.`,
         key: 'workbook_import_status',
         duration: 4
       })
@@ -598,7 +627,7 @@ const Projects: React.FC = () => {
       // Show warning for projects missing bank details
       if (projectsMissingBankDetails.length > 0) {
         message.warning({
-          content: `Note: ${projectsMissingBankDetails.join(', ')} - no sector bank details or default workbook bank option were found. Please update the project payment details before generating letters.`,
+          content: `Bank details are missing for: ${projectsMissingBankDetails.join(', ')}. Update payment details before generating letters.`,
           key: 'bank_details_missing',
           duration: 6
         })
@@ -607,7 +636,7 @@ const Projects: React.FC = () => {
       console.error('Workbook import failed:', error)
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       message.error({
-        content: `Workbook import failed: ${errorMessage}`,
+        content: `Could not import the workbook: ${errorMessage}`,
         key: 'workbook_import_status'
       })
     } finally {
@@ -620,33 +649,6 @@ const Projects: React.FC = () => {
     await executeDirectWorkbookImport(standardWorkbookPreview)
   }
 
-  const handleEdit = async (record: Project): Promise<void> => {
-    setEditingProject(record)
-    
-    // Fetch existing sector configs from database
-    try {
-      const existingSectorConfigs = await window.api.projects.getSectorPaymentConfigs(record.id!)
-      setSectorConfigs(existingSectorConfigs || [])
-    } catch (error) {
-      if (process.env.NODE_ENV === 'development') {
-        console.error('[EDIT PROJECT] Failed to fetch sector configs:', error)
-      }
-      // Fallback to empty configs if fetch fails
-      setSectorConfigs(getEmptySectorConfigs())
-    }
-    
-    const formValues = {
-      ...DEFAULT_PROJECT_FORM_VALUES,
-      ...record,
-      status: record.status || 'Active',
-      city: record.city || '',
-      template_type: record.template_type || 'standard',
-      import_profile_key: record.import_profile_key || 'standard_normalized'
-    }
-    form.setFieldsValue(formValues)
-    setIsModalOpen(true)
-  }
-
   const handleRates = (record: Project): void => {
     setSelectedProject(record)
     setIsRateModalOpen(true)
@@ -654,15 +656,18 @@ const Projects: React.FC = () => {
 
   const handleDelete = async (id: number): Promise<void> => {
     Modal.confirm({
-      title: 'Are you sure you want to delete this project?',
-      content: 'This action cannot be undone.',
+      title: 'Delete project?',
+      content: 'This cannot be undone.',
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
       onOk: async () => {
         try {
           await window.api.projects.delete(id)
-          message.success('Project deleted successfully')
+          message.success('Project deleted')
           fetchProjects()
         } catch {
-          message.error('Failed to delete project')
+          message.error('Could not delete the project')
         }
       }
     })
@@ -674,8 +679,7 @@ const Projects: React.FC = () => {
       content: (
         <div>
           <p>
-            This action cannot be undone. All related units, maintenance letters, and payments will
-            also be deleted.
+            This cannot be undone. Related units, maintenance letters, and payments will also be deleted.
           </p>
           {selectedProjects.length > 0 && (
             <div style={{ marginTop: 8 }}>
@@ -690,17 +694,18 @@ const Projects: React.FC = () => {
           )}
         </div>
       ),
-      okText: 'Delete All',
+      okText: 'Delete',
       okType: 'danger',
+      cancelText: 'Cancel',
       onOk: async () => {
         try {
           await window.api.projects.bulkDelete(selectedRowKeys as number[])
-          message.success(`${selectedRowKeys.length} projects deleted successfully`)
+          message.success(`${selectedRowKeys.length} projects deleted`)
           setSelectedRowKeys([])
           fetchProjects()
         } catch (error) {
           console.error(error)
-          message.error('Failed to delete projects')
+          message.error('Could not delete the projects')
         }
       }
     })
@@ -759,26 +764,38 @@ const Projects: React.FC = () => {
 
       let projectId: number
       if (editingProject?.id) {
-        await window.api.projects.update(editingProject.id, normalizedValues)
+        const updated = await window.api.projects.update(editingProject.id, normalizedValues)
+        if (!updated) {
+          throw new Error('Project details could not be saved')
+        }
         projectId = editingProject.id
-        message.success('Project updated successfully')
       } else {
         projectId = await window.api.projects.create(normalizedValues as Project)
       }
 
-      await window.api.projects.saveSectorPaymentConfigs(projectId, preparedSectorConfigs)
+      const configsSaved = await window.api.projects.saveSectorPaymentConfigs(
+        projectId,
+        preparedSectorConfigs
+      )
+      if (!configsSaved) {
+        throw new Error('Sector payment details could not be saved')
+      }
+
       setIsModalOpen(false)
       if (!editingProject?.id) {
         showCompletionWithNextStep(
           'projects',
-          'Project created successfully',
+          'Project added',
           navigate,
-          `Project "${normalizedValues.name}" has been added to the platform`
+          `Project "${normalizedValues.name}" is ready`
         )
+      } else {
+        message.success('Project updated')
       }
-      fetchProjects()
+      await fetchProjects()
     } catch (error) {
       console.error(error)
+      message.error(error instanceof Error ? error.message : 'Could not save the project')
     }
   }
 
@@ -914,14 +931,14 @@ const Projects: React.FC = () => {
               Projects
             </Typography.Title>
             <Text type="secondary" className="page-hero-subtitle">
-              Manage project setup, workbook imports, and billing readiness from one place.
+              Set up projects, imports, and billing readiness.
             </Text>
             <Text
               type="secondary"
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Choose the billing financial year you want to prepare, then complete only that setup path.
+              Pick the billing year and finish setup for that year only.
             </Text>
           </div>
           <Space wrap className="responsive-action-bar">
@@ -970,7 +987,7 @@ const Projects: React.FC = () => {
             type="info"
             showIcon
             title={`Billing setup for FY ${workingFY}`}
-            description={`Choose the year you want to bill, then follow this order: add units with sector codes, configure sector bank details, add maintenance rates for ${workingFY}, then generate maintenance letters and receipts.`}
+            description={`Add units, sector bank details, and rates for ${workingFY}, then generate letters and receipts.`}
           />
         </Space>
       </Card>
@@ -1031,7 +1048,7 @@ const Projects: React.FC = () => {
                   })
                   const needsRate = summary.blockers.some((b) => b.toLowerCase().includes('rate'))
                   const needsUnits = summary.blockers.some((b) => b.toLowerCase().includes('unit'))
-                  const blockerText = `FY ${workingFY}: ${summary.blockers.join(' · ')}`
+                  const blockerText = `FY ${workingFY}: ${summary.blockers.join(' • ')}`
                   return (
                     <div
                       key={p.id}
@@ -1084,6 +1101,10 @@ const Projects: React.FC = () => {
         )
       })()}
 
+      <div className="table-scroll-hint">
+        <span>Swipe horizontally to see more columns</span>
+      </div>
+
       <div className="table-scroll-wrapper mobile-card-table">
         <Table
           rowSelection={{
@@ -1107,10 +1128,12 @@ const Projects: React.FC = () => {
 
       {/* Project Add/Edit Modal */}
       <Modal
-        title={editingProject ? 'Edit Project' : 'Add Project'}
+        title={editingProject ? 'Edit project' : 'Add project'}
         open={isModalOpen}
         onOk={handleModalOk}
         onCancel={() => setIsModalOpen(false)}
+        okText="Save"
+        cancelText="Cancel"
         width={720}
         style={{ 
           maxWidth: '95vw',
@@ -1206,8 +1229,8 @@ const Projects: React.FC = () => {
                         type="info"
                         showIcon
                         style={{ marginBottom: 8 }}
-                        title="Recommended setup order"
-                        description={`Create the project, add units with sector codes, configure sector bank details, choose the working FY, add rates for ${workingFY}, then generate maintenance letters.`}
+                        title="Setup order"
+                        description={`Save the project, add units, fill bank details, set rates for ${workingFY}, then generate letters.`}
                       />
                     </Col>
                     <Col xs={24} md={12}>
@@ -1266,7 +1289,7 @@ const Projects: React.FC = () => {
                       <Form.Item
                         name="template_type"
                         label="Letter Template"
-                        extra="For most projects, keep Standard Letter."
+                        extra="Keep Standard Letter unless you need another format."
                       >
                         <Select
                           options={TEMPLATE_OPTIONS.map((option) => ({
@@ -1282,7 +1305,7 @@ const Projects: React.FC = () => {
                       <Form.Item
                         name="import_profile_key"
                         label="Excel Import Profile (Optional)"
-                        extra="Only used for Excel imports. If you are creating the project manually, leave it as Standard Platform Sheet."
+                        extra="Only for Excel import. Leave this as Standard Platform Sheet for manual setup."
                       >
                         <Select
                           options={IMPORT_PROFILE_OPTIONS.map((option) => ({
@@ -1309,16 +1332,14 @@ const Projects: React.FC = () => {
                       Penalty Settings
                     </Title>
                     <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                      Choose the penalty wording this project should use across maintenance
-                      billing. The percentage still comes from the selected maintenance rate, and
-                      falls back to the project-level penalty percentage when a rate leaves it blank.
+                      Choose the penalty label used in billing for this project.
                     </Paragraph>
                     <Alert
                       type="info"
                       showIcon
                       style={{ marginBottom: 16 }}
-                      title="How this is applied"
-                      description="This setting controls how the penalty is named in billing and maintenance-letter output. Use “Penalty” for the standard terminology, or “Late Payment Charges” if that is the wording required by the project."
+                      title="Billing label"
+                      description="Choose the name shown for this charge in billing output."
                     />
                     <Form.Item
                       label="Penalty"
@@ -1343,7 +1364,7 @@ const Projects: React.FC = () => {
                       />
                     </Form.Item>
                     <Text type="secondary">
-                      Saved here, then reflected in maintenance billing output for this project.
+                      This label is used in billing output for this project.
                     </Text>
                   </div>
                 )
@@ -1359,16 +1380,15 @@ const Projects: React.FC = () => {
                         Sector Bank Details & Letterhead
                       </Title>
                       <Paragraph type="secondary" style={{ marginBottom: 12 }}>
-                        Add one row per sector to store sector-specific payment routing and the
-                        matching maintenance-letter letterhead image.
+                        Add one row per sector for bank details and optional letterhead.
                       </Paragraph>
 
                       <Alert
                         type="info"
                         showIcon
                         style={{ marginBottom: 16 }}
-                        title="Recommended flow"
-                        description="Manual flow: add units with sector codes first, then add matching sector bank details and optional sector letterheads here. Import flow: detected sectors from the workbook can be auto-populated here and completed manually."
+                        title="Flow"
+                        description="Add units first, then fill sector bank details."
                       />
 
                       {editingProjectSummary && editingProjectSummary.sector_codes.length > 0 && (
@@ -1379,9 +1399,7 @@ const Projects: React.FC = () => {
                           description={
                             <div>
                               <div>
-                                These sectors were detected from the project units. Use the button below
-                                to create one bank-config row per detected sector, then fill the payment
-                                details manually.
+                                These sectors were found in the units. Create rows below and fill the details.
                               </div>
                               <Button 
                                 size="small" 
@@ -1396,7 +1414,7 @@ const Projects: React.FC = () => {
                                 }
                                 style={{ padding: 0, height: 'auto' }}
                               >
-                                Auto-populate with detected sectors and project defaults
+                                Use detected sectors
                               </Button>
                             </div>
                           }
@@ -1411,7 +1429,7 @@ const Projects: React.FC = () => {
                           showIcon
                           style={{ marginBottom: 16 }}
                           title="Manual sector setup"
-                          description="If you are setting up a project manually, add units with sector codes first, or start with common sectors here and keep the same sector codes on the units."
+                          description="Add units with sector codes first, or add the sectors here manually."
                         />
                       )}
 
@@ -1575,10 +1593,10 @@ const Projects: React.FC = () => {
                               onClick={async () => {
                                 try {
                                   const configs = await window.api.projects.getSectorPaymentConfigs(editingProject.id!)
-                                  message.info(`Found ${configs?.length || 0} sector configs`)
+                                  message.info(`${configs?.length || 0} sector payment rows found`)
                                 } catch (error) {
                                   console.error('[DEBUG] Manual fetch error:', error)
-                                  message.error('Fetch failed: ' + (error instanceof Error ? error.message : String(error)))
+                                  message.error('Could not load sector payment rows: ' + (error instanceof Error ? error.message : String(error)))
                                 }
                               }}
                             >
@@ -1601,7 +1619,7 @@ const Projects: React.FC = () => {
 
       {/* Standard Workbook Import Modal */}
       <Modal
-        title="Import Projects from Standard Workbook"
+        title="Import projects from standard workbook"
         open={showStandardImportModal}
         onOk={executeStandardWorkbookImport}
         onCancel={() => {
@@ -1609,6 +1627,7 @@ const Projects: React.FC = () => {
           setStandardWorkbookPreview(null)
         }}
         okText="Import Workbook"
+        cancelText="Cancel"
         okButtonProps={{
           disabled:
             !standardWorkbookPreview ||
@@ -1632,10 +1651,10 @@ const Projects: React.FC = () => {
               showIcon
               title={
                 standardWorkbookPreview.workbook_blockers.length > 0
-                  ? 'Workbook has blockers and cannot be imported yet.'
+                  ? 'Workbook has blockers.'
                   : standardWorkbookPreview.workbook_warnings.length > 0
-                    ? 'Workbook is importable but has warnings to review.'
-                    : 'Workbook is ready to import.'
+                    ? 'Workbook is ready with warnings.'
+                    : 'Workbook is ready.'
               }
               description={
                 <div>
@@ -1734,7 +1753,7 @@ const Projects: React.FC = () => {
 
       {/* Import Summary Modal */}
       <Modal
-        title="Import Summary"
+        title="Import summary"
         open={showImportSummary}
         onCancel={() => setShowImportSummary(false)}
         footer={[

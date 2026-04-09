@@ -265,7 +265,7 @@ export const parseStandardWorkbook = (workbook: WorkbookSheetRows): StandardWork
 
   if (projects.size > 1) {
     workbookWarnings.push(
-      'Workbook contains multiple projects. One project per workbook is recommended for day-to-day operations.'
+      'Workbook contains multiple projects. Use one project per workbook.'
     )
   }
 

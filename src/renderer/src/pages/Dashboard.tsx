@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import {
   Row,
   Col,
@@ -57,6 +57,7 @@ const Dashboard: React.FC = () => {
     totalBilled: 0,
     totalOutstanding: 0
   })
+  const hasLoadedDashboardRef = useRef(false)
 
   useEffect(() => {
     const fetchProjects = async (): Promise<void> => {
@@ -72,7 +73,7 @@ const Dashboard: React.FC = () => {
       )
     }
     fetchProjects()
-  }, [])
+  }, [executeAsync])
 
   useEffect(() => {
     setSelectedFY(defaultFY)
@@ -96,7 +97,9 @@ const Dashboard: React.FC = () => {
 
   useEffect(() => {
     const fetchDashboardData = async (): Promise<void> => {
-      setLoading(true)
+      if (!hasLoadedDashboardRef.current) {
+        setLoading(true)
+      }
       try {
         await executeAsync(
           async () => {
@@ -115,11 +118,12 @@ const Dashboard: React.FC = () => {
         )
       } finally {
         setLoading(false)
+        hasLoadedDashboardRef.current = true
       }
     }
 
     fetchDashboardData()
-  }, [selectedProject, selectedFY, selectedUnitType, selectedStatus])
+  }, [executeAsync, selectedProject, selectedFY, selectedUnitType, selectedStatus])
 
   const financialYears = availableFYs
 
@@ -239,21 +243,21 @@ const Dashboard: React.FC = () => {
 
   const statCards: StatCard[] = [
     {
-      title: 'PROJECTS',
+      title: 'Projects',
       value: stats.projects,
       icon: <HomeOutlined style={{ color: '#2D7A5E' }} />,
       color: '#2D7A5E',
       path: '/projects'
     },
     {
-      title: 'UNITS',
+      title: 'Units',
       value: stats.units,
       icon: <UserOutlined style={{ color: '#2D7A5E' }} />,
       color: '#2D7A5E',
       path: '/units'
     },
     {
-      title: 'DEFAULTER UNITS',
+      title: 'Defaulter Units',
       value: stats.pendingUnits,
       icon: <FileTextOutlined style={{ color: '#cf1322' }} />,
       color: '#cf1322',
@@ -261,7 +265,7 @@ const Dashboard: React.FC = () => {
       tooltip: 'Units with unpaid maintenance for the selected financial year'
     },
     {
-      title: 'TOTAL OUTSTANDING',
+      title: 'Total Balance Due',
       value: stats.totalOutstanding,
       icon: <FileTextOutlined style={{ color: '#cf1322' }} />,
       color: '#cf1322',
@@ -270,7 +274,7 @@ const Dashboard: React.FC = () => {
       tooltip: 'Total unpaid maintenance amount across all projects'
     },
     {
-      title: 'COLLECTED (FY)',
+      title: 'Collected This FY',
       value: stats.collectedThisYear,
       icon: <FileTextOutlined style={{ color: '#3f8600' }} />,
       color: '#3f8600',
@@ -291,7 +295,7 @@ const Dashboard: React.FC = () => {
               {selectedFY === defaultFY && ' (Working)'}
             </Text>
             <Text type="secondary" className="page-helper-text">
-              Select a summary card to open the related workspace.
+              Select any card to open the matching page.
             </Text>
           </div>
         </div>
@@ -371,7 +375,7 @@ const Dashboard: React.FC = () => {
                   />
                   {hasActiveFilters && (
                     <Text type="secondary" style={{ fontSize: 12, marginTop: 4, display: 'block' }}>
-                      Filtered view
+                      Current filters applied
                     </Text>
                   )}
                 </Tooltip>
@@ -406,7 +410,7 @@ const Dashboard: React.FC = () => {
                   <Title level={5} style={{ margin: '8px 0' }}>
                     Generate Maintenance Letters
                   </Title>
-                  <Text type="secondary">Process annual maintenance</Text>
+                  <Text type="secondary">Prepare this year&apos;s maintenance letters</Text>
                 </Card>
               </Col>
               <Col xs={24} sm={8}>
@@ -426,7 +430,7 @@ const Dashboard: React.FC = () => {
                   <Title level={5} style={{ margin: '8px 0' }}>
                     Add Unit
                   </Title>
-                  <Text type="secondary">Register new unit/owner</Text>
+                  <Text type="secondary">Register a new unit and owner</Text>
                 </Card>
               </Col>
               <Col xs={24} sm={8}>
@@ -446,7 +450,7 @@ const Dashboard: React.FC = () => {
                   <Title level={5} style={{ margin: '8px 0' }}>
                     Record Payment
                   </Title>
-                  <Text type="secondary">Update collection status</Text>
+                  <Text type="secondary">Update payment and receipt status</Text>
                 </Card>
               </Col>
             </Row>

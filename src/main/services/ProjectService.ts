@@ -1,5 +1,6 @@
 import { dbService } from '../db/database'
 import { unitService } from './UnitService'
+import { paymentService } from './PaymentService'
 import { getCurrentFinancialYear } from '../utils/dateUtils'
 
 export interface Project {
@@ -1142,13 +1143,22 @@ class ProjectService {
           )
 
           const paymentId = result.lastInsertRowid as number
-          const receiptNumber = payRow.receipt_number || `REC-${paymentId}`
           try {
-            dbService.run(
-              `INSERT OR IGNORE INTO receipts (payment_id, receipt_number, receipt_date)
-               VALUES (?, ?, ?)`,
-              [paymentId, receiptNumber, payRow.payment_date]
-            )
+            paymentService.ensureReceiptRecordForPayment({
+              paymentId,
+              receiptDate: payRow.payment_date,
+              receiptNumber:
+                typeof payRow.receipt_number === 'string' ? payRow.receipt_number : undefined,
+              snapshot: {
+                snapshot_letter_id: letter?.id ?? null,
+                snapshot_financial_year: fy,
+                snapshot_base_amount: 0,
+                snapshot_arrears: 0,
+                snapshot_discount_amount: 0,
+                snapshot_letter_total: letter?.final_amount ?? amountPaid,
+                snapshot_addons_json: '[]'
+              }
+            })
           } catch {
             // receipt already exists — skip
           }

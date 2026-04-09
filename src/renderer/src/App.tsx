@@ -15,6 +15,22 @@ const Payments = lazy(() => import('./pages/Payments'))
 const Reports = lazy(() => import('./pages/Reports'))
 const Settings = lazy(() => import('./pages/Settings'))
 
+const MESSAGE_CONFIG = {
+  top: 88,
+  duration: 3,
+  maxCount: 3,
+  pauseOnHover: true
+} as const
+
+const NOTIFICATION_CONFIG = {
+  top: 88,
+  placement: 'topRight' as const,
+  duration: 6,
+  maxCount: 3,
+  showProgress: true,
+  pauseOnHover: true
+} as const
+
 const AntdAppBridge: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const { message, notification } = AntdApp.useApp()
 
@@ -61,7 +77,7 @@ const App: React.FC = () => {
         }
       }}
     >
-      <AntdApp>
+      <AntdApp message={MESSAGE_CONFIG} notification={NOTIFICATION_CONFIG}>
         <AntdAppBridge>
           <WorkingFinancialYearProvider>
             <Router>

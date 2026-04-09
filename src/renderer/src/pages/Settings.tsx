@@ -63,7 +63,7 @@ const Settings: React.FC = () => {
       setAppInfo(info)
     } catch (error) {
       console.error('Failed to load settings diagnostics:', error)
-      message.error('Failed to load system diagnostics')
+      message.error('Could not load system diagnostics')
     } finally {
       setDiagnosticsLoading(false)
     }
@@ -90,21 +90,21 @@ const Settings: React.FC = () => {
       })
 
       if (!savePath) {
-        message.info('Export cancelled')
+        message.info('Export canceled')
         return
       }
 
       const result = await window.api.backup.exportBackup(savePath)
       if (!result.success || !result.backupPath) {
-        message.error(`Export failed: ${result.error}`)
+        message.error(`Could not export the backup: ${result.error}`)
         return
       }
 
-      message.success('Backup exported successfully')
+      message.success('Backup exported')
       void loadDiagnostics()
     } catch (err: unknown) {
       const error = err as Error
-      message.error('Export failed: ' + error.message)
+      message.error('Could not export the backup: ' + error.message)
     } finally {
       setExporting(false)
     }
@@ -129,8 +129,8 @@ const Settings: React.FC = () => {
           await loadDiagnostics()
           message.success(
             importResult.requiresRestart
-              ? 'Database imported successfully. Restart is required to complete restore.'
-              : 'Database imported successfully. Refreshing workspace...'
+              ? 'Backup imported. Restart the app to finish restoring it.'
+              : 'Backup imported. Refreshing the workspace...'
           )
           if (!importResult.requiresRestart) {
             window.setTimeout(() => {
@@ -138,12 +138,12 @@ const Settings: React.FC = () => {
             }, 400)
           }
         } else {
-          message.error(`Import failed: ${importResult.error}`)
+          message.error(`Could not import the backup: ${importResult.error}`)
         }
       }
     } catch (err: unknown) {
       const error = err as Error
-      message.error('Import failed: ' + error.message)
+      message.error('Could not import the backup: ' + error.message)
     } finally {
       setImporting(false)
     }
@@ -156,13 +156,13 @@ const Settings: React.FC = () => {
       setRepairResults(results)
       setIsRepairModalOpen(true)
       if (results.success) {
-        message.success('Database check completed')
+        message.success('Database check complete')
       } else {
-        message.error('Database repair failed')
+        message.error('Could not repair the database')
       }
     } catch (err: unknown) {
       const error = err as Error
-      message.error('Database repair failed: ' + error.message)
+      message.error('Could not repair the database: ' + error.message)
     } finally {
       setRepairing(false)
     }
@@ -175,14 +175,14 @@ const Settings: React.FC = () => {
           <div>
             <Title level={2} style={{ margin: 0 }}>System Settings</Title>
             <Text type="secondary" className="page-hero-subtitle">
-              Manage backups, recovery, and database health for this desktop workspace.
+              Manage backups, restore, and database health.
             </Text>
             <Text
               type="secondary"
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Use backup first, then restore or repair only when you need recovery or integrity checks.
+              Use backup first. Restore or repair only when needed.
             </Text>
           </div>
           <Space className="responsive-action-bar">
@@ -195,10 +195,10 @@ const Settings: React.FC = () => {
         <div className="page-info-grid">
           <Card title="Export Backup" className="page-action-card">
             <Paragraph>
-              Export a clean single-file Barkat backup before migrations, moving to another machine, or recovery work.
+              Export a full workspace backup.
             </Paragraph>
             <Text type="secondary" className="page-helper-text">
-              Recommended format: <strong>.barkatbackup</strong>. Older SQLite backup files can still be restored.
+              Creates one <strong>.barkatbackup</strong> file with your database and saved files.
             </Text>
             <Button icon={<DownloadOutlined />} onClick={handleExport} loading={exporting}>
               Export Backup File
@@ -207,10 +207,10 @@ const Settings: React.FC = () => {
 
           <Card title="Restore Backup" className="page-action-card">
             <Paragraph>
-              Restore a previously exported Barkat backup file when you need to recover an older copy of your workspace data.
+              Restore a previously exported workspace backup.
             </Paragraph>
           <Text type="secondary" className="page-helper-text">
-            This replaces the current local database with the selected backup file.
+            Restores the database and saved files. Older SQLite-only backups still work.
           </Text>
           <Button icon={<UploadOutlined />} onClick={handleImport} loading={importing}>
             Restore from Backup
@@ -219,10 +219,10 @@ const Settings: React.FC = () => {
 
         <Card title="Repair Data" className="page-action-card">
           <Paragraph>
-            Check the local database for broken links or consistency problems and try to repair common issues.
+            Check the local database for common data issues.
           </Paragraph>
           <Text type="secondary" className="page-helper-text">
-            Use this only when records look inconsistent, or after a failed import or restore.
+            Use this after a failed import, restore, or if data looks wrong.
           </Text>
           <Button icon={<ToolOutlined />} onClick={handleDatabaseRepair} loading={repairing}>
             Check & Repair
@@ -232,30 +232,40 @@ const Settings: React.FC = () => {
 
       <Card title="System Diagnostics" className="page-toolbar-card settings-diagnostics-card">
         <div className="page-soft-panel">
-          <Space orientation="vertical">
-            <Text>Version: {appInfo?.version || 'Loading...'}</Text>
-            <Text>Database Type: SQLite 3 (better-sqlite3)</Text>
-            <Text>
-              Environment:{' '}
-              {appInfo
-                ? appInfo.isPackaged
-                  ? `Production Desktop App (${appInfo.platform})`
-                  : `Development Desktop App (${appInfo.platform})`
-                : 'Loading...'}
-            </Text>
-            <Text>
-              Auto Backup:{' '}
-              {backupConfig
-                ? backupConfig.enabled
-                  ? `Enabled every ${backupConfig.intervalDays} day(s)`
-                  : 'Disabled'
-                : 'Loading...'}
-            </Text>
-            <Text>Available Backups: {diagnosticsLoading ? 'Loading...' : backups.length}</Text>
-            <Text>
-              Verified Safe Backups:{' '}
-              {diagnosticsLoading ? 'Loading...' : `${verifiedBackupCount} of ${backups.length}`}
-            </Text>
+          <Space orientation="vertical" size="large" style={{ width: '100%' }}>
+            <div>
+              <div className="page-section-heading">
+                <Title level={5}>Workspace Status</Title>
+                <Text className="page-section-subtitle">
+                  App, environment, and backup status for this workspace.
+                </Text>
+              </div>
+              <Space orientation="vertical" size="small">
+                <Text>Version: {appInfo?.version || 'Loading...'}</Text>
+                <Text>Database Type: SQLite 3 (better-sqlite3)</Text>
+                <Text>
+                  Environment:{' '}
+                  {appInfo
+                    ? appInfo.isPackaged
+                      ? `Production Desktop App (${appInfo.platform})`
+                      : `Development Desktop App (${appInfo.platform})`
+                    : 'Loading...'}
+                </Text>
+                <Text>
+                  Auto Backup:{' '}
+                  {backupConfig
+                    ? backupConfig.enabled
+                      ? `Enabled every ${backupConfig.intervalDays} day(s)`
+                      : 'Disabled'
+                    : 'Loading...'}
+                </Text>
+                <Text>Available Backups: {diagnosticsLoading ? 'Loading...' : backups.length}</Text>
+                <Text>
+                  Verified Safe Backups:{' '}
+                  {diagnosticsLoading ? 'Loading...' : `${verifiedBackupCount} of ${backups.length}`}
+                </Text>
+              </Space>
+            </div>
             <Alert
               title="Backup Readiness"
               description={
@@ -263,16 +273,21 @@ const Settings: React.FC = () => {
                   ? 'Loading backup status...'
                   : latestBackup
                     ? latestBackup.isVerifiedSnapshot
-                      ? `Latest backup available: ${new Date(latestBackup.timestamp).toLocaleString()}. This backup was created from a verified live SQLite snapshot.`
-                      : `Latest backup available: ${new Date(latestBackup.timestamp).toLocaleString()}. This is a legacy backup; restore is supported, but newer verified backups are safer.`
-                    : 'No backups found yet. Export a backup before doing restores or major data operations.'
+                      ? `Latest backup: ${new Date(latestBackup.timestamp).toLocaleString()}.`
+                      : `Latest backup: ${new Date(latestBackup.timestamp).toLocaleString()} (legacy format).`
+                    : 'No backups found yet. Export a backup first.'
               }
               type={latestBackup ? (latestBackup.isVerifiedSnapshot ? 'success' : 'warning') : 'warning'}
               showIcon
             />
             {!diagnosticsLoading && backups.length > 0 && (
               <div>
-                <Text strong>Recent Backups</Text>
+                <div className="page-section-heading">
+                  <Title level={5}>Recent Backups</Title>
+                  <Text className="page-section-subtitle">
+                    The newest three backups in this workspace.
+                  </Text>
+                </div>
                 <List
                   size="small"
                   style={{ marginTop: 8 }}
@@ -295,15 +310,22 @@ const Settings: React.FC = () => {
       </Card>
 
       <Modal
-        title="Database Check Results"
+        title="Database check results"
         open={isRepairModalOpen}
-        onOk={() => setIsRepairModalOpen(false)}
         onCancel={() => setIsRepairModalOpen(false)}
+        footer={[
+          <Button key="close" type="primary" onClick={() => setIsRepairModalOpen(false)}>
+            Close
+          </Button>
+        ]}
         width={700}
         className="mobile-fullscreen-modal"
       >
         {repairResults && (
           <div style={{ maxHeight: 400, overflow: 'auto' }}>
+            <Text type="secondary" className="page-helper-text" style={{ display: 'block', marginBottom: 16 }}>
+              Review the summary first. Open the repair log only if you need details.
+            </Text>
             <Alert
               title={repairResults.success ? 'Success' : 'Issues Found'}
               type={repairResults.success ? 'success' : 'warning'}
@@ -332,8 +354,18 @@ const Settings: React.FC = () => {
 
             <Divider />
 
-            <Title level={5}>System Logs</Title>
-            <pre style={{ background: '#f5f5f5', padding: 8, borderRadius: 4, fontSize: '11px' }}>
+            <Title level={5}>Repair Log</Title>
+            <pre
+              style={{
+                background: '#f5f5f5',
+                padding: 12,
+                borderRadius: 8,
+                fontSize: '12px',
+                lineHeight: 1.6,
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word'
+              }}
+            >
               {repairResults.logs.join('\n')}
             </pre>
           </div>

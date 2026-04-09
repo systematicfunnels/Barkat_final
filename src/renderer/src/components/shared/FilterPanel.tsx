@@ -117,17 +117,23 @@ export function FilterPanel({
       }
       return field.type === 'search' ? 280 : 160
     }
-    
-    const commonStyle = {
+
+    const fieldStyle = {
       width: getResponsiveWidth(),
       minWidth: isMobile ? '100%' : (field.type === 'search' ? 200 : 120)
     }
 
+    const controlStyle = {
+      width: '100%',
+      minWidth: 0
+    }
+
+    let control: React.ReactNode = null
+
     switch (field.type) {
       case 'search':
-        return (
+        control = (
           <Input
-            key={field.key}
             className="app-search-field"
             placeholder={field.placeholder || `Search ${field.label.toLowerCase()}...`}
             value={typeof values[field.key] === 'string' ? (values[field.key] as string) : ''}
@@ -135,10 +141,12 @@ export function FilterPanel({
             onPressEnter={(e) => onChange(field.key, e.currentTarget.value)}
             allowClear={field.allowClear !== false}
             prefix={<SearchOutlined />}
+            aria-label={field.label}
             disabled={loading}
-            style={commonStyle}
+            style={controlStyle}
           />
         )
+        break
 
       case 'select':
       {
@@ -148,6 +156,17 @@ export function FilterPanel({
           : currentValue !== undefined && currentValue !== null && currentValue !== ''
             ? [currentValue]
             : []
+        const hasExplicitEmptyOption = Boolean(
+          field.options?.some((opt) => Object.is(opt.value, field.emptyValue))
+        )
+        const shouldShowClearOption = field.allowClear !== false && !hasExplicitEmptyOption
+        const isClearSelectionActive =
+          field.multiple
+            ? selectedValues.length === 0
+            : hasExplicitEmptyOption
+              ? false
+              : selectedValues.length === 0 ||
+                (field.emptyValue !== undefined && Object.is(currentValue, field.emptyValue))
 
         const selectedLabels = selectedValues
           .map((selectedValue) => field.options?.find((opt) => opt.value === selectedValue)?.label || String(selectedValue))
@@ -161,11 +180,12 @@ export function FilterPanel({
         const hasOptions = (field.options?.length ?? 0) > 0
 
         const menuItems = [
-          ...(field.allowClear !== false
+          ...(shouldShowClearOption
             ? [
                 {
                   key: '__clear__',
                   label: `All ${field.label}`,
+                  icon: isClearSelectionActive ? <CheckOutlined /> : undefined,
                   onClick: () => onChange(field.key, field.emptyValue)
                 }
               ]
@@ -190,46 +210,56 @@ export function FilterPanel({
           }) || [])
         ]
 
-        return (
+        control = (
           <Dropdown
-            key={field.key}
-            trigger={['hover', 'click']}
-            menu={{ items: menuItems }}
+            trigger={['click']}
+            menu={{
+              items: menuItems,
+              style: {
+                maxHeight: 'min(320px, calc(100vh - 180px))',
+                overflowY: 'auto',
+                overflowX: 'hidden'
+              }
+            }}
             placement="bottomLeft"
+            destroyOnHidden
             classNames={{ root: 'app-filter-dropdown-menu' }}
             disabled={loading || !hasOptions}
           >
             <Button
               className="app-filter-dropdown-button"
-              style={commonStyle}
+              style={controlStyle}
               title={buttonLabel}
+              aria-label={field.label}
+              aria-haspopup="menu"
               disabled={loading || !hasOptions}
             >
               {loading ? `Loading ${field.label}...` : buttonLabel}
             </Button>
           </Dropdown>
         )
+        break
       }
 
       case 'number':
-        return (
+        control = (
           <InputNumber
-            key={field.key}
             className="app-filter-number"
             placeholder={field.placeholder || field.label}
             value={typeof values[field.key] === 'number' ? (values[field.key] as number) : undefined}
             onChange={(value) => onChange(field.key, value)}
+            aria-label={field.label}
             disabled={loading}
-            style={commonStyle}
+            style={controlStyle}
           />
         )
+        break
 
       case 'range':
         {
           const rangeValue = Array.isArray(values[field.key]) ? values[field.key] as [unknown, unknown] : undefined
-          const rangeStyle = isMobile ? { width: '100%' } : { width: 200 }
-          return (
-            <Space.Compact key={field.key} className="app-filter-range" style={{ display: 'flex', gap: 4, ...rangeStyle }}>
+          control = (
+            <Space.Compact className="app-filter-range" style={{ display: 'flex', gap: 4, width: '100%' }}>
               <InputNumber
                 className="app-filter-number"
                 placeholder={field.minPlaceholder || 'Min'}
@@ -238,6 +268,7 @@ export function FilterPanel({
                   const current = rangeValue || [null, null]
                   onChange(field.key, [min, current[1]])
                 }}
+                aria-label={`${field.label} minimum`}
                 disabled={loading}
                 style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
@@ -250,16 +281,27 @@ export function FilterPanel({
                   const current = rangeValue || [null, null]
                   onChange(field.key, [current[0], max])
                 }}
+                aria-label={`${field.label} maximum`}
                 disabled={loading}
                 style={{ width: isMobile ? 'calc(50% - 14px)' : 90 }}
               />
-          </Space.Compact>
+            </Space.Compact>
           )
+          fieldStyle.width = isMobile ? '100%' : 200
+          fieldStyle.minWidth = isMobile ? '100%' : 200
+          break
         }
 
       default:
         return null
     }
+
+    return (
+      <div key={field.key} className="app-filter-field" style={fieldStyle}>
+        <span className="app-filter-field-label">{field.label}</span>
+        {control}
+      </div>
+    )
   }
 
   const content = (

@@ -91,6 +91,11 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
     return routes[location.pathname] || routes['/']
   }, [location.pathname])
 
+  const breadcrumbItems = useMemo(
+    () => (location.pathname === '/' ? [] : [{ label: routeMeta.title }]),
+    [location.pathname, routeMeta.title]
+  )
+
   const sidebarWidth = isTablet ? tabletSidebarWidth : desktopSidebarWidth
   const contentOffset = isMobile ? 0 : collapsed ? collapsedSidebarWidth : sidebarWidth
   const mobileSidebarWidth = isSmallMobile ? 256 : 304
@@ -269,7 +274,10 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           minWidth: 0,
           width: mainContentWidth,
           maxWidth: '100%',
-          flex: '1 1 auto'
+          flex: '1 1 auto',
+          minHeight: '100vh',
+          height: '100vh',
+          overflow: 'hidden'
         }}
       >
         <Header
@@ -281,6 +289,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
             alignItems: 'center',
             justifyContent: 'space-between',
             height: 64,
+            flexShrink: 0,
             borderBottom: '1px solid rgba(15, 23, 42, 0.08)',
             position: 'sticky',
             top: 0,
@@ -322,7 +331,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <Content
           className="app-shell-content"
           style={{
-            minHeight: 'calc(100vh - 64px)',
+            flex: '1 1 auto',
+            minHeight: 0,
             overflowY: 'auto',
             overflowX: 'hidden',
             background:
@@ -330,7 +340,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           }}
         >
           <div className="app-shell-content-inner responsive-page-container">
-            <BreadcrumbNavigation items={[]} />
+            <BreadcrumbNavigation items={breadcrumbItems} />
             {children}
           </div>
         </Content>

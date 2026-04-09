@@ -27,10 +27,7 @@ import {
   EditOutlined,
   FolderOpenOutlined,
   DownloadOutlined,
-  TableOutlined,
-  CalculatorOutlined,
-  ClearOutlined,
-  InfoCircleOutlined
+  TableOutlined
 } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import { Project, Unit, Payment, MaintenanceLetter } from '@preload/types'
@@ -69,6 +66,14 @@ interface ReceiptProgress {
   total: number
 }
 
+interface BulkPaymentSharedValues {
+  paymentDate: dayjs.Dayjs
+  financialYear: string
+  paymentMode: string
+  referenceNumber?: string
+  remarks?: string
+}
+
 const Payments: React.FC = () => {
   const { workingFY } = useWorkingFinancialYear()
   const navigate = useNavigate()
@@ -81,6 +86,7 @@ const Payments: React.FC = () => {
   const [pageSize, setPageSize] = useState(10)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false)
+  const [bulkModalStep, setBulkModalStep] = useState<'config' | 'units'>('config')
   const [editingPayment, setEditingPayment] = useState<Payment | null>(null)
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedMode, setSelectedMode] = useState<string | null>(null)
@@ -93,27 +99,80 @@ const Payments: React.FC = () => {
   const [searchText, setSearchText] = useState('')
   const [form] = Form.useForm()
   const [bulkForm] = Form.useForm()
-  const bulkFinancialYear = Form.useWatch('financial_year', bulkForm)
   // Watch project_id from payment form to filter unit dropdown
   const formProjectId = Form.useWatch('project_id', form)
   const formUnitId = Form.useWatch('unit_id', form)
   const formLetterId = Form.useWatch('letter_id', form)
   const formFinancialYear = Form.useWatch('financial_year', form)
-  const formPaymentAmount = Form.useWatch('payment_amount', form)
-  const filteredUnitsForForm = formProjectId
-    ? units.filter((u) => u.project_id === formProjectId)
-    : units
+  const isGeneratedLetter = useCallback(
+    (letter: MaintenanceLetter): boolean =>
+      Boolean(letter.generated_date && dayjs(letter.generated_date).isValid()),
+    []
+  )
+  const availableLettersForForm = useMemo(
+    () =>
+      letters.filter((letter) => {
+        if (formProjectId && letter.project_id !== formProjectId) {
+          return false
+        }
+        if (formFinancialYear && letter.financial_year !== formFinancialYear) {
+          return false
+        }
+        if (!isGeneratedLetter(letter) && letter.id !== formLetterId) {
+          return false
+        }
+        if (letter.status === 'Paid' && letter.unit_id !== formUnitId && letter.id !== formLetterId) {
+          return false
+        }
+        return true
+      }),
+    [formFinancialYear, formLetterId, formProjectId, formUnitId, isGeneratedLetter, letters]
+  )
+  const availableUnitIdsForForm = useMemo(
+    () =>
+      new Set(
+        availableLettersForForm
+          .map((letter) => Number(letter.unit_id))
+          .filter((unitId) => Number.isFinite(unitId))
+      ),
+    [availableLettersForForm]
+  )
+  const filteredUnitsForForm = useMemo(
+    () =>
+      units.filter((unit) => {
+        if (formProjectId && unit.project_id !== formProjectId) {
+          return false
+        }
+
+        const unitId = Number(unit.id)
+        if (!Number.isFinite(unitId)) {
+          return false
+        }
+
+        if (unitId === formUnitId) {
+          return true
+        }
+
+        return availableUnitIdsForForm.has(unitId)
+      }),
+    [availableUnitIdsForForm, formProjectId, formUnitId, units]
+  )
   const [bulkPayments, setBulkPayments] = useState<BulkPaymentEntry[]>([])
   const [bulkProject, setBulkProject] = useState<number | null>(null)
+  const [bulkSelectedFinancialYear, setBulkSelectedFinancialYear] = useState(defaultFY)
+  const [bulkSharedValues, setBulkSharedValues] = useState<BulkPaymentSharedValues>({
+    paymentDate: dayjs(),
+    financialYear: defaultFY,
+    paymentMode: 'Transfer',
+    referenceNumber: undefined,
+    remarks: undefined
+  })
   const [bulkTablePageSize, setBulkTablePageSize] = useState(15)
-  const [isBulkAmountModalOpen, setIsBulkAmountModalOpen] = useState(false)
-  const [bulkAmountInput, setBulkAmountInput] = useState<number | null>(null)
   const [generatingReceipts, setGeneratingReceipts] = useState(false)
   const [receiptProgress, setReceiptProgress] = useState<ReceiptProgress | null>(null)
   const [receiptTaskId, setReceiptTaskId] = useState<string | null>(null)
   const [lastAutoFilledAmount, setLastAutoFilledAmount] = useState<number | null>(null)
   const [lastAutoFillKey, setLastAutoFillKey] = useState<string | null>(null)
-
   const yearMatchedLetters = useMemo(() => {
     if (!formUnitId || !formFinancialYear) {
       return []
@@ -122,10 +181,12 @@ const Payments: React.FC = () => {
     return letters
       .filter(
         (letter) =>
-          letter.unit_id === formUnitId && letter.financial_year === formFinancialYear
+          letter.unit_id === formUnitId &&
+          letter.financial_year === formFinancialYear &&
+          isGeneratedLetter(letter)
       )
       .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
-  }, [formFinancialYear, formUnitId, letters])
+  }, [formFinancialYear, formUnitId, isGeneratedLetter, letters])
 
   const autoFillPaymentLetter = useMemo(() => {
     const unpaidLetters = yearMatchedLetters.filter((letter) => letter.status !== 'Paid')
@@ -162,12 +223,13 @@ const Payments: React.FC = () => {
         .filter(
           (letter) =>
             letter.unit_id === unitId &&
+            isGeneratedLetter(letter) &&
             letter.status !== 'Paid' &&
             (!normalizedFY || letter.financial_year === normalizedFY)
         )
         .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0]
     },
-    [letters]
+    [isGeneratedLetter, letters]
   )
 
   const createBulkPaymentEntry = useCallback(
@@ -180,21 +242,41 @@ const Payments: React.FC = () => {
       }
     ): BulkPaymentEntry => {
       const matchedLetter = getBulkMatchingLetter(unit.id as number, options.financialYear)
+      const matchedAmount = matchedLetter?.final_amount ?? 0
       return {
         unit_id: unit.id as number,
         project_id: unit.project_id,
         unit_number: unit.unit_number,
         owner_name: unit.owner_name,
-        payment_amount: 0,
+        payment_amount: matchedAmount,
         payment_mode: options.paymentMode,
         payment_date: options.paymentDate,
         has_matching_letter: Boolean(matchedLetter),
         matched_letter_id: matchedLetter?.id,
-        matched_letter_amount: matchedLetter?.final_amount,
-        amount_source: 'empty'
+        matched_letter_amount: matchedAmount || undefined,
+        amount_source: matchedLetter ? 'letter' : 'empty'
       }
     },
     [getBulkMatchingLetter]
+  )
+
+  const buildBulkPaymentEntries = useCallback(
+    (projectId: number, financialYear?: string | null): BulkPaymentEntry[] => {
+      const projectUnits = units.filter((u) => u.project_id === projectId)
+      const paymentMode = bulkSharedValues.paymentMode || 'Transfer'
+      const paymentDate = bulkSharedValues.paymentDate || dayjs()
+
+      return projectUnits
+        .map((unit) =>
+          createBulkPaymentEntry(unit, {
+            financialYear,
+            paymentMode,
+            paymentDate
+          })
+        )
+        .filter((entry) => entry.has_matching_letter)
+    },
+    [bulkSharedValues.paymentDate, bulkSharedValues.paymentMode, createBulkPaymentEntry, units]
   )
 
   useEffect(() => {
@@ -242,11 +324,11 @@ const Payments: React.FC = () => {
     form,
     formFinancialYear,
     formLetterId,
-    formPaymentAmount,
     formUnitId,
     isModalOpen,
     lastAutoFillKey,
-    lastAutoFilledAmount
+    lastAutoFilledAmount,
+    letters
   ])
 
   const fetchData = async (): Promise<void> => {
@@ -261,7 +343,7 @@ const Payments: React.FC = () => {
       setSelectedRowKeys([])
     } catch (error) {
       console.error('Failed to fetch data:', error)
-      message.error('Failed to fetch data')
+      message.error('Could not load payments')
     } finally {
       setLoading(false)
     }
@@ -282,7 +364,7 @@ const Payments: React.FC = () => {
         setLetters(lettersData)
       } catch (error) {
         console.error('Failed to fetch payment reference data:', error)
-        message.error('Failed to load project unit data')
+        message.error('Could not load units for this project')
       }
     }
 
@@ -315,7 +397,7 @@ const Payments: React.FC = () => {
 
     // Clear navigation state to prevent re-triggering on refresh
     window.history.replaceState({}, document.title)
-  }, [location, units, form])
+  }, [defaultFY, form, location, units])
 
   // Get unique financial years for filtering
   const uniqueFinancialYears = useMemo(() => {
@@ -436,23 +518,36 @@ const Payments: React.FC = () => {
     setSelectedRowKeys([])
   }, [defaultFY])
 
-  // Calculate filtered payments count
-  const filteredPaymentsCount = useMemo(() => {
-    return payments.filter((payment) => {
-      const matchSearch =
-        !searchText ||
-        (payment.unit_number || '').toLowerCase().includes(searchText.toLowerCase()) ||
-        (payment.owner_name || '').toLowerCase().includes(searchText.toLowerCase()) ||
-        (payment.receipt_number || '').toLowerCase().includes(searchText.toLowerCase())
-      const matchProject =
-        !selectedProject ||
-        payment.project_id === selectedProject ||
-        projects.find((s) => s.id === selectedProject)?.name === payment.project_name
+  const selectedProjectName = useMemo(
+    () => projects.find((project) => project.id === selectedProject)?.name,
+    [projects, selectedProject]
+  )
+
+    const matchesPaymentFilters = useCallback(
+      (payment: Payment): boolean => {
+        const normalizedSearch = searchText.toLowerCase()
+        const matchSearch =
+          !searchText ||
+          (payment.unit_number || '').toLowerCase().includes(normalizedSearch) ||
+          (payment.owner_name || '').toLowerCase().includes(normalizedSearch) ||
+          (payment.receipt_number || '').toLowerCase().includes(normalizedSearch) ||
+          (payment.project_name || '').toLowerCase().includes(normalizedSearch)
+        const matchProject =
+          !selectedProject ||
+          payment.project_id === selectedProject ||
+        selectedProjectName === payment.project_name
       const matchMode = !selectedMode || payment.payment_mode === selectedMode
       const matchFY = !selectedFY || payment.financial_year === selectedFY
       return matchSearch && matchProject && matchMode && matchFY
-    }).length
-  }, [payments, searchText, selectedProject, selectedMode, selectedFY, projects])
+    },
+    [searchText, selectedProject, selectedProjectName, selectedMode, selectedFY]
+  )
+
+  // Calculate filtered payments count
+  const filteredPaymentsCount = useMemo(
+    () => payments.filter(matchesPaymentFilters).length,
+    [payments, matchesPaymentFilters]
+  )
 
   const handleAdd = (): void => {
     setEditingPayment(null)
@@ -487,175 +582,103 @@ const Payments: React.FC = () => {
   }
 
   const handleBulkAdd = (): void => {
+    const initialBulkSharedValues: BulkPaymentSharedValues = {
+      paymentDate: dayjs(),
+      financialYear: defaultFY,
+      paymentMode: 'Transfer',
+      referenceNumber: undefined,
+      remarks: undefined
+    }
     bulkForm.resetFields()
     bulkForm.setFieldsValue({ 
       project_id: undefined,
-      payment_date: dayjs(), 
-      payment_mode: 'Transfer',
-      financial_year: defaultFY 
+      payment_date: initialBulkSharedValues.paymentDate, 
+      payment_mode: initialBulkSharedValues.paymentMode,
+      financial_year: initialBulkSharedValues.financialYear,
+      reference_number: initialBulkSharedValues.referenceNumber,
+      remarks: initialBulkSharedValues.remarks
     })
     setBulkPayments([])
     setBulkProject(null)
+    setBulkSelectedFinancialYear(defaultFY)
+    setBulkSharedValues(initialBulkSharedValues)
+    setBulkModalStep('config')
     setBulkTablePageSize(15)
-    setBulkAmountInput(null)
     setIsBulkModalOpen(true)
   }
 
   const handleBulkProjectChange = useCallback(
     (projectId: number): void => {
       setBulkProject(projectId)
-      const projectUnits = units.filter((u) => u.project_id === projectId)
-      const paymentMode = bulkForm.getFieldValue('payment_mode') || 'Transfer'
-      const paymentDate = bulkForm.getFieldValue('payment_date') || dayjs()
-
-      setBulkPayments(
-        projectUnits.map((unit) =>
-          createBulkPaymentEntry(unit, {
-            financialYear: bulkForm.getFieldValue('financial_year'),
-            paymentMode,
-            paymentDate
-          })
-        )
-      )
+      setBulkPayments(buildBulkPaymentEntries(projectId, bulkSelectedFinancialYear))
     },
-    [bulkForm, createBulkPaymentEntry, units]
+    [buildBulkPaymentEntries, bulkSelectedFinancialYear]
   )
 
-  const handleSetSameAmount = useCallback(() => {
-    setBulkAmountInput(null)
-    setIsBulkAmountModalOpen(true)
-  }, [])
-
-  const handleApplyBulkAmount = useCallback(() => {
-    if (bulkAmountInput === null || Number.isNaN(bulkAmountInput) || bulkAmountInput < 0) {
-      message.warning('Please enter a valid amount')
-      return
-    }
-
-    setBulkPayments((prev) =>
-      prev.map((payment) => ({
-        ...payment,
-        payment_amount: bulkAmountInput,
-        amount_source: bulkAmountInput > 0 ? 'manual' : 'empty'
-      }))
-    )
-    setIsBulkAmountModalOpen(false)
-    message.success(`Applied Rs. ${bulkAmountInput.toLocaleString()} to all units`)
-  }, [bulkAmountInput])
-
-  const handleClearAllAmounts = useCallback(() => {
-    setBulkPayments((prev) =>
-      prev.map((payment) => ({
-        ...payment,
-        payment_amount: 0,
-        amount_source: 'empty'
-      }))
-    )
-    message.success('Cleared all amounts')
-  }, [])
-
-  const handleSetAllToCheque = useCallback(() => {
-    setBulkPayments((prev) => prev.map((p) => ({ ...p, payment_mode: 'Cheque' })))
-    message.success('Set all payments to Cheque mode')
-  }, [])
-
-  const handleSetAllToCash = useCallback(() => {
-    setBulkPayments((prev) => prev.map((p) => ({ ...p, payment_mode: 'Cash' })))
-    message.success('Set all payments to Cash mode')
-  }, [])
-
-  const calculateAmountsFromLetters = useCallback(() => {
-    if (!bulkProject) return
-    const selectedBulkFY = bulkForm.getFieldValue('financial_year')
-    let matchedCount = 0
-
-    const updatedPayments: BulkPaymentEntry[] = bulkPayments.map((payment) => {
-      const unitLetters = letters
-        .filter(
-          (l) =>
-            l.unit_id === payment.unit_id &&
-            l.status !== 'Paid' &&
-            (!selectedBulkFY || l.financial_year === selectedBulkFY)
-        )
-        .sort((a, b) => b.financial_year.localeCompare(a.financial_year))
-
-      if (unitLetters.length > 0) {
-        const latestLetter = unitLetters[0]
-        matchedCount += 1
-        return {
-          ...payment,
-          payment_amount: latestLetter.final_amount,
-          has_matching_letter: true,
-          matched_letter_id: latestLetter.id,
-          matched_letter_amount: latestLetter.final_amount,
-          amount_source: 'letter'
-        }
-      }
-      return {
-        ...payment,
-        has_matching_letter: false,
-        matched_letter_id: undefined,
-        matched_letter_amount: undefined,
-        amount_source: payment.payment_amount > 0 ? 'manual' : 'empty'
-      }
-    })
-
-    setBulkPayments(updatedPayments)
-    message.success(
-      selectedBulkFY
-        ? `Calculated amounts from FY ${selectedBulkFY} maintenance letters for ${matchedCount} unit(s)`
-        : `Calculated amounts from maintenance letters for ${matchedCount} unit(s)`
-    )
-  }, [bulkForm, bulkProject, bulkPayments, letters])
-
   useEffect(() => {
-    if (!bulkProject || !bulkFinancialYear) {
+    if (!bulkProject) {
       return
     }
 
-    setBulkPayments((prev) =>
-      prev.map((payment) => {
-        const matchedLetter = getBulkMatchingLetter(payment.unit_id, bulkFinancialYear)
-        const nextAmountSource: BulkPaymentEntry['amount_source'] =
-          payment.amount_source === 'letter'
-            ? matchedLetter
-              ? 'letter'
-              : 'empty'
-            : payment.payment_amount > 0
-              ? 'manual'
-              : 'empty'
-
-        return {
-          ...payment,
-          payment_amount:
-            payment.amount_source === 'letter' ? matchedLetter?.final_amount || 0 : payment.payment_amount,
-          has_matching_letter: Boolean(matchedLetter),
-          matched_letter_id: matchedLetter?.id,
-          matched_letter_amount: matchedLetter?.final_amount,
-          amount_source: nextAmountSource
-        }
-      })
-    )
-  }, [bulkFinancialYear, bulkProject, getBulkMatchingLetter])
+    setBulkPayments(buildBulkPaymentEntries(bulkProject, bulkSelectedFinancialYear))
+  }, [buildBulkPaymentEntries, bulkProject, bulkSelectedFinancialYear])
 
   const handleBulkModalOk = async (): Promise<void> => {
     try {
-      const values = await bulkForm.validateFields()
+      if (bulkModalStep === 'config') {
+        const values = await bulkForm.validateFields([
+          'project_id',
+          'payment_date',
+          'financial_year',
+          'payment_mode',
+          'reference_number',
+          'remarks'
+        ])
+
+        if (!values.project_id) {
+          message.warning('Select a project to continue')
+          return
+        }
+
+        const nextSharedValues: BulkPaymentSharedValues = {
+          paymentDate: dayjs.isDayjs(values.payment_date) ? values.payment_date : dayjs(values.payment_date),
+          financialYear: values.financial_year,
+          paymentMode: values.payment_mode || 'Transfer',
+          referenceNumber: values.reference_number,
+          remarks: values.remarks
+        }
+
+        setBulkSharedValues(nextSharedValues)
+        setBulkSelectedFinancialYear(values.financial_year)
+        setBulkModalStep('units')
+        return
+      }
+
+      const normalizedPaymentDate = dayjs.isDayjs(bulkSharedValues.paymentDate)
+        ? bulkSharedValues.paymentDate
+        : dayjs(bulkSharedValues.paymentDate)
+
+      if (!normalizedPaymentDate.isValid()) {
+        message.warning('Go back to step 1 and select a valid payment date')
+        setBulkModalStep('config')
+        return
+      }
+
       const validPayments = bulkPayments
         .filter((p) => p.payment_amount > 0)
         .map((p) => ({
           unit_id: p.unit_id,
           project_id: p.project_id,
           payment_amount: p.payment_amount,
-          financial_year: values.financial_year,
+          financial_year: bulkSharedValues.financialYear,
           payment_mode: p.payment_mode,
-          payment_date: values.payment_date.format('YYYY-MM-DD'),
-          cheque_number: values.reference_number,
-          remarks: values.remarks
+          payment_date: normalizedPaymentDate.format('YYYY-MM-DD'),
+          cheque_number: bulkSharedValues.referenceNumber,
+          remarks: bulkSharedValues.remarks
         }))
 
       if (validPayments.length === 0) {
-        message.warning('Please enter amount for at least one unit')
+        message.warning('Enter an amount for at least one unit')
         return
       }
 
@@ -669,13 +692,13 @@ const Payments: React.FC = () => {
 
       if (result.successful === 0) {
         const firstError = result.results.find((entry) => entry.error)?.error
-        message.error(firstError || 'No bulk payments were recorded')
+        message.error(firstError || 'No payments were recorded')
         return
       }
 
       if (result.failed > 0) {
         message.warning(
-          `${result.successful} payment${result.successful !== 1 ? 's' : ''} recorded, ${result.failed} failed`
+          `${result.successful} payment${result.successful !== 1 ? 's' : ''} recorded; ${result.failed} failed`
         )
       }
       
@@ -688,9 +711,9 @@ const Payments: React.FC = () => {
         // Show next step guidance using utility
         showCompletionWithNextStep(
           'payments',
-          'Payments recorded successfully',
+          'Payments recorded',
           navigate,
-          `${result.successful} payments recorded. Receipt generation started in background.`
+          `${result.successful} payments recorded. Receipt generation started in the background.`
         )
 
         try {
@@ -702,10 +725,10 @@ const Payments: React.FC = () => {
           await fetchData()
 
           if (receiptResult.failed === 0) {
-            message.success('Receipts generated successfully')
+            message.success('Receipts ready')
           } else {
             message.warning(
-              `Receipts generated with ${receiptResult.failed} failure${receiptResult.failed !== 1 ? 's' : ''}`
+              `${receiptResult.failed} receipt${receiptResult.failed !== 1 ? 's' : ''} could not be generated`
             )
           }
         } catch (error) {
@@ -715,16 +738,17 @@ const Payments: React.FC = () => {
             errorMessage
           )
           // Don't fail the entire payment process, just warn about receipts
-          message.warning(`Payments recorded successfully, but receipt generation failed: ${errorMessage}`)
+          message.warning(`Payments were recorded, but receipts could not be generated: ${errorMessage}`)
         }
       }
 
       setIsBulkModalOpen(false)
+      setBulkModalStep('config')
       fetchData()
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
       console.error(`[PAYMENTS] Failed to record bulk payments:`, errorMessage)
-      message.error(`Failed to record bulk payments: ${errorMessage}`)
+      message.error(`Could not record bulk payments: ${errorMessage}`)
     } finally {
       setLoading(false)
     }
@@ -756,7 +780,7 @@ const Payments: React.FC = () => {
       if (editingPayment) {
         // Update existing payment
         await window.api.payments.update(editingPayment.id!, normalizedPaymentData)
-        message.success('Payment updated successfully')
+        message.success('Payment updated')
         setEditingPayment(null)
         setIsModalOpen(false)
         fetchData()
@@ -767,10 +791,10 @@ const Payments: React.FC = () => {
       const selectedLetter = letters.find((l) => l.id === values.letter_id)
       if (selectedLetter && values.payment_amount > selectedLetter.final_amount) {
         Modal.confirm({
-          title: 'Payment Amount Exceeds Letter Amount',
-          content: `You are about to record Rs. ${values.payment_amount.toLocaleString()} which exceeds the maintenance letter amount of Rs. ${selectedLetter.final_amount.toLocaleString()}. Do you want to continue?`,
-          okText: 'Yes, Continue',
-          cancelText: 'No, Edit Amount',
+          title: 'Payment exceeds letter amount',
+          content: `This payment (Rs. ${values.payment_amount.toLocaleString()}) is higher than the letter total (Rs. ${selectedLetter.final_amount.toLocaleString()}). Continue anyway?`,
+          okText: 'Continue',
+          cancelText: 'Edit Amount',
           onOk: async () => {
             await window.api.payments.create(normalizedPaymentData)
             setIsModalOpen(false)
@@ -778,9 +802,9 @@ const Payments: React.FC = () => {
 
             showCompletionWithNextStep(
               'payments',
-              'Payment recorded successfully',
+              'Payment recorded',
               navigate,
-              `Payment of Rs. ${values.payment_amount.toLocaleString()} has been added`
+              `Payment of Rs. ${values.payment_amount.toLocaleString()} was added`
             )
           }
         })
@@ -793,19 +817,23 @@ const Payments: React.FC = () => {
 
       showCompletionWithNextStep(
         'payments',
-        'Payment recorded successfully',
+        'Payment recorded',
         navigate,
-        `Payment of Rs. ${values.payment_amount.toLocaleString()} has been added`
+        `Payment of Rs. ${values.payment_amount.toLocaleString()} was added`
       )
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      message.error(`Failed to record payment: ${errorMessage}`)
+      message.error(`Could not record the payment: ${errorMessage}`)
     }
   }
 
   const handleDelete = async (id: number): Promise<void> => {
     Modal.confirm({
-      title: 'Are you sure you want to delete this payment?',
+      title: 'Delete payment?',
+      content: 'This cannot be undone.',
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
       onOk: async (): Promise<void> => {
         try {
           await window.api.payments.delete(id)
@@ -813,7 +841,7 @@ const Payments: React.FC = () => {
           fetchData()
         } catch (error) {
           console.error('Failed to delete payment:', error)
-          message.error('Failed to delete payment')
+          message.error('Could not delete the payment')
         }
       }
     })
@@ -821,11 +849,11 @@ const Payments: React.FC = () => {
 
   const handleBulkDelete = async (): Promise<void> => {
     Modal.confirm({
-      title: `Are you sure you want to delete ${selectedRowKeys.length} payments?`,
-      content: 'This action cannot be undone.',
-      okText: 'Yes, Delete',
+      title: `Delete ${selectedRowKeys.length} payments?`,
+      content: 'This cannot be undone.',
+      okText: 'Delete',
       okType: 'danger',
-      cancelText: 'No',
+      cancelText: 'Cancel',
       onOk: async (): Promise<void> => {
         setLoading(true)
         try {
@@ -838,16 +866,16 @@ const Payments: React.FC = () => {
           }
           
           if (result.failed > 0) {
-            message.warning(`${result.successful} payments deleted, ${result.failed} failed`)
+            message.warning(`${result.successful} payments deleted; ${result.failed} failed`)
           } else {
-            message.success(`Successfully deleted ${result.successful} payments`)
+            message.success(`${result.successful} payments deleted`)
           }
           
           fetchData()
           setSelectedRowKeys([])
         } catch (error) {
           console.error('Failed to delete payments:', error)
-          message.error('Failed to delete payments')
+          message.error('Could not delete the payments')
         } finally {
           setLoading(false)
         }
@@ -861,13 +889,18 @@ const Payments: React.FC = () => {
       const pdfPath = await window.api.payments.generateReceiptPdf(id)
 
       await window.api.shell.showItemInFolder(pdfPath)
-      message.success('Receipt generated successfully')
+      message.success('Receipt ready')
     } catch (error) {
       console.error('Failed to generate receipt:', error)
-      message.error(error instanceof Error ? error.message : 'Failed to generate receipt')
+      message.error(error instanceof Error ? error.message : 'Could not generate the receipt')
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleBulkModalCancel = (): void => {
+    setIsBulkModalOpen(false)
+    setBulkModalStep('config')
   }
 
   const handleOpenReceiptsFolder = useCallback(async (): Promise<void> => {
@@ -875,7 +908,7 @@ const Payments: React.FC = () => {
       await window.api.shell.openOutputFolder('receipts')
     } catch (error) {
       console.error('Failed to open receipts folder:', error)
-      message.error('Failed to open receipts folder')
+      message.error('Could not open the receipts folder')
     }
   }, [])
 
@@ -893,12 +926,12 @@ const Payments: React.FC = () => {
       message.loading({ content: 'Creating ZIP...', key: 'receipts_zip' })
       const result = await window.api.shell.exportOutputZip('receipts', destinationPath)
       message.success({
-        content: `ZIP saved with ${result.fileCount} receipt PDF${result.fileCount !== 1 ? 's' : ''}`,
+        content: `Receipts ZIP saved with ${result.fileCount} PDF${result.fileCount !== 1 ? 's' : ''}`,
         key: 'receipts_zip'
       })
     } catch (error) {
       console.error('Failed to export receipts ZIP:', error)
-      message.error({ content: 'Failed to create receipts ZIP', key: 'receipts_zip' })
+      message.error({ content: 'Could not create the receipts ZIP', key: 'receipts_zip' })
     }
   }, [])
 
@@ -982,21 +1015,27 @@ const Payments: React.FC = () => {
     []
   )
 
-  const handleBatchReceipts = async (): Promise<void> => {
-    if (selectedRowKeys.length === 0) {
-      message.warning('Please select payments to generate receipts for')
+  const generateReceiptsForPaymentIds = async (
+    paymentIds: number[],
+    options?: {
+      emptyMessage?: string
+      failureMessage?: string
+    }
+  ): Promise<void> => {
+    if (paymentIds.length === 0) {
+      message.warning(options?.emptyMessage || 'Select at least one payment to generate receipts')
       return
     }
 
     try {
-      const result = await runBatchReceiptGeneration(selectedRowKeys as number[])
+      const result = await runBatchReceiptGeneration(paymentIds)
       setReceiptProgress(null)
       await fetchData()
 
       if (result.failed === 0 && result.files[0]) {
         message.success(
           <span>
-            Successfully generated {result.generated} receipts.{' '}
+            {result.generated} receipt{result.generated !== 1 ? 's' : ''} generated.{' '}
             <a
               onClick={() => window.api.shell.showItemInFolder(result.files[0])}
               style={{ color: '#1890ff', cursor: 'pointer' }}
@@ -1007,28 +1046,46 @@ const Payments: React.FC = () => {
           10
         )
       } else if (result.failed === 0) {
-        message.success(`Successfully generated ${result.generated} receipts`)
+        message.success(`${result.generated} receipts generated`)
       } else {
-        message.warning(`Generated ${result.generated} receipts, failed to generate ${result.failed}`)
+        message.warning(`${result.generated} receipts generated; ${result.failed} failed`)
       }
     } catch (error) {
       console.error('Failed to generate receipts:', error)
       setReceiptProgress(null)
-      message.error(error instanceof Error ? error.message : 'Failed to generate receipts')
+      message.error(
+        error instanceof Error
+          ? error.message
+          : options?.failureMessage || 'Could not generate receipts'
+      )
     }
+  }
+
+  const handleBatchReceipts = async (): Promise<void> => {
+    const paymentIds = selectedRowKeys
+      .map((key) => Number(key))
+      .filter((id): id is number => Number.isFinite(id))
+
+    await generateReceiptsForPaymentIds(paymentIds, {
+      emptyMessage: 'Select at least one payment to generate receipts',
+      failureMessage: 'Could not generate receipts'
+    })
   }
 
   const handleCancelBatchGeneration = (): void => {
     if (receiptTaskId && receiptProgress && receiptProgress.current < receiptProgress.total) {
       Modal.confirm({
-        title: 'Cancel Receipt Generation?',
-        content: `${receiptProgress.current} of ${receiptProgress.total} receipts have been generated and saved. Do you want to cancel the remaining?`,
+        title: 'Stop receipt generation?',
+        content: `${receiptProgress.current} of ${receiptProgress.total} receipts are already saved. Stop the rest?`,
+        okText: 'Stop',
+        okType: 'danger',
+        cancelText: 'Keep Running',
         onOk: async () => {
           await window.api.worker.cancel(receiptTaskId)
           setGeneratingReceipts(false)
           setReceiptProgress(null)
           setReceiptTaskId(null)
-          message.info(`Cancelled. ${receiptProgress.current} receipts were saved.`)
+          message.info(`Receipt generation stopped after ${receiptProgress.current} receipts`)
         }
       })
     } else {
@@ -1043,27 +1100,13 @@ const Payments: React.FC = () => {
       title: 'Unit',
       dataIndex: 'unit_number',
       key: 'unit_number',
+      width: 250,
       sorter: (a: Payment, b: Payment) => (a.unit_number || '').localeCompare(b.unit_number || ''),
       render: (unitNumber: string, record: Payment) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>{unitNumber}</div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
+        <div className="payments-unit-cell">
+          <div className="payments-unit-value">{unitNumber}</div>
+          <div className="payments-unit-owner">
             {record.owner_name || 'No owner assigned'}
-          </div>
-        </div>
-      )
-    },
-    {
-      title: 'Owner',
-      dataIndex: 'owner_name',
-      key: 'owner_name',
-      width: 200,
-      sorter: (a: Payment, b: Payment) => (a.owner_name || '').localeCompare(b.owner_name || ''),
-      render: (ownerName: string) => (
-        <div>
-          <div style={{ fontWeight: 600 }}>{ownerName || 'No owner assigned'}</div>
-          <div style={{ fontSize: '12px', color: '#666' }}>
-            {ownerName ? 'Property Owner' : 'Please update owner details'}
           </div>
         </div>
       )
@@ -1072,6 +1115,7 @@ const Payments: React.FC = () => {
       title: 'Date',
       dataIndex: 'payment_date',
       key: 'payment_date',
+      width: 138,
       render: (date: string) => dayjs(date).format('DD-MM-YYYY'),
       sorter: (a: Payment, b: Payment) =>
         dayjs(a.payment_date).unix() - dayjs(b.payment_date).unix()
@@ -1080,6 +1124,7 @@ const Payments: React.FC = () => {
       title: 'Receipt #',
       dataIndex: 'receipt_number',
       key: 'receipt_number',
+      width: 126,
       render: (receipt: string) => receipt || <Text type="secondary">Not generated</Text>,
       sorter: (a: Payment, b: Payment) =>
         (a.receipt_number || '').localeCompare(b.receipt_number || '', undefined, {
@@ -1091,6 +1136,7 @@ const Payments: React.FC = () => {
       title: 'Amount',
       dataIndex: 'payment_amount',
       key: 'payment_amount',
+      width: 132,
       align: 'right' as const,
       render: (val: number) => <strong>Rs. {val.toLocaleString()}</strong>,
       sorter: (a: Payment, b: Payment) => a.payment_amount - b.payment_amount
@@ -1099,6 +1145,7 @@ const Payments: React.FC = () => {
       title: 'Mode',
       dataIndex: 'payment_mode',
       key: 'payment_mode',
+      width: 112,
       align: 'center' as const,
       render: (mode: string) => (
         <Tag color="blue" aria-label={`Payment mode: ${mode}`}>
@@ -1110,18 +1157,22 @@ const Payments: React.FC = () => {
       title: 'Reference #',
       dataIndex: 'cheque_number',
       key: 'cheque_number',
+      width: 132,
       render: (text: string) => text || '-'
     },
     {
       title: 'For FY',
       dataIndex: 'financial_year',
       key: 'financial_year',
+      width: 104,
       align: 'center' as const,
       render: (fy: string) => fy || <Text type="secondary">N/A</Text>
     },
     {
       title: 'Actions',
       key: 'actions',
+      className: 'payments-actions-column',
+      width: 172,
       align: 'right' as const,
       render: (_: unknown, record: Payment) => (
         <Space className="table-row-actions" size="small">
@@ -1159,55 +1210,59 @@ const Payments: React.FC = () => {
     }
   ]
 
-  const filteredPayments = payments.filter((payment) => {
-    const matchSearch =
-      !searchText ||
-      (payment.unit_number || '').toLowerCase().includes(searchText.toLowerCase()) ||
-      (payment.owner_name || '').toLowerCase().includes(searchText.toLowerCase()) ||
-      (payment.receipt_number || '').toLowerCase().includes(searchText.toLowerCase())
-    const matchProject =
-      !selectedProject ||
-      payment.project_id === selectedProject ||
-      projects.find((s) => s.id === selectedProject)?.name === payment.project_name
-    const matchMode = !selectedMode || payment.payment_mode === selectedMode
-    const matchFY = !selectedFY || payment.financial_year === selectedFY
-    return matchSearch && matchProject && matchMode && matchFY
-  })
+  const filteredPayments = useMemo(
+    () => payments.filter(matchesPaymentFilters),
+    [payments, matchesPaymentFilters]
+  )
+
+  const filteredPaymentIds = useMemo(
+    () =>
+      filteredPayments
+        .map((payment) => Number(payment.id))
+        .filter((id): id is number => Number.isFinite(id)),
+    [filteredPayments]
+  )
+
+  const handleGenerateFilteredReceipts = (): void => {
+    if (filteredPaymentIds.length === 0) {
+      message.warning('No payments match the current filters')
+      return
+    }
+
+    const runBulkReceipts = async (): Promise<void> => {
+      await generateReceiptsForPaymentIds(filteredPaymentIds, {
+        emptyMessage: 'No payments match the current filters',
+        failureMessage: 'Could not generate receipts for the visible list'
+      })
+    }
+
+    if (filteredPaymentIds.length === 1) {
+      void runBulkReceipts()
+      return
+    }
+
+    Modal.confirm({
+      title: `Generate receipts for ${filteredPaymentIds.length} visible payments?`,
+      content: 'This uses the current filters. Select rows below if you want a smaller set.',
+      okText: `Generate ${filteredPaymentIds.length} Receipts`,
+      cancelText: 'Cancel',
+      onOk: runBulkReceipts
+    })
+  }
 
   // Calculate bulk payment summary
   const bulkPaymentSummary = useMemo(() => {
     const unitsWithAmount = bulkPayments.filter((p) => p.payment_amount > 0).length
-    const unitsMatchedFromLetters = bulkPayments.filter((p) => p.has_matching_letter).length
-    const unitsWithoutLetterMatch = bulkPayments.filter((p) => !p.has_matching_letter).length
     const manualAmountEntries = bulkPayments.filter((p) => p.amount_source === 'manual').length
     const totalAmount = bulkPayments.reduce((sum, p) => sum + p.payment_amount, 0)
-    const averageAmount =
-      bulkPayments.length > 0 ? Math.round(totalAmount / bulkPayments.length) : 0
 
     return {
       unitsWithAmount,
-      unitsMatchedFromLetters,
-      unitsWithoutLetterMatch,
       manualAmountEntries,
       totalAmount,
-      averageAmount,
       totalUnits: bulkPayments.length
     }
   }, [bulkPayments])
-
-  // Get units with maintenance letters due (for collapsed view)
-  const unitsWithLettersDue = useMemo(() => {
-    if (!bulkProject) return []
-    return bulkPayments.filter((payment) => payment.has_matching_letter)
-  }, [bulkProject, bulkPayments])
-
-  // State for showing all units in bulk modal
-  const [showAllUnits, setShowAllUnits] = useState(false)
-
-  const displayBulkPayments = useMemo(() => {
-    if (showAllUnits) return bulkPayments
-    return unitsWithLettersDue.length > 0 ? unitsWithLettersDue : bulkPayments.slice(0, 10)
-  }, [showAllUnits, bulkPayments, unitsWithLettersDue])
 
   return (
     <div className="page-screen">
@@ -1220,7 +1275,7 @@ const Payments: React.FC = () => {
           title="No projects found"
           description={
             <span>
-              You need to create a project and generate maintenance letters before recording payments.{' '}
+              Create a project and generate letters first.{' '}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/projects')}>
                 Go to Projects {'->'}
               </Button>
@@ -1245,14 +1300,14 @@ const Payments: React.FC = () => {
               Payments & Receipts
             </Title>
             <Text type="secondary" className="page-hero-subtitle">
-              Capture collections, issue receipts, and process bulk payment updates with fewer clicks.
+              Record payments and issue receipts.
             </Text>
             <Text
               type="secondary"
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Record individual payments first, then use bulk and receipt actions for follow-up processing.
+              Record payments here. Use bulk entry and Bulk Receipts when needed.
             </Text>
             {filteredPaymentsCount > 0 && (
               <Text type="secondary" style={{ fontSize: '14px', display: 'block', marginTop: 6 }}>
@@ -1280,6 +1335,14 @@ const Payments: React.FC = () => {
                 }
               ]}
             />
+            <Button
+              icon={<PrinterOutlined />}
+              onClick={handleGenerateFilteredReceipts}
+              disabled={filteredPaymentIds.length === 0}
+              loading={generatingReceipts}
+            >
+              Bulk Receipts ({filteredPaymentIds.length})
+            </Button>
             <Button
               icon={<TableOutlined />}
               onClick={handleBulkAdd}
@@ -1339,33 +1402,39 @@ const Payments: React.FC = () => {
         />
       </Card>
 
-        <div className="table-scroll-wrapper mobile-card-table">
-          <Table
-            rowSelection={{
-              selectedRowKeys,
-              onChange: (keys) => setSelectedRowKeys(keys),
-              getCheckboxProps: (record: Payment) => ({
-                title: `Select payment for unit ${record.unit_number}`
-              })
-            }}
-            columns={columns}
-            dataSource={filteredPayments}
-            rowKey="id"
-            loading={loading}
+      <div className="table-scroll-hint">
+        <span>Swipe horizontally to see more columns</span>
+      </div>
+
+      <div className="table-scroll-wrapper mobile-card-table">
+        <Table
+          className="payments-data-table"
+          rowSelection={{
+            columnWidth: 56,
+            selectedRowKeys,
+            onChange: (keys) => setSelectedRowKeys(keys),
+            getCheckboxProps: (record: Payment) => ({
+              title: `Select payment for unit ${record.unit_number}`
+            })
+          }}
+          columns={columns}
+          dataSource={filteredPayments}
+          rowKey="id"
+          loading={loading}
           pagination={{ 
-              pageSize: pageSize,
-              showSizeChanger: true,
-              pageSizeOptions: [10, 20, 50],
-              onShowSizeChange: (_, size) => setPageSize(size)
-            }}
-            virtual={filteredPayments.length > 100}
-            scroll={{ x: 'max-content', y: filteredPayments.length > 100 ? 620 : undefined }}
-          />
-        </div>
+            pageSize: pageSize,
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            onShowSizeChange: (_, size) => setPageSize(size)
+          }}
+          virtual={filteredPayments.length > 100}
+          scroll={{ x: 1200, y: filteredPayments.length > 100 ? 620 : undefined }}
+        />
+      </div>
 
       {/* Batch Receipt Generation Progress Modal */}
       <Modal
-        title="Generating Receipts"
+        title="Generating receipts"
         open={generatingReceipts}
         onCancel={handleCancelBatchGeneration}
         footer={[
@@ -1373,9 +1442,9 @@ const Payments: React.FC = () => {
             key="cancel"
             onClick={handleCancelBatchGeneration}
             disabled={receiptProgress?.current === receiptProgress?.total}
-            aria-label="Cancel receipt generation"
+            aria-label="Stop receipt generation"
           >
-            Cancel
+            Stop
           </Button>
         ]}
         closable={false}
@@ -1406,7 +1475,7 @@ const Payments: React.FC = () => {
 
       {/* Record Single Payment Modal */}
       <Modal
-        title={editingPayment ? "Edit Payment" : "Record Payment"}
+        title={editingPayment ? 'Edit payment' : 'Record payment'}
         open={isModalOpen}
         onOk={handleModalOk}
         onCancel={() => {
@@ -1414,6 +1483,8 @@ const Payments: React.FC = () => {
           setEditingPayment(null)
         }}
         confirmLoading={loading}
+        okText="Save"
+        cancelText="Cancel"
         width={640}
         style={{ 
           maxWidth: '95vw',
@@ -1477,8 +1548,8 @@ const Payments: React.FC = () => {
                   showSearch
                   placeholder={
                     formProjectId
-                      ? `Search among ${filteredUnitsForForm.length} unit${filteredUnitsForForm.length !== 1 ? 's' : ''}`
-                      : 'Select a project above to filter, or search all units'
+                      ? `Search ${filteredUnitsForForm.length} unit${filteredUnitsForForm.length !== 1 ? 's' : ''} with letters`
+                      : 'Select a project to filter units with letters'
                   }
                   filterOption={(input, option) =>
                     String(option?.children || '').toLowerCase().includes(input.toLowerCase())
@@ -1495,7 +1566,11 @@ const Payments: React.FC = () => {
                     }
                   }}
                   aria-label="Select unit for payment"
-                  notFoundContent={formProjectId ? 'No units found for this project' : 'No units found'}
+                  notFoundContent={
+                    formProjectId
+                      ? 'No units with letters found for this project and year'
+                      : 'No units with letters found'
+                  }
                   style={{ width: '100%' }}
                 >
                   {filteredUnitsForForm.map((u) => (
@@ -1520,7 +1595,9 @@ const Payments: React.FC = () => {
             {({ getFieldValue }) => {
               const unitId = getFieldValue('unit_id')
               const letterId = getFieldValue('letter_id')
-              const unitLetters = letters.filter((l) => l.unit_id === unitId)
+              const unitLetters = availableLettersForForm
+                .filter((l) => l.unit_id === unitId || l.id === letterId)
+                .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))
               const selectedLetter = unitLetters.find((l) => l.id === letterId)
 
               return (
@@ -1532,8 +1609,8 @@ const Payments: React.FC = () => {
                     type="info"
                     showIcon
                     style={{ marginBottom: 12 }}
-                    title="Recommended payment flow"
-                    description="For billed units, select the maintenance letter first. That will align the financial year and fill the amount automatically."
+                    title="Payment flow"
+                    description="Only units with letters are shown. Picking one fills the year and amount."
                   />
                   <Row gutter={[16, 8]}>
                     <Col xs={24} md={12}>
@@ -1543,8 +1620,8 @@ const Payments: React.FC = () => {
                         extra={
                           <div style={{ fontSize: '12px' }}>
                             {unitLetters.length === 0
-                              ? 'No maintenance letters found for this unit'
-                              : 'Selecting a letter will automatically set the financial year and amount'}
+                              ? 'No letters found for this unit'
+                              : 'Picking a letter fills the year and amount.'}
                           </div>
                         }
                       >
@@ -1559,7 +1636,7 @@ const Payments: React.FC = () => {
                               if (letter) {
                                 const formattedYear = formatFinancialYear(letter.financial_year)
                                 if (!/^\d{4}-\d{2}$/.test(formattedYear)) {
-                                  message.warning('Letter has invalid financial year format, using the working financial year')
+                                  message.warning('This letter has an invalid financial year. The working year was used instead')
                                   form.setFieldsValue({
                                     financial_year: defaultFY,
                                     payment_amount: letter.final_amount
@@ -1600,13 +1677,13 @@ const Payments: React.FC = () => {
                         extra={
                           <div style={{ fontSize: '12px' }}>
                             <Text type="secondary">
-                              Working FY: {defaultFY}. Next FY: {upcomingFY}. The selected working financial year is used by default.
+                              Default FY: {defaultFY}
                             </Text>
                             {selectedLetter && (
                               <>
                                 <br />
                                 <Text type="warning">
-                                  Locked to the selected maintenance letter. Clear the letter to change FY.
+                                  Clear the letter to change the year.
                                 </Text>
                               </>
                             )}
@@ -1730,377 +1807,281 @@ const Payments: React.FC = () => {
 
       {/* Bulk Payment Modal */}
       <Modal
-        title="Record Bulk Payments"
+        title="Record bulk payments"
         open={isBulkModalOpen}
         onOk={handleBulkModalOk}
-        onCancel={() => setIsBulkModalOpen(false)}
+        onCancel={handleBulkModalCancel}
         confirmLoading={loading}
-        width={1000}
-        okText="Record Bulk Payments"
-        okButtonProps={{ disabled: bulkPayments.every((payment) => payment.payment_amount <= 0) }}
-        className="mobile-fullscreen-modal"
+        width={820}
+        okText={bulkModalStep === 'config' ? 'Next: Review Units' : 'Record Bulk Payments'}
+        cancelText="Cancel"
+        okButtonProps={{
+          disabled:
+            bulkModalStep === 'units' &&
+            bulkPayments.every((payment) => payment.payment_amount <= 0)
+        }}
+        className="payments-bulk-modal"
       >
+        <div className="payments-bulk-modal-scroll">
         <Form form={bulkForm} layout="vertical" className="bulk-payment-form">
-          <div className="bulk-payment-section">
-            <div className="bulk-payment-section-header">
-              <div>
-                <Text strong className="bulk-payment-section-title">
-                  Shared Values
-                </Text>
-                <Text type="secondary" className="page-helper-text">
-                  Choose the project and the common values that will be applied to every recorded row.
-                </Text>
-              </div>
-            </div>
-            <Alert
-              title="Shared values apply to every recorded row"
-              description="Payment date, financial year, common reference, and common remarks below will be copied into every unit that has an entered amount."
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
-            <div className="bulk-payment-grid">
-              <Form.Item
-                name="project_id"
-                label="Project"
-                rules={[{ required: true, message: 'Please select a project' }]}
-                aria-label="Select project for bulk payments"
+          <div className="bulk-payment-steps">
+            <Space size="small" align="center">
+              <Button
+                type={bulkModalStep === 'config' ? 'primary' : 'text'}
+                size="small"
+                onClick={() => setBulkModalStep('config')}
+                style={{ fontWeight: bulkModalStep === 'config' ? 600 : 'normal' }}
               >
-                <Select placeholder="Select Project" onChange={handleBulkProjectChange}>
-                  {projects.map((s) => (
-                    <Option key={s.id} value={s.id}>
-                      {s.name}
-                    </Option>
-                  ))}
-                </Select>
-              </Form.Item>
-              <Form.Item
-                name="payment_date"
-                label="Payment Date"
-                initialValue={dayjs()}
-                rules={[{ required: true, message: 'Please select payment date' }]}
+                1. Shared Values
+              </Button>
+              <span style={{ color: '#999' }}>{'->'}</span>
+              <Button
+                type={bulkModalStep === 'units' ? 'primary' : 'text'}
+                size="small"
+                disabled={!bulkProject}
+                onClick={() => bulkProject && setBulkModalStep('units')}
+                style={{ fontWeight: bulkModalStep === 'units' ? 600 : 'normal' }}
               >
-                <DatePicker
-                  style={{ width: '100%' }}
-                  aria-label="Select payment date for all bulk payments"
-                />
-              </Form.Item>
-              <Form.Item
-                name="financial_year"
-                label="Financial Year"
-                rules={[
-                  { required: true, message: 'Please select financial year' },
-                  {
-                    pattern: /^\d{4}-\d{2}$/,
-                    message: 'Format must be YYYY-YY (e.g., 2024-25)'
-                  }
-                ]}
-                extra={`Working FY: ${defaultFY}. Next FY: ${upcomingFY}.`}
-              >
-                <Select placeholder="Select Year" aria-label="Select financial year for bulk payments">
-                  {Array.from(new Set(letters.map((l) => l.financial_year)))
-                    .filter((fy) => /^\d{4}-\d{2}$/.test(fy))
-                    .sort()
-                    .reverse()
-                    .map((fy) => (
-                      <Option key={fy} value={fy}>
-                        {fy === defaultFY
-                          ? `${fy} (Working)`
-                          : fy === upcomingFY
-                            ? `${fy} (Upcoming)`
-                            : fy}
-                      </Option>
-                    ))}
-                </Select>
-              </Form.Item>
-              <Form.Item
-                name="payment_mode"
-                label="Default Mode"
-                initialValue="Transfer"
-              >
-                <Select
-                  onChange={(val) =>
-                    setBulkPayments((prev) => prev.map((p) => ({ ...p, payment_mode: val })))
-                  }
-                  aria-label="Select default payment mode for bulk payments"
-                >
-                  <Option value="Transfer">Bank Transfer / UPI</Option>
-                  <Option value="Cheque">Cheque</Option>
-                  <Option value="Cash">Cash</Option>
-                </Select>
-              </Form.Item>
+                2. Review Units
+              </Button>
+            </Space>
+            <div className="bulk-payment-steps-caption">
+              {bulkModalStep === 'config'
+                ? 'Step 1 of 2: Payment setup'
+                : 'Step 2 of 2: Review entries'}
             </div>
           </div>
 
-          {bulkProject && (
+          {bulkModalStep === 'config' ? (
             <>
               <div className="bulk-payment-section">
                 <div className="bulk-payment-section-header">
                   <div>
                     <Text strong className="bulk-payment-section-title">
-                      Quick Actions
-                    </Text>
-                    <Text type="secondary" className="page-helper-text">
-                      Speed up bulk entry, then review the row status before recording payments.
+                      Payment Setup
                     </Text>
                   </div>
                 </div>
-                <div className="bulk-payment-actions">
-                  <Button
-                    icon={<CalculatorOutlined />}
-                    onClick={handleSetSameAmount}
-                    aria-label="Set same amount for all units"
+                <div className="bulk-payment-grid">
+                  <Form.Item
+                    name="project_id"
+                    label="Project"
+                    rules={[{ required: true, message: 'Please select a project' }]}
+                    aria-label="Select project for bulk payments"
                   >
-                    Set Same Amount
-                  </Button>
-                  <Button
-                    icon={<InfoCircleOutlined />}
-                    onClick={calculateAmountsFromLetters}
-                    aria-label="Calculate amounts from maintenance letters"
+                    <Select placeholder="Select Project" onChange={handleBulkProjectChange}>
+                      {projects.map((s) => (
+                        <Option key={s.id} value={s.id}>
+                          {s.name}
+                        </Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                  <Form.Item
+                    name="payment_date"
+                    label="Payment Date"
+                    initialValue={dayjs()}
+                    rules={[{ required: true, message: 'Please select payment date' }]}
                   >
-                    Calculate from Letters
-                  </Button>
-                  <Button
-                    danger
-                    icon={<ClearOutlined />}
-                    onClick={handleClearAllAmounts}
-                    aria-label="Clear all amounts"
-                  >
-                    Clear All Amounts
-                  </Button>
-                  <Button onClick={handleSetAllToCheque} aria-label="Set all payments to Cheque mode">
-                    Set All to Cheque
-                  </Button>
-                  <Button onClick={handleSetAllToCash} aria-label="Set all payments to Cash mode">
-                    Set All to Cash
-                  </Button>
-                </div>
-              </div>
-
-              {unitsWithLettersDue.length > 0 && !showAllUnits && (
-                <Alert
-                  title={`Showing ${unitsWithLettersDue.length} units with matching unpaid maintenance letters for FY ${bulkFinancialYear || defaultFY}`}
-                  type="info"
-                  showIcon
-                  style={{ marginBottom: 16 }}
-                  action={
-                    <Button size="small" type="link" onClick={() => setShowAllUnits(true)}>
-                      Show all {bulkPayments.length} units
-                    </Button>
-                  }
-                />
-              )}
-
-              <div className="bulk-payment-section">
-                <div className="bulk-payment-section-header">
-                  <div>
-                    <Text strong className="bulk-payment-section-title">
-                      Unit Entries
-                    </Text>
-                    <Text type="secondary" className="page-helper-text">
-                      Review each row before recording. Units with zero amount will be skipped.
-                    </Text>
-                  </div>
-                </div>
-                <div className="table-scroll-wrapper">
-                  <Table
-                    dataSource={displayBulkPayments}
-                    pagination={{
-                      pageSize: bulkTablePageSize,
-                      showSizeChanger: true,
-                      pageSizeOptions: [10, 15, 25, 50],
-                      onShowSizeChange: (_, size) => setBulkTablePageSize(size)
-                    }}
-                    scroll={{ x: 'max-content', y: 400 }}
-                    rowKey="unit_id"
-                    columns={[
-                    {
-                      title: 'Unit #',
-                      dataIndex: 'unit_number',
-                    key: 'unit_number',
-                    width: 100
-                  },
-                  {
-                    title: 'Owner',
-                    dataIndex: 'owner_name',
-                    key: 'owner_name'
-                  },
-                  {
-                    title: 'Status',
-                    key: 'status',
-                    width: 170,
-                    render: (_: unknown, record: BulkPaymentEntry) => {
-                      if (record.amount_source === 'letter' && record.has_matching_letter) {
-                        return <Tag color="success">From Letter</Tag>
+                    <DatePicker
+                      style={{ width: '100%' }}
+                      aria-label="Select payment date for all bulk payments"
+                    />
+                  </Form.Item>
+                  <Form.Item
+                    name="financial_year"
+                    label="Financial Year"
+                    rules={[
+                      { required: true, message: 'Please select financial year' },
+                      {
+                        pattern: /^\d{4}-\d{2}$/,
+                        message: 'Format must be YYYY-YY (e.g., 2024-25)'
                       }
-                      if (record.amount_source === 'manual' && record.has_matching_letter) {
-                        return <Tag color="processing">Manual Override</Tag>
-                      }
-                      if (record.amount_source === 'manual') {
-                        return <Tag color="warning">Manual Entry</Tag>
-                      }
-                      return <Tag color="default">No Letter Match</Tag>
-                    }
-                  },
-                  {
-                    title: 'Amount (Rs. )',
-                    key: 'amount',
-                    width: 150,
-                    render: (_: unknown, record: BulkPaymentEntry) => {
-                      const actualIndex = bulkPayments.findIndex(
-                        (p) => p.unit_id === record.unit_id
-                      )
-                      return (
-                        <InputNumber
-                          min={0}
-                          style={{ width: '100%' }}
-                          value={record.payment_amount}
-                          onChange={(val) => {
-                            const newPayments = [...bulkPayments]
-                            newPayments[actualIndex].payment_amount = val || 0
-                            newPayments[actualIndex].amount_source = (val || 0) > 0 ? 'manual' : 'empty'
-                            setBulkPayments(newPayments)
-                          }}
-                          aria-label={`Enter amount for unit ${record.unit_number}`}
-                        />
-                      )
-                    }
-                  },
-                  {
-                    title: 'Mode',
-                    key: 'mode',
-                    width: 150,
-                    render: (_: unknown, record: BulkPaymentEntry) => {
-                      const actualIndex = bulkPayments.findIndex(
-                        (p) => p.unit_id === record.unit_id
-                      )
-                      return (
-                        <Select
-                          style={{ width: '100%' }}
-                          value={record.payment_mode}
-                          onChange={(val) => {
-                            const newPayments = [...bulkPayments]
-                            newPayments[actualIndex].payment_mode = val
-                            setBulkPayments(newPayments)
-                          }}
-                          aria-label={`Select payment mode for unit ${record.unit_number}`}
-                        >
-                          <Option value="Transfer">Transfer</Option>
-                          <Option value="Cheque">Cheque</Option>
-                          <Option value="Cash">Cash</Option>
-                        </Select>
-                      )
-                    }
-                    }
                     ]}
-                  />
-                </div>
-              </div>
-
-              {showAllUnits && bulkPayments.length > 10 && (
-                <div style={{ marginTop: 8, textAlign: 'center' }}>
-                  <Button type="link" onClick={() => setShowAllUnits(false)}>
-                    Show only units with maintenance letters due
-                  </Button>
-                </div>
-              )}
-
-              {/* Bulk Payment Summary */}
-              {bulkPayments.length > 0 && (
-                <div className="bulk-payment-summary">
-                  <div className="bulk-payment-summary-item">
-                    <Text type="secondary">Units with amount</Text>
-                    <Text strong>
-                      {bulkPaymentSummary.unitsWithAmount} / {bulkPaymentSummary.totalUnits}
-                    </Text>
-                  </div>
-                  <div className="bulk-payment-summary-item">
-                    <Text type="secondary">Letter matches</Text>
-                    <Text strong>{bulkPaymentSummary.unitsMatchedFromLetters}</Text>
-                  </div>
-                  <div className="bulk-payment-summary-item">
-                    <Text type="secondary">No letter match</Text>
-                    <Text strong>{bulkPaymentSummary.unitsWithoutLetterMatch}</Text>
-                  </div>
-                  <div className="bulk-payment-summary-item">
-                    <Text type="secondary">Manual amounts</Text>
-                    <Text strong>{bulkPaymentSummary.manualAmountEntries}</Text>
-                  </div>
-                  <div className="bulk-payment-summary-item bulk-payment-summary-item--success">
-                    <Text type="secondary">Total amount</Text>
-                    <Text strong>Rs. {bulkPaymentSummary.totalAmount.toLocaleString()}</Text>
-                  </div>
-                  <div className="bulk-payment-summary-item">
-                    <Text type="secondary">Average</Text>
-                    <Text strong>Rs. {bulkPaymentSummary.averageAmount.toLocaleString()}</Text>
-                  </div>
-                </div>
-              )}
-
-              <div className="bulk-payment-section">
-                <div className="bulk-payment-section-header">
-                  <div>
-                    <Text strong className="bulk-payment-section-title">
-                      Common Notes
-                    </Text>
-                    <Text type="secondary" className="page-helper-text">
-                      These values are optional and will be copied to every recorded payment.
-                    </Text>
-                  </div>
-                </div>
-                <div className="bulk-payment-grid bulk-payment-grid--notes">
+                  >
+                    <Select placeholder="Select Year" aria-label="Select financial year for bulk payments">
+                      {Array.from(new Set(letters.map((l) => l.financial_year)))
+                        .filter((fy) => /^\d{4}-\d{2}$/.test(fy))
+                        .sort()
+                        .reverse()
+                        .map((fy) => (
+                          <Option key={fy} value={fy}>
+                            {fy === defaultFY
+                              ? `${fy} (Working)`
+                              : fy === upcomingFY
+                                ? `${fy} (Upcoming)`
+                                : fy}
+                          </Option>
+                        ))}
+                    </Select>
+                  </Form.Item>
+                  <Form.Item
+                    name="payment_mode"
+                    label="Default Mode"
+                    initialValue="Transfer"
+                  >
+                    <Select
+                      onChange={(val) =>
+                        setBulkPayments((prev) => prev.map((p) => ({ ...p, payment_mode: val })))
+                      }
+                      aria-label="Select default payment mode for bulk payments"
+                    >
+                      <Option value="Transfer">Bank Transfer / UPI</Option>
+                      <Option value="Cheque">Cheque</Option>
+                      <Option value="Cash">Cash</Option>
+                    </Select>
+                  </Form.Item>
                   <Form.Item
                     name="reference_number"
-                    label="Common Reference # (Optional)"
+                    label="Reference #"
                     aria-label="Enter common reference number for all bulk payments"
                   >
                     <Input placeholder="Enter common UTR or cheque number" />
                   </Form.Item>
                   <Form.Item
                     name="remarks"
-                    label="Common Remarks (Optional)"
+                    label="Remarks"
                     aria-label="Enter common remarks for all bulk payments"
                   >
-                    <Input placeholder="Enter common remarks for all payments" />
+                    <Input.TextArea rows={2} placeholder="Enter remarks (optional)" />
                   </Form.Item>
                 </div>
               </div>
             </>
-          )}
-
-          {!bulkProject && (
-            <Alert
-              title="Select a project to start bulk payment entry"
-              type="info"
-              showIcon
-              style={{ marginTop: 16 }}
-            />
+          ) : (
+            <>
+              <div className="bulk-payment-section">
+                <div className="bulk-payment-section-header">
+                  <div>
+                    <Text strong className="bulk-payment-section-title">
+                      Review Entries
+                    </Text>
+                    <Text type="secondary" className="page-helper-text">
+                      {bulkPayments.length > 0
+                        ? `Showing units with unpaid letters for FY ${bulkSelectedFinancialYear || defaultFY}.`
+                        : `No unpaid maintenance letters were found for FY ${bulkSelectedFinancialYear || defaultFY}.`}
+                    </Text>
+                  </div>
+                </div>
+                {bulkPayments.length > 0 ? (
+                  <>
+                    <div className="bulk-payment-entry-summary">
+                      <Text type="secondary">
+                        Generated letters: {bulkPaymentSummary.totalUnits}
+                      </Text>
+                      <Text type="secondary">
+                        Ready: {bulkPaymentSummary.unitsWithAmount}
+                      </Text>
+                      <Text type="secondary">
+                        Overrides: {bulkPaymentSummary.manualAmountEntries}
+                      </Text>
+                      <Text strong>
+                        Total: Rs. {bulkPaymentSummary.totalAmount.toLocaleString()}
+                      </Text>
+                    </div>
+                    <div className="bulk-payment-table-shell">
+                      <Table
+                        className="bulk-payment-units-table"
+                        dataSource={bulkPayments}
+                        pagination={{
+                          pageSize: bulkTablePageSize,
+                          showSizeChanger: true,
+                          pageSizeOptions: [10, 15, 25, 50],
+                          onShowSizeChange: (_, size) => setBulkTablePageSize(size)
+                        }}
+                        rowKey="unit_id"
+                        columns={[
+                          {
+                            title: 'Unit',
+                            dataIndex: 'unit_number',
+                            key: 'unit_number',
+                            width: 300,
+                            render: (unitNumber: string, record: BulkPaymentEntry) => (
+                              <div className="bulk-payment-unit-cell">
+                                <div className="bulk-payment-unit-value">{unitNumber}</div>
+                                <div className="bulk-payment-unit-owner">
+                                  {record.owner_name || 'No owner assigned'}
+                                </div>
+                              </div>
+                            )
+                          },
+                          {
+                            title: 'Letter Total',
+                            key: 'letter_total',
+                            width: 150,
+                            render: (_: unknown, record: BulkPaymentEntry) => (
+                              <strong>Rs. {Math.round(record.matched_letter_amount || 0).toLocaleString()}</strong>
+                            )
+                          },
+                          {
+                            title: 'Amount (Rs.)',
+                            key: 'amount',
+                            width: 170,
+                            render: (_: unknown, record: BulkPaymentEntry) => {
+                              const actualIndex = bulkPayments.findIndex(
+                                (p) => p.unit_id === record.unit_id
+                              )
+                              return (
+                                <InputNumber
+                                  min={0}
+                                  style={{ width: '100%' }}
+                                  value={record.payment_amount}
+                                  onChange={(val) => {
+                                    const newPayments = [...bulkPayments]
+                                    newPayments[actualIndex].payment_amount = val || 0
+                                    newPayments[actualIndex].amount_source =
+                                      (val || 0) > 0 ? 'manual' : 'empty'
+                                    setBulkPayments(newPayments)
+                                  }}
+                                  aria-label={`Enter amount for unit ${record.unit_number}`}
+                                />
+                              )
+                            }
+                          },
+                          {
+                            title: 'Mode',
+                            key: 'mode',
+                            width: 160,
+                            render: (_: unknown, record: BulkPaymentEntry) => {
+                              const actualIndex = bulkPayments.findIndex(
+                                (p) => p.unit_id === record.unit_id
+                              )
+                              return (
+                                <Select
+                                  style={{ width: '100%' }}
+                                  value={record.payment_mode}
+                                  onChange={(val) => {
+                                    const newPayments = [...bulkPayments]
+                                    newPayments[actualIndex].payment_mode = val
+                                    setBulkPayments(newPayments)
+                                  }}
+                                  aria-label={`Select payment mode for unit ${record.unit_number}`}
+                                >
+                                  <Option value="Transfer">Transfer</Option>
+                                  <Option value="Cheque">Cheque</Option>
+                                  <Option value="Cash">Cash</Option>
+                                </Select>
+                              )
+                            }
+                          }
+                        ]}
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <Alert
+                    type="warning"
+                    showIcon
+                    title="No generated unpaid letters found for this project and financial year"
+                    description="Generate letters first, or choose another financial year."
+                    style={{ marginTop: 12 }}
+                  />
+                )}
+              </div>
+            </>
           )}
         </Form>
-      </Modal>
-
-      <Modal
-        title="Set Same Amount"
-        open={isBulkAmountModalOpen}
-        onOk={handleApplyBulkAmount}
-        onCancel={() => setIsBulkAmountModalOpen(false)}
-        okText="Apply Amount"
-        width={420}
-      >
-        <Form layout="vertical">
-          <Form.Item
-            label="Amount to apply"
-            extra="This amount will be applied to every unit in the current bulk-payment list."
-          >
-            <InputNumber
-              min={0}
-              style={{ width: '100%' }}
-              value={bulkAmountInput ?? undefined}
-              onChange={(value) => setBulkAmountInput(typeof value === 'number' ? value : null)}
-              placeholder="Enter amount"
-            />
-          </Form.Item>
-        </Form>
+        </div>
       </Modal>
     </div>
   )

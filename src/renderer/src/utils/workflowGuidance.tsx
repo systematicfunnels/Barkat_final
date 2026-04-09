@@ -14,31 +14,31 @@ export const showCompletionWithNextStep = (
   const nextStepConfigs = {
     projects: {
       nextAction: 'Add Units',
-      description: 'You can now add units to this project.',
+      description: 'Add units to this project.',
       path: '/units',
       buttonLabel: 'Go to Units'
     },
     units: {
       nextAction: 'Generate Letters',
-      description: 'You can now generate maintenance letters for these units.',
+      description: 'Generate maintenance letters for these units.',
       path: '/billing',
       buttonLabel: 'Go to Maintenance Letters'
     },
     billing: {
       nextAction: 'Record Payments',
-      description: 'Status changes to Paid only after recording payment.',
+      description: 'Record payment to mark it as paid.',
       path: '/payments',
       buttonLabel: 'Go to Payments'
     },
     payments: {
       nextAction: 'View Reports',
-      description: 'Analyze collections in the financial reports.',
+      description: 'Review collections in reports.',
       path: '/reports',
       buttonLabel: 'Go to Reports'
     },
     reports: {
       nextAction: 'Export Complete',
-      description: 'Financial report has been exported successfully.',
+      description: 'The report was exported.',
       path: undefined,
       buttonLabel: ''
     }
@@ -54,7 +54,7 @@ export const showCompletionWithNextStep = (
         {config.path && (
           <div style={{ marginTop: 12, borderTop: '1px solid #f0f0f0', paddingTop: 12 }}>
             <div style={{ fontSize: '12px', color: 'rgba(0,0,0,0.45)', marginBottom: 8 }}>
-              Suggested Next Step: <strong>{config.nextAction}</strong>
+              Next step: <strong>{config.nextAction}</strong>
             </div>
             <Button
               type="primary"
@@ -70,7 +70,6 @@ export const showCompletionWithNextStep = (
         )}
       </div>
     ),
-    duration: 10,
-    placement: 'topRight'
+    duration: 8
   })
 }

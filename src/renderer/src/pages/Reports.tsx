@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Card,
@@ -65,6 +65,7 @@ const Reports: React.FC = () => {
   })
 
   const [yearlyTotals, setYearlyTotals] = useState<YearlyTotal[]>([])
+  const hasLoadedReportRef = useRef(false)
 
   const selectedProjectRecord = useMemo(
     () => projects.find((project) => project.id === selectedProject) || null,
@@ -76,6 +77,20 @@ const Reports: React.FC = () => {
     const handleResize = (): void => setScreenWidth(window.innerWidth)
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
+  }, [])
+
+  useEffect(() => {
+    const fetchProjects = async (): Promise<void> => {
+      try {
+        const allProjects = await window.api.projects.getAll()
+        setProjects(allProjects)
+      } catch (error) {
+        console.error('Failed to load projects:', error)
+        message.error('Could not load projects')
+      }
+    }
+
+    void fetchProjects()
   }, [])
 
   // Get selected project name for display
@@ -225,7 +240,9 @@ const Reports: React.FC = () => {
   }, [])
 
   const fetchData = useCallback(async (): Promise<void> => {
-    setLoading(true)
+    if (!hasLoadedReportRef.current) {
+      setLoading(true)
+    }
     try {
       const filters: FinancialReportFilters = {
         searchText,
@@ -233,21 +250,21 @@ const Reports: React.FC = () => {
         selectedStatus,
         outstandingRange
       }
-      const [allProjects, reportSummary] = await Promise.all([
-        window.api.projects.getAll(),
-        window.api.reports.getFinancialSummary(selectedProject || undefined, filters)
-      ])
+      const reportSummary = await window.api.reports.getFinancialSummary(
+        selectedProject || undefined,
+        filters
+      )
 
-      setProjects(allProjects)
       setYears(reportSummary.years)
       setPivotData(reportSummary.rows)
       setStats(reportSummary.stats)
       setYearlyTotals(reportSummary.yearlyTotals)
     } catch (error) {
       console.error('Failed to fetch report data:', error)
-      message.error('Failed to load report data')
+      message.error('Could not load report data')
     } finally {
       setLoading(false)
+      hasLoadedReportRef.current = true
     }
   }, [outstandingRange, searchText, selectedProject, selectedStatus, selectedUnitType])
 
@@ -257,7 +274,7 @@ const Reports: React.FC = () => {
 
   const exportToExcel = async (): Promise<void> => {
     if (pivotData.length === 0) {
-      message.warning('No data to export')
+      message.warning('No report data to export')
       return
     }
 
@@ -288,14 +305,14 @@ const Reports: React.FC = () => {
     })
 
     if (!savePath) {
-      message.info('Export cancelled')
+      message.info('Export canceled')
       return
     }
 
       setExporting(true)
       try {
         message.loading({
-          content: 'Preparing Excel export...',
+          content: 'Preparing report export...',
           key: 'report_export',
           duration: 0
         })
@@ -316,7 +333,7 @@ const Reports: React.FC = () => {
         })
 
         message.success({
-          content: 'Excel report exported successfully',
+          content: 'Report exported',
           key: 'report_export'
         })
 
@@ -325,14 +342,14 @@ const Reports: React.FC = () => {
       // Show completion notification using utility
       showCompletionWithNextStep(
         'reports',
-        'Report exported successfully',
+        'Report ready',
         navigate,
-        'Excel file exported with yearly summary'
+        'The Excel report was exported.'
       )
     } catch (error) {
       console.error('Failed to export Excel:', error)
       message.error({
-        content: error instanceof Error ? error.message : 'Failed to export Excel file',
+        content: error instanceof Error ? error.message : 'Could not export the report',
         key: 'report_export'
       })
     } finally {
@@ -506,14 +523,14 @@ const Reports: React.FC = () => {
               Financial Reports
             </Title>
             <Text type="secondary" className="page-hero-subtitle">
-              Analyze billed, collected, and outstanding amounts across projects and financial years.
+              View billed, collected, and outstanding amounts.
             </Text>
             <Text
               type="secondary"
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Start with the summary cards, then drill into the pivot ledger for unit-level detail.
+              Start with the summary cards, then open the ledger for details.
             </Text>
           </div>
           <Space className="responsive-action-bar">
@@ -677,19 +694,22 @@ const Reports: React.FC = () => {
       >
         <Text className="page-helper-text" style={{ display: 'block', margin: '16px 16px 0' }}>
           {shouldCollapseYears
-            ? 'On smaller widths, review the yearly summary cards first. The ledger below shows totals only to keep the table readable.'
-            : 'Use the yearly columns below for detailed billed, paid, and balance review across each financial year.'}
+            ? 'On smaller screens, the ledger shows one total per unit. Use Export Excel for year-wise details.'
+            : 'The table below shows billed, paid, and balance by year.'}
         </Text>
         <Alert
           title={
             shouldCollapseYears
-              ? 'Mobile view shows totals only. Use the summary cards or export Excel for full year-by-year detail.'
-              : 'Table shows Billed, Paid, and Balance for each financial year'
+              ? 'Year columns are hidden on smaller screens.'
+              : 'This table shows billed, paid, and balance by year.'
           }
           type="info"
           showIcon
           style={{ margin: '16px', marginBottom: 0 }}
         />
+        <div className="table-scroll-hint">
+          <span>Swipe horizontally to see more columns</span>
+        </div>
         <div className="table-scroll-wrapper mobile-card-table">
           <Table
             columns={columns as TableProps<PivotData>['columns']}

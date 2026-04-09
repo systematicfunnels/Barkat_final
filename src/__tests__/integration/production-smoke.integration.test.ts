@@ -1,8 +1,9 @@
 import fs from 'fs'
 import path from 'path'
 
-const TEST_DATA_DIR = path.join(process.cwd(), '.test-production-smoke')
+const TEST_DATA_DIR = path.join(process.cwd(), '.test-production-smoke', String(Date.now()))
 process.env.BARKAT_DB_PATH = path.join(TEST_DATA_DIR, 'barkat.test.db')
+process.env.BARKAT_USER_DATA_PATH = TEST_DATA_DIR
 
 jest.mock('electron', () => ({
   app: {
@@ -163,11 +164,18 @@ describe('Barkat production smoke integration', () => {
     const receiptPdfPath = await paymentService.generateReceiptPdf(finalPaymentId)
     expect(fs.existsSync(receiptPdfPath)).toBe(true)
 
-    const exportedBackupPath = path.join(TEST_DATA_DIR, 'exports', 'prod-smoke-backup.db')
+    const exportedBackupPath = path.join(
+      TEST_DATA_DIR,
+      'exports',
+      backupService.getDefaultExportFileName()
+    )
     const exportResult = await backupService.exportBackup(exportedBackupPath)
     expect(exportResult.success).toBe(true)
     expect(exportResult.backupPath).toBe(exportedBackupPath)
     expect(fs.existsSync(exportedBackupPath)).toBe(true)
+
+    const createdBackup = await backupService.createBackup()
+    expect(createdBackup.success).toBe(true)
 
     const availableBackups = await backupService.listBackups()
     expect(availableBackups.length).toBeGreaterThan(0)

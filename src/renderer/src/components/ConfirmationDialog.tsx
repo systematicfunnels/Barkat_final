@@ -55,7 +55,7 @@ const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
       visible={visible}
       onOk={onConfirm}
       onCancel={onCancel}
-      title={title || 'Confirm Action'}
+      title={title || 'Confirm action'}
       okText={confirmText}
       cancelText={cancelText}
       okButtonProps={defaultOkButtonProps}
@@ -97,9 +97,9 @@ export const showDeleteConfirmation = (
       visible={true}
       onConfirm={onConfirm}
       onCancel={onCancel}
-      title="Delete Item"
+      title="Delete item?"
       type="delete"
-      content={`Are you sure you want to delete ${itemName ? `"${itemName}"` : 'this item'}?`}
+      content={`${itemName ? `"${itemName}"` : 'This item'} will be removed. This cannot be undone.`}
       confirmText="Delete"
       cancelText="Cancel"
     />
@@ -116,10 +116,10 @@ export const showBulkDeleteConfirmation = (
       visible={true}
       onConfirm={onConfirm}
       onCancel={onCancel}
-      title="Delete Multiple Items"
+      title={`Delete ${itemCount} item${itemCount > 1 ? 's' : ''}?`}
       type="delete"
-      content={`Are you sure you want to delete ${itemCount} selected item${itemCount > 1 ? 's' : ''}? This action cannot be undone.`}
-      confirmText="Delete All"
+      content={`${itemCount} item${itemCount > 1 ? 's' : ''} will be removed. This cannot be undone.`}
+      confirmText="Delete"
       cancelText="Cancel"
     />
   )
@@ -131,11 +131,11 @@ export const showUnsavedChangesWarning = (onConfirm: () => void, onCancel: () =>
       visible={true}
       onConfirm={onConfirm}
       onCancel={onCancel}
-      title="Unsaved Changes"
+      title="Discard unsaved changes?"
       type="warning"
-      content="You have unsaved changes. Are you sure you want to continue without saving?"
-      confirmText="Continue Without Saving"
-      cancelText="Save Changes"
+      content="Your unsaved changes will be lost."
+      confirmText="Discard changes"
+      cancelText="Keep editing"
     />
   )
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
   Table,
@@ -83,6 +83,7 @@ interface BatchLetterConfigSnapshot {
   letter_date: Dayjs
   due_date: Dayjs
   add_ons?: Array<{
+    id?: number
     addon_name: string
     addon_amount: number
     remarks?: string
@@ -130,6 +131,7 @@ const Billing: React.FC = () => {
   const [unitSelectionPageSize, setUnitSelectionPageSize] = useState(8)
   const [batchProjectId, setBatchProjectId] = useState<number | null>(null)
   const [batchFinancialYear, setBatchFinancialYear] = useState<string | null>(defaultFY)
+  const lastUnitFilterContextRef = useRef<string | null>(null)
   const [batchConfigSnapshot, setBatchConfigSnapshot] = useState<BatchLetterConfigSnapshot | null>(null)
   const [projectSetupSummary, setProjectSetupSummary] = useState<ProjectSetupSummary | null>(null)
   const [setupSummaryLoading, setSetupSummaryLoading] = useState(false)
@@ -144,7 +146,7 @@ const Billing: React.FC = () => {
     const currentFY = form.getFieldValue('financial_year')
     
     if (!projectId || !currentFY) {
-      message.warning('Please select project and financial year first')
+      message.warning('Select a project and financial year first')
       return
     }
 
@@ -155,7 +157,7 @@ const Billing: React.FC = () => {
       .reverse()
     
     if (previousYears.length === 0) {
-      message.info('No previous year data available to copy from')
+      message.info('No earlier year data is available to copy')
       return
     }
 
@@ -163,32 +165,34 @@ const Billing: React.FC = () => {
     try {
       // Try each previous year until we find one with add-ons
       for (const prevYear of previousYears) {
-        const prevYearLetters = letters.filter(
-          l => l.project_id === projectId && l.financial_year === prevYear
+        const previousYearLetterIds = letters
+          .filter((letter) => letter.project_id === projectId && letter.financial_year === prevYear && letter.id)
+          .map((letter) => letter.id as number)
+
+        const addOnGroups = await Promise.all(
+          previousYearLetterIds.map((letterId) => window.api.letters.getAddOns(letterId))
         )
-        
-        if (prevYearLetters.length > 0 && prevYearLetters[0].id) {
-          // Get add-ons from the first letter of the previous year
-          const prevAddOns = await window.api.letters.getAddOns(prevYearLetters[0].id)
-          
-          if (prevAddOns && prevAddOns.length > 0) {
-            form.setFieldsValue({
-              add_ons: prevAddOns.map((a: LetterAddOn) => ({
-                addon_name: a.addon_name,
-                addon_amount: a.addon_amount,
-                remarks: a.remarks
-              }))
-            })
-            message.success(`Copied ${prevAddOns.length} add-on(s) from ${prevYear}`)
-            return
-          }
+        const prevAddOns = addOnGroups.find((group) => group.length > 0)
+
+        if (!prevAddOns) {
+          continue
         }
+
+        form.setFieldsValue({
+          add_ons: prevAddOns.map((a: LetterAddOn) => ({
+            addon_name: a.addon_name,
+            addon_amount: a.addon_amount,
+            remarks: a.remarks
+          }))
+        })
+        message.success(`Copied ${prevAddOns.length} add-on(s) from ${prevYear}`)
+        return
       }
       
-      message.info('No add-ons found in previous years to copy')
+      message.info('No add-ons were found to copy')
     } catch (error) {
       console.error('Failed to copy add-ons from previous year:', error)
-      message.error('Failed to copy from previous year')
+      message.error('Could not copy add-ons from the previous year')
     } finally {
       setCopyingAddOns(false)
     }
@@ -205,7 +209,7 @@ const Billing: React.FC = () => {
       setProjects(projectsData)
       setSelectedRowKeys([])
     } catch {
-      message.error('Failed to fetch data')
+      message.error('Could not load maintenance letters')
     } finally {
       setLoading(false)
     }
@@ -263,7 +267,7 @@ const Billing: React.FC = () => {
         }
       })
       .catch(() => {
-        message.error('Failed to load units for selected project')
+        message.error('Could not load units for this project')
         setProjectUnits([])
       })
       .finally(() => setUnitsLoading(false))
@@ -272,6 +276,28 @@ const Billing: React.FC = () => {
   useEffect(() => {
     setUnitSelectionPage(1)
   }, [unitSearchText, unitSelectionStatusFilter, batchProjectId, batchFinancialYear])
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      lastUnitFilterContextRef.current = null
+      return
+    }
+
+    const nextContext =
+      batchProjectId && batchFinancialYear ? `${batchProjectId}:${batchFinancialYear}` : null
+
+    if (
+      lastUnitFilterContextRef.current &&
+      nextContext &&
+      lastUnitFilterContextRef.current !== nextContext
+    ) {
+      setUnitSearchText('')
+      setUnitSelectionStatusFilter('all')
+      setUnitSelectionPage(1)
+    }
+
+    lastUnitFilterContextRef.current = nextContext
+  }, [batchFinancialYear, batchProjectId, isModalOpen])
 
   useEffect(() => {
     if (!isModalOpen || !batchProjectId || !batchFinancialYear) {
@@ -424,12 +450,14 @@ const Billing: React.FC = () => {
   const filterStats = useMemo(() => {
     // Apply all current filters first, then calculate status counts
     const currentlyFilteredLetters = letters.filter((letter) => {
+      const normalizedSearch = searchText.toLowerCase()
       const matchProject = !selectedProject || letter.project_id === selectedProject
       const matchYear = !selectedYear || letter.financial_year === selectedYear
       const matchSearch =
         !searchText ||
-        letter.unit_number?.toLowerCase().includes(searchText.toLowerCase()) ||
-        letter.owner_name?.toLowerCase().includes(searchText.toLowerCase())
+        letter.unit_number?.toLowerCase().includes(normalizedSearch) ||
+        letter.owner_name?.toLowerCase().includes(normalizedSearch) ||
+        letter.project_name?.toLowerCase().includes(normalizedSearch)
       const matchUnitType =
         !selectedUnitType || selectedUnitType === 'All' || letter.unit_type === selectedUnitType
 
@@ -527,11 +555,11 @@ const Billing: React.FC = () => {
       const action = getProjectSetupAction(summary, projectId)
 
       Modal.confirm({
-        title: 'Project setup incomplete',
+        title: 'Project setup required',
         content: (
           <div>
             <div style={{ marginBottom: 8 }}>
-              Fix the following before generating maintenance letters:
+              Complete these items before generating maintenance letters:
             </div>
             <ul style={{ paddingLeft: 20, marginBottom: summary.warnings.length > 0 ? 12 : 0 }}>
               {summary.blockers.map((blocker) => (
@@ -540,7 +568,7 @@ const Billing: React.FC = () => {
             </ul>
             {summary.warnings.length > 0 && (
               <>
-                <div style={{ marginBottom: 8 }}>Warnings:</div>
+                <div style={{ marginBottom: 8 }}>Also check:</div>
                 <ul style={{ paddingLeft: 20 }}>
                   {summary.warnings.map((warning) => (
                     <li key={warning}>{warning}</li>
@@ -551,7 +579,7 @@ const Billing: React.FC = () => {
           </div>
         ),
         okText: action.label,
-        cancelText: 'Close',
+        cancelText: 'Cancel',
         onOk: () => {
           setIsModalOpen(false)
           setBatchModalStep('config')
@@ -592,7 +620,7 @@ const Billing: React.FC = () => {
       setCurrentLetter(record)
       setAddOnsModalVisible(true)
     } catch {
-      message.error('Failed to fetch add-ons')
+      message.error('Could not load add-ons')
     } finally {
       setLoading(false)
     }
@@ -644,6 +672,11 @@ const Billing: React.FC = () => {
 
         const letterDate = letter_date.format('YYYY-MM-DD')
         const dueDate = due_date.format('YYYY-MM-DD')
+        const effectiveUnitIds = currentLetter
+          ? undefined
+          : selectedEligibleUnitIds.length > 0
+            ? selectedEligibleUnitIds
+            : selectableProjectUnitIds
 
         setLoading(true)
 
@@ -666,50 +699,56 @@ const Billing: React.FC = () => {
           })
           
           if (!success) {
-            message.error('Failed to update letter')
+            message.error('Could not update the letter')
             return
           }
           
           // Now handle addons - get existing addons and compare with new ones
           const existingAddons = await window.api.letters.getAddOns(currentLetter.id)
-          const newAddons = add_ons || []
-          type EditableAddon = Pick<LetterAddOn, 'addon_name' | 'addon_amount'>
+          type EditableAddon = {
+            id?: number
+            addon_name: string
+            addon_amount: number
+            remarks?: string
+          }
+          const newAddons = ((add_ons || []) as EditableAddon[]).map((addon) => ({
+            ...addon,
+            id: addon.id !== undefined ? Number(addon.id) : undefined
+          }))
+          const existingById = new Map(existingAddons.map((addon) => [addon.id, addon]))
           
           // Delete addons that are no longer present
           for (const existingAddon of existingAddons) {
-            const stillExists = newAddons.find((newAddOn: EditableAddon) => 
-              newAddOn.addon_name === existingAddon.addon_name && 
-              newAddOn.addon_amount === existingAddon.addon_amount
-            )
+            const stillExists = newAddons.some((newAddOn) => newAddOn.id === existingAddon.id)
             if (!stillExists) {
-              // Find the addon ID to delete
-              // Note: We need to match by name and amount since we don't have the ID in the form
-              const addonToDelete = existingAddons.find((a: LetterAddOn) => 
-                a.addon_name === existingAddon.addon_name && 
-                a.addon_amount === existingAddon.addon_amount
-              )
-              if (addonToDelete?.id) {
-                await window.api.letters.deleteAddOn(addonToDelete.id)
-              }
+              await window.api.letters.deleteAddOn(existingAddon.id)
             }
           }
           
           // Add new or updated addons
           for (const newAddon of newAddons) {
-            const exists = existingAddons.find((existingAddon: LetterAddOn) => 
-              existingAddon.addon_name === newAddon.addon_name && 
-              existingAddon.addon_amount === newAddon.addon_amount
-            )
-            if (!exists) {
-              // Add new addon
-              await window.api.letters.addAddOn({
-                unit_id: currentLetter.unit_id,
-                financial_year: currentLetter.financial_year,
-                addon_name: newAddon.addon_name,
-                addon_amount: newAddon.addon_amount,
-                remarks: newAddon.remarks
-              })
+            const existingAddon = newAddon.id ? existingById.get(newAddon.id) : undefined
+            const changed =
+              !existingAddon ||
+              existingAddon.addon_name !== newAddon.addon_name ||
+              existingAddon.addon_amount !== newAddon.addon_amount ||
+              (existingAddon.remarks || '') !== (newAddon.remarks || '')
+
+            if (!changed) {
+              continue
             }
+
+            if (existingAddon?.id) {
+              await window.api.letters.deleteAddOn(existingAddon.id)
+            }
+
+            await window.api.letters.addAddOn({
+              unit_id: currentLetter.unit_id,
+              financial_year: currentLetter.financial_year,
+              addon_name: newAddon.addon_name,
+              addon_amount: newAddon.addon_amount,
+              remarks: newAddon.remarks
+            })
           }
           
           // Regenerate PDF with updated addons
@@ -725,14 +764,20 @@ const Billing: React.FC = () => {
             // Don't fail the update if PDF generation fails
           }
           
-          message.success('Letter updated successfully with addon changes')
+          message.success('Letter updated')
         } else {
           // Create new letters
           const isReady = await ensureProjectReadyForLetters(project_id, financial_year)
           if (!isReady) return
+
+          if (!effectiveUnitIds || effectiveUnitIds.length === 0) {
+            message.warning('No units match the current filters. Adjust the filters or change the project or year')
+            return
+          }
+
           const batchResult = await window.api.letters.createBatch({
             projectId: project_id,
-            unitIds: selectedUnitIds.length > 0 ? selectedUnitIds : undefined,
+            unitIds: effectiveUnitIds,
             financialYear: financial_year,
             letterDate,
             dueDate,
@@ -743,8 +788,8 @@ const Billing: React.FC = () => {
           })
           const completionMessage =
             batchResult.skippedCount > 0
-              ? `Generated ${batchResult.createdCount} letter(s); skipped ${batchResult.skippedCount} existing record(s)`
-              : `Generated ${batchResult.createdCount} maintenance letter(s) successfully`
+              ? `${batchResult.createdCount} letters generated; ${batchResult.skippedCount} existing records skipped`
+              : `${batchResult.createdCount} maintenance letters generated`
           showCompletionWithNextStep('billing', completionMessage, navigate)
         }
         
@@ -760,7 +805,7 @@ const Billing: React.FC = () => {
         const messageText = error instanceof Error ? error.message : String(error)
         const errorMessage = messageText.includes('Error:')
           ? messageText.split('Error:')[1].trim()
-          : messageText || 'Failed to generate maintenance letters'
+          : messageText || 'Could not generate maintenance letters'
 
         if (errorMessage.includes('Project setup incomplete')) {
           const projectId = form.getFieldValue('project_id') as number | undefined
@@ -778,10 +823,10 @@ const Billing: React.FC = () => {
         ) {
           const projectId = form.getFieldValue('project_id') as number | undefined
           Modal.confirm({
-            title: 'Maintenance rate missing',
-            content: errorMessage,
+            title: 'Maintenance rate required',
+            content: 'Add a maintenance rate for this project and financial year before generating letters.',
             okText: 'Open Rates',
-            cancelText: 'Close',
+            cancelText: 'Cancel',
             onOk: () => {
               setIsModalOpen(false)
               setBatchModalStep('config')
@@ -800,13 +845,13 @@ const Billing: React.FC = () => {
 
   const handleViewPdf = async (id: number): Promise<void> => {
     try {
-      message.loading({ content: 'Generating Letter...', key: 'pdf_gen' })
+      message.loading({ content: 'Generating letter...', key: 'pdf_gen' })
       const path = await window.api.letters.generatePdf(id)
 
-      message.success({ content: 'Maintenance Letter generated successfully!', key: 'pdf_gen' })
+      message.success({ content: 'Maintenance letter ready', key: 'pdf_gen' })
       notification.success({
-        title: 'Letter Ready',
-        description: `Maintenance Letter has been saved.`,
+        title: 'Letter ready',
+        description: 'The maintenance letter was saved.',
         btn: (
           <Button
             type="primary"
@@ -816,12 +861,11 @@ const Billing: React.FC = () => {
           >
             Show in Folder
           </Button>
-        ),
-        placement: 'bottomRight'
+        )
       })
     } catch (error) {
       message.error({
-        content: error instanceof Error ? error.message : 'Failed to generate letter',
+        content: error instanceof Error ? error.message : 'Could not generate the letter',
         key: 'pdf_gen'
       })
     }
@@ -831,7 +875,7 @@ const Billing: React.FC = () => {
     try {
       await window.api.shell.openOutputFolder('maintenance-letters')
     } catch {
-      message.error('Failed to open maintenance letters folder')
+      message.error('Could not open the letters folder')
     }
   }, [])
 
@@ -849,12 +893,12 @@ const Billing: React.FC = () => {
       message.loading({ content: 'Creating ZIP...', key: 'letters_zip' })
       const result = await window.api.shell.exportOutputZip('maintenance-letters', destinationPath)
       message.success({
-        content: `ZIP saved with ${result.fileCount} letter PDF${result.fileCount !== 1 ? 's' : ''}`,
+        content: `Letters ZIP saved with ${result.fileCount} PDF${result.fileCount !== 1 ? 's' : ''}`,
         key: 'letters_zip'
       })
     } catch (error) {
       console.error('Failed to export letters ZIP:', error)
-      message.error({ content: 'Failed to create letters ZIP', key: 'letters_zip' })
+      message.error({ content: 'Could not create the letters ZIP', key: 'letters_zip' })
     }
   }, [])
 
@@ -872,6 +916,7 @@ const Billing: React.FC = () => {
         letter_date: record.generated_date ? dayjs(record.generated_date) : dayjs(),
         due_date: record.due_date ? dayjs(record.due_date) : dayjs().add(15, 'day'),
         add_ons: (addOns || []).map((a: LetterAddOn) => ({
+          id: a.id,
           addon_name: a.addon_name,
           addon_amount: a.addon_amount,
           remarks: a.remarks
@@ -899,7 +944,7 @@ const Billing: React.FC = () => {
 
       message.success({ content: 'Letter ready to edit', key: 'letter_edit' })
     } catch {
-      message.error({ content: 'Failed to load letter for editing', key: 'letter_edit' })
+      message.error({ content: 'Could not load the letter', key: 'letter_edit' })
     }
   }
 
@@ -915,7 +960,7 @@ const Billing: React.FC = () => {
     )
 
     if (letterIds.length === 0) {
-      message.warning(options?.emptyMessage || 'Please select letters to generate PDFs for')
+      message.warning(options?.emptyMessage || 'Select at least one letter to generate PDFs')
       return
     }
 
@@ -998,22 +1043,22 @@ const Billing: React.FC = () => {
               new Error(
                 firstError ||
                   options?.failureMessage ||
-                  'Failed to generate selected maintenance letter PDFs'
+                  'Could not generate the selected letter PDFs'
               )
             )
             return
           }
 
           notification.success({
-            title: 'Batch PDF Generation Complete',
+            title: 'PDFs ready',
             description: (
               <div>
                 <div style={{ fontSize: '16px', fontWeight: 600, marginBottom: 8 }}>
-                  {successCount} generated successfully
+                  {successCount} PDF{successCount !== 1 ? 's' : ''} generated
                   {failCount > 0 ? `, ${failCount} failed` : ''}
                 </div>
                 <div style={{ color: '#666', fontSize: '13px' }}>
-                  Total letters processed: {progressEvent.total || letterIds.length}
+                  Processed: {progressEvent.total || letterIds.length} letters
                 </div>
               </div>
             ),
@@ -1032,9 +1077,7 @@ const Billing: React.FC = () => {
               >
                 Show All in Folder
               </Button>
-            ),
-            duration: 8,
-            placement: 'bottomRight'
+            )
           })
 
           resolve()
@@ -1072,7 +1115,7 @@ const Billing: React.FC = () => {
     const runBulkPdf = async (): Promise<void> => {
       await handleBatchPdf(filteredLetterIds, {
         emptyMessage: 'No maintenance letters match the current filters',
-        failureMessage: 'Failed to generate maintenance letter PDFs for the visible list'
+        failureMessage: 'Could not generate letter PDFs for the visible list'
       })
     }
 
@@ -1083,8 +1126,7 @@ const Billing: React.FC = () => {
 
     Modal.confirm({
       title: `Generate PDFs for ${filteredLetterIds.length} visible letters?`,
-      content:
-        'This uses the current filters. For a smaller set, select specific rows from the table below.',
+      content: 'This uses the current filters. Select rows below if you want a smaller set.',
       okText: `Generate ${filteredLetterIds.length} PDFs`,
       cancelText: 'Cancel',
       onOk: runBulkPdf
@@ -1094,13 +1136,16 @@ const Billing: React.FC = () => {
   const handleCancelBatchPdfGeneration = (): void => {
     if (batchPdfTaskId && pdfProgress && pdfProgress.current < pdfProgress.total) {
       Modal.confirm({
-        title: 'Cancel PDF Generation?',
-        content: `${pdfProgress.current} of ${pdfProgress.total} letters have already been processed. Do you want to stop the remaining generation?`,
+        title: 'Stop PDF generation?',
+        content: `${pdfProgress.current} of ${pdfProgress.total} letters are already done. Stop the rest?`,
+        okText: 'Stop',
+        okType: 'danger',
+        cancelText: 'Keep Running',
         onOk: async () => {
           await window.api.worker.cancel(batchPdfTaskId)
           setGeneratingPdf(false)
           setBatchPdfTaskId(null)
-          message.info(`Cancelled. ${pdfProgress.current} letters were processed.`)
+          message.info(`PDF generation stopped after ${pdfProgress.current} letters`)
         }
       })
       return
@@ -1112,11 +1157,11 @@ const Billing: React.FC = () => {
 
   const handleDelete = async (id: number): Promise<void> => {
     Modal.confirm({
-      title: 'Are you sure you want to delete this maintenance letter?',
-      content: 'This action cannot be undone.',
-      okText: 'Yes, Delete',
+      title: 'Delete maintenance letter?',
+      content: 'This cannot be undone.',
+      okText: 'Delete',
       okType: 'danger',
-      cancelText: 'No',
+      cancelText: 'Cancel',
       onOk: async () => {
         await window.api.letters.delete(id)
         message.success('Maintenance letter deleted')
@@ -1127,20 +1172,20 @@ const Billing: React.FC = () => {
 
   const handleBulkDelete = async (): Promise<void> => {
     Modal.confirm({
-      title: `Are you sure you want to delete ${selectedRowKeys.length} maintenance letters?`,
-      content: 'This action cannot be undone.',
-      okText: 'Yes, Delete',
+      title: `Delete ${selectedRowKeys.length} maintenance letters?`,
+      content: 'This cannot be undone.',
+      okText: 'Delete',
       okType: 'danger',
-      cancelText: 'No',
+      cancelText: 'Cancel',
       onOk: async () => {
         setLoading(true)
         try {
           await window.api.letters.bulkDelete(selectedRowKeys as number[])
-          message.success(`Successfully deleted ${selectedRowKeys.length} maintenance letters`)
+          message.success(`${selectedRowKeys.length} maintenance letters deleted`)
           fetchData()
           setSelectedRowKeys([])
         } catch {
-          message.error('Failed to delete maintenance letters')
+          message.error('Could not delete the maintenance letters')
         } finally {
           setLoading(false)
         }
@@ -1149,12 +1194,14 @@ const Billing: React.FC = () => {
   }
 
   const filteredLetters = letters.filter((letter) => {
+    const normalizedSearch = searchText.toLowerCase()
     const matchProject = !selectedProject || letter.project_id === selectedProject
     const matchYear = !selectedYear || letter.financial_year === selectedYear
     const matchSearch =
       !searchText ||
-      letter.unit_number?.toLowerCase().includes(searchText.toLowerCase()) ||
-      letter.owner_name?.toLowerCase().includes(searchText.toLowerCase())
+      letter.unit_number?.toLowerCase().includes(normalizedSearch) ||
+      letter.owner_name?.toLowerCase().includes(normalizedSearch) ||
+      letter.project_name?.toLowerCase().includes(normalizedSearch)
 
     const displayStatus = getDisplayStatus(letter)
 
@@ -1233,15 +1280,33 @@ const Billing: React.FC = () => {
     [filteredProjectUnits, alreadyBilledUnitIds]
   )
 
+  const selectableProjectUnitIdSet = useMemo(
+    () => new Set(selectableProjectUnitIds),
+    [selectableProjectUnitIds]
+  )
+
+  const selectedEligibleUnitIds = useMemo(
+    () => selectedUnitIds.filter((id) => selectableProjectUnitIdSet.has(id)),
+    [selectedUnitIds, selectableProjectUnitIdSet]
+  )
+
   const readyToGenerateCount = useMemo(
     () => projectUnits.filter((unit) => !alreadyBilledUnitIds.has(unit.id as number)).length,
     [projectUnits, alreadyBilledUnitIds]
   )
 
   const selectedEligibleCount = useMemo(
-    () => selectedUnitIds.filter((id) => !alreadyBilledUnitIds.has(id)).length,
-    [selectedUnitIds, alreadyBilledUnitIds]
+    () => selectedEligibleUnitIds.length,
+    [selectedEligibleUnitIds]
   )
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      return
+    }
+
+    setSelectedUnitIds((prev) => prev.filter((id) => selectableProjectUnitIdSet.has(id)))
+  }, [isModalOpen, selectableProjectUnitIdSet])
 
   const billingStatusOptions = useMemo(
     () => [
@@ -1363,7 +1428,7 @@ const Billing: React.FC = () => {
       title: 'Financial Year',
       dataIndex: 'financial_year',
       key: 'financial_year',
-      width: 120,
+      width: 148,
       sorter: (a: MaintenanceLetter, b: MaintenanceLetter) =>
         (a.financial_year || '').localeCompare(b.financial_year || '')
     },
@@ -1510,7 +1575,7 @@ const Billing: React.FC = () => {
           title="No projects found"
           description={
             <span>
-              You need to create a project and add units before generating maintenance letters.{' '}
+              Create a project and add units first.{' '}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/projects')}>
                 Go to Projects {'->'}
               </Button>
@@ -1526,7 +1591,7 @@ const Billing: React.FC = () => {
           title="No maintenance letters yet"
           description={
             <span>
-              Click &quot;Generate Maintenance Letters&quot; to create letters for your units, or check that your projects have units and rates configured.{` `}
+              Generate letters, or check your units and rates.{` `}
               <Button type="link" size="small" style={{ padding: 0 }} onClick={() => navigate('/projects')}>
                 Check project setup {'->'}
               </Button>
@@ -1551,14 +1616,14 @@ const Billing: React.FC = () => {
               Maintenance Letters
             </Title>
             <Text type="secondary" className="page-hero-subtitle">
-              Configure annual letters, generate PDFs, and manage billing progress across units.
+              Generate letters, PDFs, and track billing status.
             </Text>
             <Text
               type="secondary"
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Use this screen to generate letters first, then review status, PDFs, and payment readiness. Use filters with Bulk PDF to export the visible list.
+              Generate letters here, then review PDFs and payment status. Use filters with Bulk PDF.
             </Text>
           </div>
           <Space className="responsive-action-bar">
@@ -1633,6 +1698,10 @@ const Billing: React.FC = () => {
         </Space>
       </Card>
 
+      <div className="table-scroll-hint">
+        <span>Swipe horizontally to see more columns</span>
+      </div>
+
       {/* Batch PDF Generation Progress Modal */}
       <Modal
         title={
@@ -1644,7 +1713,7 @@ const Billing: React.FC = () => {
             )}
             <span>
               {pdfProgress?.current === pdfProgress?.total
-                ? 'Generation Complete'
+                ? 'PDF generation complete'
                 : 'Generating PDFs'}
             </span>
             <Tag color={pdfProgress?.current === pdfProgress?.total ? 'success' : 'processing'}>
@@ -1660,8 +1729,8 @@ const Billing: React.FC = () => {
             type={pdfProgress?.current === pdfProgress?.total ? 'primary' : 'default'}
             danger={pdfProgress?.current !== pdfProgress?.total}
             onClick={handleCancelBatchPdfGeneration}
-            >
-            {pdfProgress?.current === pdfProgress?.total ? 'Close' : 'Cancel'}
+          >
+            {pdfProgress?.current === pdfProgress?.total ? 'Close' : 'Stop'}
           </Button>
         ]}
         closable={pdfProgress?.current === pdfProgress?.total}
@@ -1746,43 +1815,45 @@ const Billing: React.FC = () => {
         )}
       </Modal>
 
-      <Table
-        className="billing-letters-table"
-        rowSelection={{
-          columnWidth: 46,
-          selectedRowKeys,
-          onChange: setSelectedRowKeys
-        }}
-        columns={columns}
-        dataSource={filteredLetters}
-        rowKey="id"
-        loading={loading}
-        pagination={{ 
-          pageSize: pageSize,
-          size: 'small',
-          showSizeChanger: true,
-          pageSizeOptions: [10, 20, 50],
-          onShowSizeChange: (_, size) => setPageSize(size)
-        }}
-        virtual={filteredLetters.length > 100}
-        scroll={{ x: 1260, y: filteredLetters.length > 100 ? 620 : undefined }}
-        size="small"
-        rowClassName={(record) => {
-          const status = getDisplayStatus(record)
-          return status === 'Overdue' ? 'overdue-row' : 
-                 status === 'Pending' ? 'pending-row' : 
-                 status === 'Modified' ? 'modified-row' : 
-                 status === 'Generated' ? 'generated-row' : 
-                 ''
-        }}
-        onRow={(record) => ({
-          onClick: () => handleShowAddOns(record),
-          style: { cursor: 'pointer' }
-        })}
-      />
+      <div className="table-scroll-wrapper mobile-card-table">
+        <Table
+          className="billing-letters-table"
+          rowSelection={{
+            columnWidth: 46,
+            selectedRowKeys,
+            onChange: setSelectedRowKeys
+          }}
+          columns={columns}
+          dataSource={filteredLetters}
+          rowKey="id"
+          loading={loading}
+          pagination={{ 
+            pageSize: pageSize,
+            size: 'small',
+            showSizeChanger: true,
+            pageSizeOptions: [10, 20, 50],
+            onShowSizeChange: (_, size) => setPageSize(size)
+          }}
+          virtual={filteredLetters.length > 100}
+          scroll={{ x: 1290, y: filteredLetters.length > 100 ? 620 : undefined }}
+          size="small"
+          rowClassName={(record) => {
+            const status = getDisplayStatus(record)
+            return status === 'Overdue' ? 'overdue-row' : 
+                   status === 'Pending' ? 'pending-row' : 
+                   status === 'Modified' ? 'modified-row' : 
+                   status === 'Generated' ? 'generated-row' : 
+                   ''
+          }}
+          onRow={(record) => ({
+            onClick: () => handleShowAddOns(record),
+            style: { cursor: 'pointer' }
+          })}
+        />
+      </div>
 
       <Modal
-        title="Generate Maintenance Letters"
+        title="Generate maintenance letters"
         open={isModalOpen}
         onOk={handleModalOk}
         onCancel={() => {
@@ -1796,6 +1867,7 @@ const Billing: React.FC = () => {
         width={720}
         confirmLoading={loading}
         okText={batchModalStep === 'config' ? 'Next: Select Units' : 'Generate Maintenance Letters'}
+        cancelText="Cancel"
         className="billing-generate-modal mobile-fullscreen-modal mobile-single-column"
       >
         <div className="billing-generate-modal-scroll">
@@ -1889,7 +1961,7 @@ const Billing: React.FC = () => {
                 <Form.Item
                   name="financial_year"
                   label="Financial Year"
-                extra={`Working FY: ${defaultFY}. Next FY: ${upcomingFY}. The selected working financial year is used by default.`}
+                  extra={`Working FY: ${defaultFY}. Default selection uses this year.`}
                   rules={[
                     { required: true, message: 'Please select financial year' },
                     {
@@ -1986,8 +2058,8 @@ const Billing: React.FC = () => {
                   type="info"
                   showIcon
                   style={{ marginBottom: 8 }}
-                  title="Recommended manual flow"
-                  description="Select a project, choose a financial year that shows project setup ready, review the letter and due dates, add optional charges if needed, then move to unit selection."
+                  title="Manual flow"
+                  description="Pick a project and year, confirm the dates, add charges if needed, then choose units."
                 />
               </Col>
 
@@ -2014,6 +2086,9 @@ const Billing: React.FC = () => {
                     <>
                       {fields.map(({ key, name, ...restField }) => (
                         <Row key={key} gutter={[8, 8]} align="middle" style={{ marginBottom: 8 }}>
+                          <Form.Item {...restField} name={[name, 'id']} hidden>
+                            <Input />
+                          </Form.Item>
                           <Col xs={24} sm={8}>
                             <Form.Item
                               {...restField}
@@ -2074,7 +2149,7 @@ const Billing: React.FC = () => {
           ) : (
             <>
             <Alert
-              title="Select specific units to generate letters for, or leave empty to generate for all units in the project"
+              title="Choose units, or leave blank to use all eligible units in the filtered list."
               type="info"
               showIcon
               style={{ marginBottom: 16 }}
@@ -2082,7 +2157,7 @@ const Billing: React.FC = () => {
             {!unitsLoading && projectUnits.length === 0 && (
               <Alert
                 title="No units available for this project"
-                description="Add units to the selected project before generating maintenance letters."
+                description="Add units before generating letters."
                 type="warning"
                 showIcon
                 style={{ marginBottom: 12 }}
@@ -2090,7 +2165,7 @@ const Billing: React.FC = () => {
             )}
             {alreadyBilledUnitIds.size > 0 && (
               <Alert
-                title={`${alreadyBilledUnitIds.size} unit${alreadyBilledUnitIds.size !== 1 ? 's' : ''} already have a letter for FY ${batchFinancialYear} - shown as "Already billed" and disabled below.`}
+                title={`${alreadyBilledUnitIds.size} unit${alreadyBilledUnitIds.size !== 1 ? 's' : ''} already have letters for FY ${batchFinancialYear}. They are marked "Already billed" below.`}
                 type="warning"
                 showIcon
                 style={{ marginBottom: 12 }}
@@ -2140,11 +2215,9 @@ const Billing: React.FC = () => {
                 <Text type="secondary">
                   Selected: {selectedEligibleCount} / {readyToGenerateCount} eligible
                 </Text>
-                {alreadyBilledUnitIds.size > 0 && (
-                  <Text type="secondary">
-                    Showing: {filteredProjectUnits.length} of {projectUnits.length} units
-                  </Text>
-                )}
+                <Text type="secondary">
+                  Showing: {filteredProjectUnits.length} of {projectUnits.length} units
+                </Text>
               </div>
             </Space>
             <div className="billing-unit-selection-table">
@@ -2183,7 +2256,8 @@ const Billing: React.FC = () => {
                   {
                     title: 'Status',
                     key: 'billed_status',
-                    width: 150,
+                    width: 176,
+                    className: 'billing-unit-status-column',
                     render: (_: unknown, record: Unit) =>
                       alreadyBilledUnitIds.has(record.id as number) ? (
                         <Tag className="billing-unit-status-tag billing-unit-status-tag-billed" icon={<CheckCircleOutlined />}>
@@ -2209,7 +2283,7 @@ const Billing: React.FC = () => {
       </Modal>
 
       <Modal
-        title={`Add-ons Breakdown: ${currentLetter?.unit_number} (${currentLetter?.financial_year})`}
+        title={`Add-ons for ${currentLetter?.unit_number} (${currentLetter?.financial_year})`}
         open={addOnsModalVisible}
         onCancel={() => setAddOnsModalVisible(false)}
         footer={[

@@ -22,13 +22,11 @@ import {
   WalletOutlined,
   EditOutlined,
   DeleteOutlined,
-  PlusOutlined,
-  UndoOutlined
+  PlusOutlined
 } from '@ant-design/icons'
 import { Unit, Project } from '@preload/types'
 import { UNIT_TYPES, UNIT_TYPE_COLORS } from '../constants/unitTypes'
 import { appMessage as message } from '../utils/appMessage'
-import { useOperationHistory } from '../hooks/useOperationHistory'
 import FilterPanel, {
   createRangeFilter,
   createSearchFilter,
@@ -57,7 +55,6 @@ const Units: React.FC = () => {
   const [form] = Form.useForm()
   const navigate = useNavigate()
   const location = useLocation()
-  const { canUndo, addOperation, undo } = useOperationHistory<Unit>({ maxHistory: 5 })
 
   // Memoized filter status for performance
   const hasActiveFilters = useMemo(() => {
@@ -177,7 +174,7 @@ const Units: React.FC = () => {
             nextRange[1] !== null &&
             nextRange[0] > nextRange[1]
           ) {
-            message.warning('Minimum area cannot be greater than maximum')
+            message.warning('Minimum area cannot be greater than maximum area')
           }
           setAreaRange(nextRange)
         }
@@ -209,7 +206,7 @@ const Units: React.FC = () => {
       setProjects(projectsData)
       setSelectedRowKeys([])
     } catch {
-      message.error('Failed to fetch data')
+      message.error('Could not load units')
     } finally {
       setLoading(false)
     }
@@ -264,7 +261,11 @@ const Units: React.FC = () => {
 
   const handleDelete = async (id: number): Promise<void> => {
     Modal.confirm({
-      title: 'Are you sure?',
+      title: 'Delete unit?',
+      content: 'This cannot be undone.',
+      okText: 'Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
       onOk: async () => {
         setLoading(true)
         try {
@@ -272,7 +273,7 @@ const Units: React.FC = () => {
           message.success('Unit deleted')
           fetchData()
         } catch {
-          message.error('Failed to delete unit')
+          message.error('Could not delete the unit')
         } finally {
           setLoading(false)
         }
@@ -281,53 +282,27 @@ const Units: React.FC = () => {
   }
 
   const handleBulkDelete = async (): Promise<void> => {
-    // Get the units that will be deleted for undo functionality
-    const unitsToDelete = units.filter(u => selectedRowKeys.includes(u.id!))
-    
     Modal.confirm({
-      title: `Are you sure you want to delete ${selectedRowKeys.length} units?`,
-      content: canUndo 
-        ? 'You can undo this action immediately after deletion.' 
-        : 'This action cannot be undone.',
-      okText: 'Yes, Delete',
+      title: `Delete ${selectedRowKeys.length} units?`,
+      content:
+        'This cannot be undone. Linked maintenance letters, payments, and receipts will also be deleted.',
+      okText: 'Delete',
       okType: 'danger',
-      cancelText: 'No',
+      cancelText: 'Cancel',
       onOk: async () => {
         setLoading(true)
         try {
           await window.api.units.bulkDelete(selectedRowKeys as number[])
-          
-          // Add to operation history for undo
-          addOperation({
-            type: 'delete',
-            description: `Deleted ${unitsToDelete.length} unit(s)`,
-            data: unitsToDelete,
-            restoreFn: async (deletedUnits) => {
-              // Restore each deleted unit by recreating it
-              for (const unit of deletedUnits) {
-                const unitData = { ...unit }
-                delete unitData.id
-                await window.api.units.create(unitData)
-              }
-            }
-          })
-          
-          message.success(`Successfully deleted ${selectedRowKeys.length} units`)
-          fetchData()
+          setSelectedRowKeys([])
+          message.success(`${selectedRowKeys.length} units deleted`)
+          void fetchData()
         } catch {
-          message.error('Failed to delete units')
+          message.error('Could not delete the units')
         } finally {
           setLoading(false)
         }
       }
     })
-  }
-
-  const handleUndoDelete = async (): Promise<void> => {
-    const success = await undo()
-    if (success) {
-      fetchData()
-    }
   }
 
   const handleModalOk = async (): Promise<void> => {
@@ -507,27 +482,17 @@ const Units: React.FC = () => {
               Units
             </Title>
             <Text type="secondary" className="page-hero-subtitle">
-              Review owners, import unit master data, and prepare units for billing in a faster workflow.
+              Manage unit records and prepare them for billing.
             </Text>
             <Text
               type="secondary"
               className="page-helper-text"
               style={{ display: 'block', marginTop: 8 }}
             >
-              Import, clean, and manage unit records here before billing and payment operations. Historical ledger and billing migrations should be done from the project import flow.
+              Add units here before billing and payment work.
             </Text>
           </div>
           <Space wrap className="responsive-action-bar" align="center">
-            {canUndo && (
-              <Button
-                icon={<UndoOutlined />}
-                onClick={handleUndoDelete}
-                title="Undo last deletion"
-                aria-label="Undo last deletion"
-              >
-                Undo Delete
-              </Button>
-            )}
             <Button type="primary" icon={<PlusOutlined />} onClick={() => handleAdd()}>
               Add Unit
             </Button>
@@ -596,12 +561,14 @@ const Units: React.FC = () => {
       </Card>
 
       <Modal
-        title={editingUnit ? 'Edit Unit' : 'Add Unit'}
+        title={editingUnit ? 'Edit unit' : 'Add unit'}
         open={isModalOpen}
         onOk={handleModalOk}
         onCancel={() => {
           setIsModalOpen(false)
         }}
+        okText="Save"
+        cancelText="Cancel"
         width={640}
         style={{ 
           maxWidth: '95vw',
@@ -663,7 +630,7 @@ const Units: React.FC = () => {
               Unit Information
             </Divider>
             <Text type="secondary" className="page-helper-text">
-              Billing rules like penalty and discount are managed in Project Rates, not at unit level.
+              Penalty and discount settings are managed in Project Rates.
             </Text>
             <Row gutter={[16, 8]} className="unit-info-row">
             <Col span={24}>

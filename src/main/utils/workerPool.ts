@@ -4,8 +4,10 @@
  */
 
 import { Worker } from 'worker_threads'
+import fs from 'fs'
 import path from 'path'
-import { BrowserWindow, app } from 'electron'
+import { BrowserWindow } from 'electron'
+import { isPackagedApp } from './runtimePaths'
 
 export interface CancellationToken {
   cancelled: boolean;
@@ -50,6 +52,18 @@ export class WorkerPool {
   private mainWindow: BrowserWindow | null = null
   private maxConcurrentTasks = 2 // CPU-bound tasks
 
+  private getWorkerBasePath(): string {
+    const candidatePaths = isPackagedApp()
+      ? [path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'main', 'workers')]
+      : [
+          path.resolve(__dirname, 'workers'),
+          path.resolve(process.cwd(), 'out', 'main', 'workers'),
+          path.resolve(__dirname, '..', 'workers')
+        ]
+
+    return candidatePaths.find((candidatePath) => fs.existsSync(candidatePath)) || candidatePaths[0]
+  }
+
   private getWorkerFileName(taskType: string): string {
     const workerFileMap: Record<string, string> = {
       billing: 'billing.worker.js',
@@ -91,9 +105,7 @@ export class WorkerPool {
   private async executeTask(task: WorkerTask): Promise<void> {
     const startTime = Date.now()
     const workerFileName = this.getWorkerFileName(task.type)
-    const workerPath = app.isPackaged
-      ? path.join(process.resourcesPath, 'app.asar.unpacked', 'out', 'main', 'workers', workerFileName)
-      : path.join(app.getAppPath(), 'out', 'main', 'workers', workerFileName)
+    const workerPath = path.join(this.getWorkerBasePath(), workerFileName)
 
     try {
       const worker = new Worker(workerPath)
