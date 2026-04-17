@@ -179,6 +179,7 @@ const IMPORT_PROFILE_LABELS = Object.fromEntries(
 
 const Projects: React.FC = () => {
   const navigate = useNavigate()
+  const [modal, modalContextHolder] = Modal.useModal()
   const currentFY = getCurrentFinancialYear()
   const upcomingFY = getUpcomingFinancialYear(currentFY)
   const { workingFY, setWorkingFY } = useWorkingFinancialYear()
@@ -654,37 +655,150 @@ const Projects: React.FC = () => {
     setIsRateModalOpen(true)
   }
 
-  const handleDelete = async (id: number): Promise<void> => {
-    Modal.confirm({
-      title: 'Delete project?',
-      content: 'This cannot be undone.',
-      okText: 'Delete',
-      okType: 'danger',
-      cancelText: 'Cancel',
-      onOk: async () => {
-        try {
-          await window.api.projects.delete(id)
-          message.success('Project deleted')
-          fetchProjects()
-        } catch {
-          message.error('Could not delete the project')
-        }
+  const exportFullBackup = async (): Promise<boolean> => {
+    const backupMessageKey = 'project-delete-backup'
+
+    try {
+      const defaultFileName = await window.api.backup.getExportDefaultName()
+      const savePath = await window.api.dialog.saveFile({
+        title: 'Export Barkat Backup',
+        defaultPath: defaultFileName,
+        filters: [
+          { name: 'Barkat Backup Files', extensions: ['barkatbackup'] },
+          { name: 'SQLite Database Files', extensions: ['db', 'sqlite', 'backup'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      })
+
+      if (!savePath) {
+        message.info('Backup export canceled')
+        return false
       }
+
+      message.loading({ content: 'Exporting backup...', key: backupMessageKey })
+      const result = await window.api.backup.exportBackup(savePath)
+      if (!result.success || !result.backupPath) {
+        message.error({
+          content: `Could not export the backup: ${result.error || 'Unknown error'}`,
+          key: backupMessageKey
+        })
+        return false
+      }
+
+      message.success({ content: 'Backup exported', key: backupMessageKey })
+      return true
+    } catch (error) {
+      message.error({
+        content: `Could not export the backup: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        key: backupMessageKey
+      })
+      return false
+    }
+  }
+
+  const deleteProject = async (id: number): Promise<void> => {
+    try {
+      await window.api.projects.delete(id)
+      message.success('Project deleted')
+      void fetchProjects()
+    } catch {
+      message.error('Could not delete the project')
+    }
+  }
+
+  const deleteSelectedProjects = async (): Promise<void> => {
+    try {
+      await window.api.projects.bulkDelete(selectedRowKeys as number[])
+      message.success(`${selectedRowKeys.length} projects deleted`)
+      setSelectedRowKeys([])
+      void fetchProjects()
+    } catch (error) {
+      console.error(error)
+      message.error('Could not delete the projects')
+    }
+  }
+
+  const openDeletePrompt = (options: {
+    title: string
+    content: React.ReactNode
+    backupDone?: boolean
+    onDelete: () => Promise<void>
+  }): void => {
+    let dialogRef: { destroy: () => void } | null = null
+
+    const closeDialog = (): void => {
+      dialogRef?.destroy()
+    }
+
+    const handleExportBackup = async (): Promise<void> => {
+      closeDialog()
+      const exported = await exportFullBackup()
+      if (exported) {
+        openDeletePrompt({
+          ...options,
+          backupDone: true
+        })
+      }
+    }
+
+    const handleDeleteNow = async (): Promise<void> => {
+      closeDialog()
+      await options.onDelete()
+    }
+
+    dialogRef = modal.confirm({
+      className: 'project-delete-confirm-modal',
+      title: options.title,
+      icon: <ExclamationCircleOutlined />,
+      content: options.content,
+      closable: true,
+      maskClosable: true,
+      footer: (
+        <div className="project-delete-confirm-footer">
+          {!options.backupDone ? (
+            <Button key="backup" onClick={() => void handleExportBackup()}>
+              Export Backup
+            </Button>
+          ) : null}
+          <Button key="cancel" onClick={closeDialog}>
+            Cancel
+          </Button>
+          <Button key="delete" danger type="primary" onClick={() => void handleDeleteNow()}>
+            Delete
+          </Button>
+        </div>
+      )
+    })
+  }
+
+  const handleDelete = (id: number): void => {
+    const project = projects.find((item) => item.id === id)
+
+    openDeletePrompt({
+      title: project ? `Delete ${project.name}?` : 'Delete project?',
+      content: (
+        <div className="project-delete-confirm-content">
+          <p>This cannot be undone.</p>
+          <p>Export a full backup first if you may need this project data later.</p>
+        </div>
+      ),
+      onDelete: () => deleteProject(id)
     })
   }
 
   const handleBulkDelete = (): void => {
-    Modal.confirm({
+    openDeletePrompt({
       title: `Delete ${selectedRowKeys.length} projects?`,
       content: (
-        <div>
+        <div className="project-delete-confirm-content">
           <p>
             This cannot be undone. Related units, maintenance letters, and payments will also be deleted.
           </p>
+          <p>Export a full backup first if you may need this project data later.</p>
           {selectedProjects.length > 0 && (
-            <div style={{ marginTop: 8 }}>
+            <div className="project-delete-confirm-list">
               <Text type="secondary">Projects to delete:</Text>
-              <ul style={{ margin: '4px 0 0 20px', fontSize: '12px' }}>
+              <ul>
                 {selectedProjects.slice(0, 5).map((p) => (
                   <li key={p.id}>{p.name}</li>
                 ))}
@@ -694,20 +808,7 @@ const Projects: React.FC = () => {
           )}
         </div>
       ),
-      okText: 'Delete',
-      okType: 'danger',
-      cancelText: 'Cancel',
-      onOk: async () => {
-        try {
-          await window.api.projects.bulkDelete(selectedRowKeys as number[])
-          message.success(`${selectedRowKeys.length} projects deleted`)
-          setSelectedRowKeys([])
-          fetchProjects()
-        } catch (error) {
-          console.error(error)
-          message.error('Could not delete the projects')
-        }
-      }
+      onDelete: deleteSelectedProjects
     })
   }
 
@@ -913,6 +1014,7 @@ const Projects: React.FC = () => {
 
   return (
     <div className="page-screen">
+      {modalContextHolder}
       {/* Header */}
       <div className="page-hero">
         <div

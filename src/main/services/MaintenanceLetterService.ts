@@ -6,6 +6,7 @@ import path from 'path'
 import { PDFFont, rgb } from 'pdf-lib'
 import { normalizeMoney } from '../utils/money'
 import { getUserDataPath } from '../utils/runtimePaths'
+import { calculateArrearsBreakdownForCurrentFinancialYear } from './LetterBalanceService'
 
 export interface MaintenanceLetter {
   id?: number
@@ -75,6 +76,20 @@ export interface BatchLetterResult {
 }
 
 class MaintenanceLetterService extends BasePDFGenerator {
+  private formatLongDate(date: string | Date): string {
+    const dateObj = typeof date === 'string' ? new Date(date) : date
+
+    if (Number.isNaN(dateObj.getTime())) {
+      return typeof date === 'string' ? date : this.formatDate(dateObj)
+    }
+
+    return dateObj.toLocaleDateString('en-IN', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })
+  }
+
   private drawWrappedTextBlock(
     text: string,
     x: number,
@@ -268,42 +283,6 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
   }
 
-  private getPenaltyPercentageForFinancialYear(
-    projectId: number,
-    financialYear: string,
-    unitType: string,
-    fallbackPenaltyPercentage: number
-  ): number {
-    const normalizedUnitType = this.normalizeUnitType(unitType)
-    const rate =
-      dbService.get<{ penalty_percentage: number | null }>(
-        `SELECT penalty_percentage
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
-        [projectId, financialYear, normalizedUnitType]
-      ) ||
-      dbService.get<{ penalty_percentage: number | null }>(
-        `SELECT penalty_percentage
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND (unit_type = 'All' OR unit_type IS NULL)`,
-        [projectId, financialYear]
-      )
-
-    return rate?.penalty_percentage ?? fallbackPenaltyPercentage
-  }
-
-  private normalizeUnitType(unitType: unknown): string {
-    const normalized = String(unitType || '')
-      .trim()
-      .toLowerCase()
-    if (!normalized || normalized === 'flat' || normalized === 'bungalow') return 'Bungalow'
-    if (normalized === 'plot') return 'Plot'
-    if (normalized === 'garden') return 'Garden'
-    if (normalized === 'bmf') return 'Bungalow' // BMF = Bungalow Maintenace Fee
-    if (normalized === 'all' || normalized === 'all units') return 'All'
-    return String(unitType || '').trim() || 'Bungalow'
-  }
-
   private resolveQrCodePath(qrCodePath: string): string | null {
     if (!qrCodePath) return null
     
@@ -491,22 +470,32 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
   public getAll(): MaintenanceLetter[] {
     return dbService.query<MaintenanceLetter>(`
-      SELECT l.*, u.unit_number, u.owner_name, u.unit_type, p.name as project_name,
+      SELECT l.*, u.unit_number, u.owner_name, u.unit_type, u.sector_code, p.name as project_name,
+             p.letterhead_path,
+             ps.letterhead_path as sector_letterhead_path,
              COALESCE((SELECT SUM(addon_amount) FROM add_ons WHERE letter_id = l.id), 0) as add_ons_total
       FROM maintenance_letters l
       JOIN units u ON l.unit_id = u.id
       JOIN projects p ON l.project_id = p.id
+      LEFT JOIN project_sector_payment_configs ps
+        ON p.id = ps.project_id
+       AND UPPER(TRIM(ps.sector_code)) = UPPER(TRIM(u.sector_code))
       ORDER BY l.generated_date DESC, l.id DESC
     `)
   }
 
   public getByProject(projectId: number): MaintenanceLetter[] {
     return dbService.query<MaintenanceLetter>(
-      `SELECT l.*, u.unit_number, u.owner_name, u.unit_type, p.name as project_name,
+      `SELECT l.*, u.unit_number, u.owner_name, u.unit_type, u.sector_code, p.name as project_name,
+              p.letterhead_path,
+              ps.letterhead_path as sector_letterhead_path,
               COALESCE((SELECT SUM(addon_amount) FROM add_ons WHERE letter_id = l.id), 0) as add_ons_total
        FROM maintenance_letters l
        JOIN units u ON l.unit_id = u.id
        JOIN projects p ON l.project_id = p.id
+       LEFT JOIN project_sector_payment_configs ps
+         ON p.id = ps.project_id
+        AND UPPER(TRIM(ps.sector_code)) = UPPER(TRIM(u.sector_code))
        WHERE l.project_id = ?
        ORDER BY l.generated_date DESC, l.id DESC`,
       [projectId]
@@ -764,34 +753,16 @@ class MaintenanceLetterService extends BasePDFGenerator {
             })) || []
           const addOnsTotal = normalizedAddOns.reduce((sum, addon) => sum + addon.addon_amount, 0)
 
-          // 4. Arrears - sum of genuinely unpaid prior-year letters
-          const previousLetters = dbService.query<{ final_amount: number; id: number }>(
-            `SELECT id, final_amount FROM maintenance_letters
-             WHERE unit_id = ? AND financial_year < ? ORDER BY financial_year ASC`,
-            [unitId, financialYear]
+          // 4. Arrears - sum of genuinely unpaid prior-year letters using the same rule as previews
+          const totalArrears = normalizeMoney(
+            calculateArrearsBreakdownForCurrentFinancialYear({
+              projectId,
+              unitId,
+              targetFinancialYear: financialYear,
+              unitType: unit.unit_type,
+              fallbackPenaltyPercentage: chargesConfig.penalty_percentage || 0
+            }).reduce((sum, entry) => sum + entry.total_with_penalty, 0)
           )
-
-          let totalArrears = 0
-          for (const prev of previousLetters) {
-            const paid =
-              dbService.get<{ total: number }>(
-                `SELECT COALESCE(SUM(payment_amount), 0) as total FROM payments
-                 WHERE letter_id = ? AND payment_status != 'Pending'`,
-                [prev.id]
-              )?.total || 0
-            const outstanding = Math.max(0, prev.final_amount - paid)
-            if (outstanding > 0) {
-              const previousYearPenaltyPct = this.getPenaltyPercentageForFinancialYear(
-                projectId,
-                financialYear,
-                unit.unit_type,
-                chargesConfig.penalty_percentage || 0
-              )
-              const penaltyPct = previousYearPenaltyPct || 0
-              totalArrears += normalizeMoney(outstanding + outstanding * (penaltyPct / 100))
-            }
-          }
-          totalArrears = normalizeMoney(totalArrears)
 
           // 5. Determine early-payment discount from slabs (if any)
           let discountAmount = 0
@@ -1350,11 +1321,6 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const totalAfter = normalizeMoney(totalBefore + discountAmount)
     const addOnsTotal = normalizedAddOns.reduce((sum, addon) => sum + addon.addon_amount, 0)
     const storedDiscountPercentage = Number(letter.snapshot_discount_percentage || 0)
-    const penaltyLabel =
-      projectService.getChargesConfig(letter.project_id).penalty_label ===
-      'Late Payment Charges'
-        ? 'Late Payment Charges'
-        : 'Penalty'
     const discountPercentage =
       storedDiscountPercentage > 0
         ? storedDiscountPercentage
@@ -1364,6 +1330,16 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const discountPercentageLabel = Number.isInteger(discountPercentage)
       ? String(discountPercentage)
       : discountPercentage.toFixed(2).replace(/\.00$/, '')
+    const [startYear, endYearShort] = String(letter.financial_year || '').split('-')
+    const fullEndYear =
+      !endYearShort
+        ? undefined
+        : endYearShort.length === 2
+          ? `${String(letter.financial_year).slice(0, 2)}${endYearShort}`
+          : endYearShort
+    const paymentDeadlineLabel = letter.due_date ? this.formatLongDate(letter.due_date) : undefined
+    const paymentAfterStartLabel = startYear ? `1 August ${startYear}` : undefined
+    const financialYearEndLabel = fullEndYear ? `31 March ${fullEndYear}` : undefined
 
     const breakdownRows: Array<{
       title: string
@@ -1425,7 +1401,41 @@ class MaintenanceLetterService extends BasePDFGenerator {
       tableX + tableWidth
     ]
 
-    const rowHeights = displayRows.map((_row, index) => (index < 2 ? 28 : 24))
+    const titleFontSize = 8.75
+    const detailFontSize = 8.25
+    const titleLineSpacing = 10
+    const detailLineSpacing = 9
+    const rowTopPadding = 13
+    const rowBottomPadding = 8
+
+    const rowMetrics = displayRows.map((row, index) => {
+      const titleLines = this.wrapTextLines(row.title, columnWidths[1] - 16, this.fonts.bold, titleFontSize)
+      const detailLines = this.wrapTextLines(
+        row.details,
+        columnWidths[2] - 16,
+        this.fonts.regular,
+        detailFontSize
+      )
+
+      const titleBlockHeight =
+        titleLines.length > 0
+          ? titleFontSize + (titleLines.length - 1) * titleLineSpacing
+          : 0
+      const detailBlockHeight =
+        detailLines.length > 0
+          ? detailFontSize + (detailLines.length - 1) * detailLineSpacing
+          : 0
+      const contentHeight = Math.max(titleBlockHeight, detailBlockHeight, row.amount ? titleFontSize : 0)
+      const minHeight = index < 2 ? 28 : 24
+
+      return {
+        titleLines,
+        detailLines,
+        rowHeight: Math.max(minHeight, rowTopPadding + contentHeight + rowBottomPadding)
+      }
+    })
+
+    const rowHeights = rowMetrics.map((metric) => metric.rowHeight)
 
     const tableHeight = headerHeight + rowHeights.reduce((sum, height) => sum + height, 0)
     const tableY = this.layout.currentY - tableHeight
@@ -1490,15 +1500,14 @@ class MaintenanceLetterService extends BasePDFGenerator {
         })
       }
 
-      const titleLines = this.wrapTextLines(row.title, columnWidths[1] - 16, this.fonts.bold, 8.75)
-      const detailLines = this.wrapTextLines(row.details, columnWidths[2] - 16, this.fonts.regular, 8.25)
+      const { titleLines, detailLines } = rowMetrics[rowIndex]
       const amountWidth = this.fonts.bold.widthOfTextAtSize(row.amount, 8.75)
 
       const serial = String(rowIndex + 1).padStart(2, '0')
       const serialWidth = this.fonts.regular.widthOfTextAtSize(serial, 8.25)
       this.page.drawText(serial, {
         x: columnPositions[0] + (columnWidths[0] - serialWidth) / 2,
-        y: currentRowY + rowHeight - 14,
+        y: currentRowY + rowHeight - rowTopPadding - 1,
         size: 8.25,
         font: this.fonts.regular,
         color: row.title ? this.COLORS.GRAY : rgb(0.82, 0.82, 0.82)
@@ -1507,8 +1516,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       titleLines.forEach((line, lineIndex) => {
         this.page.drawText(line, {
           x: columnPositions[1] + 8,
-          y: currentRowY + rowHeight - 13 - lineIndex * 10,
-          size: 8.75,
+          y: currentRowY + rowHeight - rowTopPadding - lineIndex * titleLineSpacing,
+          size: titleFontSize,
           font: this.fonts.bold,
           color: this.COLORS.TEXT
         })
@@ -1517,8 +1526,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       detailLines.forEach((line, lineIndex) => {
         this.page.drawText(line, {
           x: columnPositions[2] + 8,
-          y: currentRowY + rowHeight - 13 - lineIndex * 9,
-          size: 8.25,
+          y: currentRowY + rowHeight - rowTopPadding - lineIndex * detailLineSpacing,
+          size: detailFontSize,
           font: this.fonts.regular,
           color: this.COLORS.GRAY
         })
@@ -1527,8 +1536,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       if (row.amount) {
         this.page.drawText(row.amount, {
           x: columnPositions[3] + columnWidths[3] - amountWidth - 8,
-          y: currentRowY + rowHeight - 14,
-          size: 8.75,
+          y: currentRowY + rowHeight - rowTopPadding - 1,
+          size: titleFontSize,
           font: this.fonts.bold,
           color: this.COLORS.TEXT
         })
@@ -1556,22 +1565,30 @@ class MaintenanceLetterService extends BasePDFGenerator {
     }
 
     totalsRows.push({
-      label: 'TOTAL',
-      note: '(Before Due)',
+      label: paymentDeadlineLabel
+        ? 'Payment (Before)'
+        : fullEndYear
+          ? `Total (Before 31 March ${fullEndYear})`
+          : 'TOTAL',
+      note: paymentDeadlineLabel ? paymentDeadlineLabel : undefined,
       value: this.formatCurrency(totalBefore)
     })
 
     totalsRows.push({
-      label: 'LATE PAYMENT (After Due)',
-      note: (() => {
-        const [, endYearShort] = String(letter.financial_year || '').split('-')
-        if (!endYearShort) return undefined
-        const fullEndYear =
-          endYearShort.length === 2
-            ? `${String(letter.financial_year).slice(0, 2)}${endYearShort}`
-            : endYearShort
-        return `Total (Inc. ${penaltyLabel})\nPenalty Period: Before 31st March ${fullEndYear}`
-      })(),
+      label:
+        paymentDeadlineLabel && financialYearEndLabel
+          ? 'Total Payment (After)'
+          : paymentDeadlineLabel
+            ? 'Total Payment'
+            : fullEndYear
+              ? 'Payment'
+              : 'Payment After Due',
+      note:
+        paymentAfterStartLabel && financialYearEndLabel
+          ? `${paymentAfterStartLabel} Till ${financialYearEndLabel}`
+          : fullEndYear
+            ? `(After 31 March ${fullEndYear})`
+            : undefined,
       value: this.formatCurrency(totalAfter),
       tone: 'highlight'
     })
@@ -1675,7 +1692,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
           : row.tone === 'discount'
             ? this.COLORS.WARNING
             : this.COLORS.TEXT
-      const noteColor = row.tone === 'highlight' ? this.COLORS.TEXT : this.COLORS.GRAY
+      const noteColor = this.COLORS.GRAY
       const topLineY = totalsCursorY + rowHeight - (row.tone === 'highlight' ? 18 : 22)
 
       row.labelLines.forEach((line, lineIndex) => {
@@ -1697,12 +1714,12 @@ class MaintenanceLetterService extends BasePDFGenerator {
       })
 
       row.noteLines.forEach((line, lineIndex) => {
-        const noteStartY = topLineY - row.labelLines.length * row.labelLineHeight - (row.tone === 'highlight' ? 6 : 4)
+        const noteStartY = topLineY - row.labelLines.length * row.labelLineHeight - 4
         this.page.drawText(line, {
           x: totalsX + totalsInsetX,
           y: noteStartY - lineIndex * row.noteLineHeight,
-          size: row.tone === 'highlight' && lineIndex === 0 ? 7.6 : row.noteFontSize,
-          font: row.tone === 'highlight' && lineIndex === 0 ? this.fonts.bold : this.fonts.regular,
+          size: row.noteFontSize,
+          font: this.fonts.regular,
           color: noteColor
         })
       })

@@ -158,8 +158,8 @@ describe('Barkat production smoke integration', () => {
     expect(finalPaymentId).toBeGreaterThan(0)
 
     const paidLetter = maintenanceLetterService.getById(letter!.id!)
-    expect(paidLetter?.is_paid).toBeFalsy()
-    expect(paidLetter?.status).toBe('Generated')
+    expect(paidLetter?.is_paid).toBeTruthy()
+    expect(paidLetter?.status).toBe('Paid')
 
     const receiptPdfPath = await paymentService.generateReceiptPdf(finalPaymentId)
     expect(fs.existsSync(receiptPdfPath)).toBe(true)

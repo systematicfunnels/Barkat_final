@@ -6,7 +6,7 @@ import {
   StandardWorkbookProjectImportPayload,
   StandardWorkbookRateRow,
   StandardWorkbookPaymentRow
-} from '@preload/types'
+} from '../../../preload/types'
 import { cleanNumber, getValue, normalizeRow } from './importHelpers'
 
 export interface StandardWorkbookProjectPreview extends StandardWorkbookProjectImportPayload {
@@ -42,6 +42,101 @@ const text = (value: unknown): string =>
   typeof value === 'string' ? value.trim() : String(value || '').trim()
 
 const normalizeProjectKey = (value: unknown): string => text(value).toLowerCase()
+const normalizeLooseKey = (value: unknown): string => text(value).toLowerCase().replace(/[^a-z0-9]/g, '')
+
+const KNOWN_LEDGER_ADDON_FIELDS = [
+  { label: 'NA Tax', keys: ['na_tax'] },
+  { label: 'Road & NA Charges', keys: ['road_na', 'rd & na'] },
+  { label: 'Cable', keys: ['cable'] },
+  { label: 'GST', keys: ['gst'] },
+  { label: 'Pipe Replacement', keys: ['pipe_replacement'] },
+  {
+    label: 'Late Payment Charge',
+    keys: ['late_payment_charge', 'late payment charge', 'late payment charges']
+  }
+] as const
+
+const LEDGER_CANONICAL_ADDON_LABELS = new Map<string, string>([
+  ['natax', 'NA Tax'],
+  ['roadna', 'Road & NA Charges'],
+  ['rdna', 'Road & NA Charges'],
+  ['roadnacharges', 'Road & NA Charges'],
+  ['cable', 'Cable'],
+  ['gst', 'GST'],
+  ['pipereplacement', 'Pipe Replacement'],
+  ['latepaymentcharge', 'Late Payment Charge'],
+  ['latepaymentcharges', 'Late Payment Charge'],
+  ['solarcontributionasperagm', 'Solar Contribution as per AGM']
+])
+
+const LEDGER_CORE_FIELD_KEYS = new Set(
+  [
+    'project_name',
+    'project name',
+    'project',
+    'name',
+    'sector_code',
+    'sector',
+    'unit_number',
+    'unit number',
+    'plot_code',
+    'plot code',
+    'plot_number',
+    'plot number',
+    'financial_year',
+    'financial year',
+    'maintenance_amount',
+    'base_amount',
+    'arrears',
+    'discount_amount',
+    'final_amount',
+    'due_date',
+    'remarks',
+    'remark',
+    'notes',
+    'note',
+    'other_charge_name',
+    'other charge name',
+    'other_charge_amount',
+    'other charge amount',
+    'penalty',
+    'penalty_amount'
+  ].map((key) => normalizeLooseKey(key))
+)
+
+for (const field of KNOWN_LEDGER_ADDON_FIELDS) {
+  for (const key of field.keys) {
+    LEDGER_CORE_FIELD_KEYS.add(normalizeLooseKey(key))
+  }
+}
+
+const SMALL_LABEL_WORDS = new Set(['and', 'as', 'at', 'by', 'for', 'in', 'of', 'on', 'per', 'the', 'to'])
+const LABEL_ACRONYMS: Record<string, string> = {
+  agm: 'AGM',
+  gst: 'GST',
+  na: 'NA'
+}
+
+const formatLedgerAddOnLabel = (header: unknown): string => {
+  const collapsed = text(header).replace(/_/g, ' ').replace(/\s+/g, ' ').trim()
+  if (!collapsed) return 'Add-on'
+
+  const canonical = LEDGER_CANONICAL_ADDON_LABELS.get(normalizeLooseKey(collapsed))
+  if (canonical) {
+    return canonical
+  }
+
+  return collapsed
+    .toLowerCase()
+    .split(' ')
+    .map((word, index) => {
+      if (!word) return ''
+      if (LABEL_ACRONYMS[word]) return LABEL_ACRONYMS[word]
+      if (index > 0 && SMALL_LABEL_WORDS.has(word)) return word
+      return word.charAt(0).toUpperCase() + word.slice(1)
+    })
+    .join(' ')
+}
 
 const findSheet = (
   workbook: WorkbookSheetRows,
@@ -586,15 +681,27 @@ export const parseStandardWorkbook = (workbook: WorkbookSheetRows): StandardWork
       }
     }
 
-    appendAddOn('NA Tax', cleanNumber(getValue(row, ['na_tax'])))
-    appendAddOn('Road & NA Charges', cleanNumber(getValue(row, ['road_na', 'rd & na'])))
-    appendAddOn('Cable', cleanNumber(getValue(row, ['cable'])))
-    appendAddOn('GST', cleanNumber(getValue(row, ['gst'])))
-    appendAddOn('Pipe Replacement', cleanNumber(getValue(row, ['pipe_replacement'])))
+    for (const field of KNOWN_LEDGER_ADDON_FIELDS) {
+      appendAddOn(field.label, cleanNumber(getValue(row, [...field.keys])))
+    }
 
     const otherChargeAmount = cleanNumber(getValue(row, ['other_charge_amount']))
     if (otherChargeAmount > 0) {
       appendAddOn(text(getValue(row, ['other_charge_name'])) || 'Other Charge', otherChargeAmount)
+    }
+
+    for (const [header, value] of Object.entries(rawRow)) {
+      const normalizedHeaderKey = normalizeLooseKey(header)
+      if (!normalizedHeaderKey || LEDGER_CORE_FIELD_KEYS.has(normalizedHeaderKey)) {
+        continue
+      }
+
+      const amount = cleanNumber(value)
+      if (amount <= 0) {
+        continue
+      }
+
+      appendAddOn(formatLedgerAddOnLabel(header), amount)
     }
 
     const yearRow: StandardWorkbookImportYear = {

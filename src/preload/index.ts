@@ -126,6 +126,8 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('delete-rate', id),
     getSlabs: (rateId: number) => ipcRenderer.invoke('get-slabs', rateId),
     addSlab: (slab: MaintenanceSlab) => ipcRenderer.invoke('add-slab', slab),
+    updateSlab: (id: number, slab: Partial<MaintenanceSlab>) =>
+      ipcRenderer.invoke('update-slab', id, slab),
     deleteSlab: (id: number) => ipcRenderer.invoke('delete-slab', id)
   },
   payments: {

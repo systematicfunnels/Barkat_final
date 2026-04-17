@@ -816,6 +816,25 @@ export function registerIpcHandlers(): void {
     return maintenanceRateService.addSlab(slab)
   })
 
+  ipcMain.handle('update-slab', (_, id: number, slab: Partial<MaintenanceSlab>): boolean => {
+    if (!isPositiveInteger(id)) {
+      throw new Error('Invalid slab selected')
+    }
+    if (slab?.rate_id !== undefined && !isPositiveInteger(slab.rate_id)) {
+      throw new Error('Invalid maintenance rate selected')
+    }
+    if (slab?.due_date !== undefined && !isIsoDate(slab.due_date)) {
+      throw new Error('Invalid due date format (expected YYYY-MM-DD)')
+    }
+    if (
+      slab?.discount_percentage !== undefined &&
+      (!isNonNegativeNumber(slab.discount_percentage) || slab.discount_percentage > 100)
+    ) {
+      throw new Error('Discount percentage must be between 0 and 100')
+    }
+    return maintenanceRateService.updateSlab(id, slab)
+  })
+
   ipcMain.handle('delete-slab', (_, id: number): boolean => {
     return maintenanceRateService.deleteSlab(id)
   })

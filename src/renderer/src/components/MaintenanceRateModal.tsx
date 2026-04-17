@@ -66,8 +66,40 @@ interface SlabFormValues {
   discount_percentage: number
 }
 
+interface FinancialYearDateBounds {
+  start: string
+  end: string
+  startLabel: string
+  endLabel: string
+}
+
 type FormValidationError = {
   errorFields?: unknown[]
+}
+
+const getFinancialYearDateBounds = (
+  financialYear?: string | null
+): FinancialYearDateBounds | null => {
+  const [startYearRaw, endYearRaw] = String(financialYear || '').split('-')
+  const startYear = Number(startYearRaw)
+
+  if (!startYearRaw || !endYearRaw || Number.isNaN(startYear)) {
+    return null
+  }
+
+  const endYear =
+    endYearRaw.length === 2 ? Number(`${startYearRaw.slice(0, 2)}${endYearRaw}`) : Number(endYearRaw)
+
+  if (Number.isNaN(endYear)) {
+    return null
+  }
+
+  return {
+    start: `${startYear}-04-01`,
+    end: `${endYear}-03-31`,
+    startLabel: `01 Apr ${startYear}`,
+    endLabel: `31 Mar ${endYear}`
+  }
 }
 
 const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
@@ -85,6 +117,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const [selectedRate, setSelectedRate] = useState<MaintenanceRate | null>(null)
   const [slabs, setSlabs] = useState<MaintenanceSlab[]>([])
   const [isAddingSlab, setIsAddingSlab] = useState(false)
+  const [editingSlabId, setEditingSlabId] = useState<number | null>(null)
   const [filterFY, setFilterFY] = useState<string | null>(workingFinancialYear ?? null)
   const [filterUnitType, setFilterUnitType] = useState<string>('All')
   const [projectChargesConfig, setProjectChargesConfig] = useState<ProjectChargesConfig>({
@@ -95,14 +128,6 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
   const [rateForm] = Form.useForm<RateFormValues>()
   const [slabForm] = Form.useForm<SlabFormValues>()
   const watchedPenaltyPercentage = Form.useWatch('penalty_percentage', rateForm)
-
-  const todayDateInput = useMemo(() => {
-    const today = new Date()
-    const year = today.getFullYear()
-    const month = String(today.getMonth() + 1).padStart(2, '0')
-    const day = String(today.getDate()).padStart(2, '0')
-    return `${year}-${month}-${day}`
-  }, [])
 
   const isFormValidationError = (error: unknown): error is FormValidationError => {
     return !!error && typeof error === 'object' && 'errorFields' in error
@@ -177,6 +202,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       setIsAddingRate(false)
       setEditingRateId(null)
       setIsAddingSlab(false)
+      setEditingSlabId(null)
       setFilterFY(workingFinancialYear ?? null)
       resetBillingDates()
       rateForm.resetFields()
@@ -235,6 +261,29 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       return fyOk && typeOk
     })
   }, [rates, filterFY, filterUnitType])
+
+  const selectedRateDateBounds = useMemo(
+    () => getFinancialYearDateBounds(selectedRate?.financial_year),
+    [selectedRate?.financial_year]
+  )
+
+  useEffect(() => {
+    if (!selectedRate) return
+
+    const visibleSelectedRate = filteredRates.find((rate) => rate.id === selectedRate.id)
+    if (!visibleSelectedRate) {
+      setSelectedRate(null)
+      setSlabs([])
+      setIsAddingSlab(false)
+      setEditingSlabId(null)
+      slabForm.resetFields()
+      return
+    }
+
+    if (visibleSelectedRate !== selectedRate) {
+      setSelectedRate(visibleSelectedRate)
+    }
+  }, [filteredRates, selectedRate, slabForm])
 
   const rateFilterFields = useMemo(
     () => [
@@ -403,6 +452,9 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
   const handleViewSlabs = async (rate: MaintenanceRate): Promise<void> => {
     setSelectedRate(rate)
+    setIsAddingSlab(false)
+    setEditingSlabId(null)
+    slabForm.resetFields()
     setLoadingSlabs(true)
     try {
       const data = await window.api.rates.getSlabs(rate.id!)
@@ -415,7 +467,18 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
     }
   }
 
-  const handleAddSlab = async (): Promise<void> => {
+  const getSlabDueDateError = useCallback(
+    (dueDate: string): string | null => {
+      if (!selectedRateDateBounds || !selectedRate) return null
+      if (dueDate < selectedRateDateBounds.start || dueDate > selectedRateDateBounds.end) {
+        return `Due date must be within FY ${selectedRate.financial_year} (${selectedRateDateBounds.startLabel} to ${selectedRateDateBounds.endLabel})`
+      }
+      return null
+    },
+    [selectedRate, selectedRateDateBounds]
+  )
+
+  const handleSaveSlab = async (): Promise<void> => {
     if (!selectedRate) {
       message.warning('Select a rate first')
       return
@@ -424,41 +487,62 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
     try {
       const values = await slabForm.validateFields()
 
-      // Validate due date is not in the past
-      const [year, month, day] = values.due_date.split('-').map(Number)
-      const dueDate = new Date(year, month - 1, day)
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-
-      if (dueDate < today) {
-        message.warning('Due date cannot be in the past')
+      const dueDateError = getSlabDueDateError(values.due_date)
+      if (dueDateError) {
+        message.warning(dueDateError)
         return
       }
 
       setLoadingSlabs(true)
-      await window.api.rates.addSlab({
-        ...values,
-        rate_id: selectedRate.id!,
-        is_early_payment: true
-      } as MaintenanceSlab)
+      if (editingSlabId) {
+        await window.api.rates.updateSlab(editingSlabId, {
+          due_date: values.due_date,
+          discount_percentage: values.discount_percentage,
+          is_early_payment: true
+        })
+        message.success('Slab updated')
+      } else {
+        await window.api.rates.addSlab({
+          ...values,
+          rate_id: selectedRate.id!,
+          is_early_payment: true
+        } as MaintenanceSlab)
+        message.success('Slab added')
+      }
 
-      message.success('Slab added')
       setIsAddingSlab(false)
+      setEditingSlabId(null)
       slabForm.resetFields()
-      handleViewSlabs(selectedRate)
+      await handleViewSlabs(selectedRate)
     } catch (error) {
       if (!isFormValidationError(error)) {
-        message.error(getErrorMessage(error, 'Could not add the slab'))
+        message.error(
+          getErrorMessage(error, editingSlabId ? 'Could not update the slab' : 'Could not add the slab')
+        )
       }
     } finally {
       setLoadingSlabs(false)
     }
   }
 
+  const handleEditSlab = (slab: MaintenanceSlab): void => {
+    setEditingSlabId(slab.id ?? null)
+    setIsAddingSlab(true)
+    slabForm.setFieldsValue({
+      due_date: slab.due_date,
+      discount_percentage: slab.discount_percentage
+    })
+  }
+
   const handleDeleteSlab = async (id: number): Promise<void> => {
     try {
       await window.api.rates.deleteSlab(id)
       message.success('Slab deleted')
+      if (editingSlabId === id) {
+        setEditingSlabId(null)
+        setIsAddingSlab(false)
+        slabForm.resetFields()
+      }
       if (selectedRate) handleViewSlabs(selectedRate)
     } catch (error) {
       console.error('Failed to delete slab:', error)
@@ -607,20 +691,30 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
       title: 'Action',
       key: 'action',
       render: (_: unknown, record: MaintenanceSlab): React.ReactNode => (
-        <Popconfirm
-          title="Delete slab?"
-          description="This cannot be undone."
-          onConfirm={() => handleDeleteSlab(record.id!)}
-          okText="Delete"
-          cancelText="Cancel"
-        >
+        <Space>
           <Button
             size="small"
-            danger
-            icon={<DeleteOutlined />}
-            aria-label={`Delete slab with ${record.discount_percentage}% discount due ${record.due_date}`}
-          />
-        </Popconfirm>
+            icon={<EditOutlined />}
+            onClick={() => handleEditSlab(record)}
+            aria-label={`Edit slab with ${record.discount_percentage}% discount due ${record.due_date}`}
+          >
+            Edit
+          </Button>
+          <Popconfirm
+            title="Delete slab?"
+            description="This cannot be undone."
+            onConfirm={() => handleDeleteSlab(record.id!)}
+            okText="Delete"
+            cancelText="Cancel"
+          >
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              aria-label={`Delete slab with ${record.discount_percentage}% discount due ${record.due_date}`}
+            />
+          </Popconfirm>
+        </Space>
       )
     }
   ]
@@ -634,6 +728,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
   const handleCancelSlabForm = (): void => {
     setIsAddingSlab(false)
+    setEditingSlabId(null)
     slabForm.resetFields()
   }
 
@@ -891,6 +986,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
               Discounts for {selectedRate.financial_year} - {selectedRate.unit_type || 'Bungalow'}{' '}
               rate
             </Text>
+            {selectedRateDateBounds && (
+              <Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+                Allowed slab dates: {selectedRateDateBounds.startLabel} to {selectedRateDateBounds.endLabel}
+              </Text>
+            )}
 
             <div
               style={{
@@ -911,7 +1011,11 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                 <Button
                   type="primary"
                   icon={<PlusOutlined />}
-                  onClick={() => setIsAddingSlab(true)}
+                  onClick={() => {
+                    setEditingSlabId(null)
+                    slabForm.resetFields()
+                    setIsAddingSlab(true)
+                  }}
                   disabled={isAddingSlab}
                 >
                   Add Slab
@@ -921,14 +1025,19 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
 
             {isAddingSlab && (
               <Card size="small" style={{ marginBottom: 16, backgroundColor: '#fafafa' }}>
-                <Form form={slabForm} layout="inline" onFinish={handleAddSlab}>
+                <Form form={slabForm} layout="inline" onFinish={handleSaveSlab}>
                   <Form.Item<SlabFormValues>
                     name="due_date"
                     label="Due Date"
                     rules={[{ required: true, message: 'Due date is required' }]}
                     style={{ marginBottom: 8 }}
                   >
-                    <Input type="date" aria-label="Slab due date" min={todayDateInput} />
+                    <Input
+                      type="date"
+                      aria-label="Slab due date"
+                      min={selectedRateDateBounds?.start}
+                      max={selectedRateDateBounds?.end}
+                    />
                   </Form.Item>
                   <Form.Item<SlabFormValues>
                     name="discount_percentage"
@@ -955,7 +1064,7 @@ const MaintenanceRateModal: React.FC<MaintenanceRateModalProps> = ({
                   <Form.Item style={{ marginBottom: 8 }}>
                     <Space>
                       <Button type="primary" htmlType="submit" loading={loadingSlabs}>
-                        Save
+                        {editingSlabId ? 'Update' : 'Save'}
                       </Button>
                       <Button onClick={handleCancelSlabForm}>Cancel</Button>
                     </Space>

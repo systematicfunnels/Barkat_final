@@ -2,6 +2,7 @@ import { dbService } from '../db/database'
 import { unitService } from './UnitService'
 import { paymentService } from './PaymentService'
 import { getCurrentFinancialYear } from '../utils/dateUtils'
+import { recalculateLetterPaymentState } from './LetterBalanceService'
 
 export interface Project {
   id?: number
@@ -1164,18 +1165,7 @@ class ProjectService {
           }
 
           if (letter?.id) {
-            const totalPaid =
-              dbService.get<{ total: number }>(
-                `SELECT COALESCE(SUM(payment_amount), 0) as total FROM payments
-                 WHERE letter_id = ? AND payment_status = 'Received'`,
-                [letter.id]
-              )?.total || 0
-            const isPaid = totalPaid + 0.01 >= letter.final_amount
-            dbService.run('UPDATE maintenance_letters SET status = ?, is_paid = ? WHERE id = ?', [
-              isPaid ? 'Paid' : 'Pending',
-              isPaid ? 1 : 0,
-              letter.id
-            ])
+            recalculateLetterPaymentState(letter.id)
           }
 
           importedPaymentCount += 1

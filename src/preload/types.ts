@@ -79,9 +79,12 @@ export interface MaintenanceLetter {
   unit_number?: string
   owner_name?: string
   project_name?: string
+  sector_code?: string
   unit_type?: string
   is_paid?: boolean
   add_ons_total?: number
+  letterhead_path?: string
+  sector_letterhead_path?: string
 }
 
 export interface BatchLetterResult {
@@ -504,6 +507,7 @@ declare global {
         delete: (id: number) => Promise<boolean>
         getSlabs: (rateId: number) => Promise<MaintenanceSlab[]>
         addSlab: (slab: MaintenanceSlab) => Promise<number>
+        updateSlab: (id: number, slab: Partial<MaintenanceSlab>) => Promise<boolean>
         deleteSlab: (id: number) => Promise<boolean>
       }
       payments: {

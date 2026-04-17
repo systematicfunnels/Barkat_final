@@ -118,6 +118,27 @@ class MaintenanceRateService {
     return result.lastInsertRowid as number
   }
 
+  public updateSlab(id: number, slab: Partial<MaintenanceSlab>): boolean {
+    const allowedColumns = ['rate_id', 'due_date', 'discount_percentage', 'is_early_payment']
+    const keys = Object.keys(slab).filter(
+      (key) => allowedColumns.includes(key) && key !== 'id'
+    )
+
+    if (keys.length === 0) return false
+
+    const fields = keys.map((key) => `${key} = ?`).join(', ')
+    const values = keys.map((key) => {
+      const value = slab[key as keyof MaintenanceSlab]
+      return key === 'is_early_payment' ? (value ? 1 : 0) : value
+    })
+
+    const result = dbService.run(`UPDATE maintenance_slabs SET ${fields} WHERE id = ?`, [
+      ...values,
+      id
+    ])
+    return result.changes > 0
+  }
+
   public deleteSlab(id: number): boolean {
     return dbService.run('DELETE FROM maintenance_slabs WHERE id = ?', [id]).changes > 0
   }

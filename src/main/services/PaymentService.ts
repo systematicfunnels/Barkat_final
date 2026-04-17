@@ -3,11 +3,12 @@ import fs from 'fs'
 import path from 'path'
 import { PDFFont, rgb } from 'pdf-lib'
 import { BasePDFGenerator } from './BasePDFGenerator'
-import { MaintenanceLetter } from './MaintenanceLetterService'
+import type { MaintenanceLetter } from './MaintenanceLetterService'
 import { normalizeMoney } from '../utils/money'
 import { getCurrentFinancialYear } from '../utils/dateUtils'
 import { getUserDataPath } from '../utils/runtimePaths'
 import type { BulkPaymentResult } from './BatchOperationsService'
+import { recalculateLetterPaymentState } from './LetterBalanceService'
 
 export interface Payment {
   id?: number
@@ -430,7 +431,7 @@ class PaymentService extends BasePDFGenerator {
     return `REC-${sequence}`
   }
 
-  private getNextReceiptSequence(_receiptRowId: number): number {
+  private getNextReceiptSequence(): number {
     const maxAssignedSequence =
       dbService.get<{ max_sequence: number }>(
         `
@@ -459,7 +460,7 @@ class PaymentService extends BasePDFGenerator {
       const ensuredReceiptNumber =
         existingReceipt.receipt_number?.trim() ||
         normalizedReceiptNumber ||
-        this.formatReceiptNumber(this.getNextReceiptSequence(existingReceipt.id))
+        this.formatReceiptNumber(this.getNextReceiptSequence())
 
       dbService.run(
         `UPDATE receipts
@@ -513,7 +514,7 @@ class PaymentService extends BasePDFGenerator {
 
     const receiptId = insertResult.lastInsertRowid as number
     const ensuredReceiptNumber =
-      normalizedReceiptNumber || this.formatReceiptNumber(this.getNextReceiptSequence(receiptId))
+      normalizedReceiptNumber || this.formatReceiptNumber(this.getNextReceiptSequence())
 
     if (!normalizedReceiptNumber) {
       dbService.run('UPDATE receipts SET receipt_number = ? WHERE id = ?', [
@@ -763,10 +764,10 @@ class PaymentService extends BasePDFGenerator {
         })
 
         const lineHeight = 14
-        const valueX = this.layout.width - this.MARGIN - maxValueWidth
         lines.forEach((line, index) => {
+          const lineWidth = this.fonts.regular.widthOfTextAtSize(line, 11)
           this.page.drawText(line, {
-            x: valueX,
+            x: this.layout.width - this.MARGIN - lineWidth,
             y: this.layout.currentY - index * lineHeight,
             size: 11,
             font: this.fonts.regular,
@@ -874,7 +875,7 @@ class PaymentService extends BasePDFGenerator {
 
 
   public update(id: number, payment: Partial<Payment>): boolean {
-    return dbService.transaction(() => {
+    const letterIdsToRecalculate = dbService.transaction(() => {
       const existingPayment = dbService.get<Payment>('SELECT * FROM payments WHERE id = ?', [id])
       if (!existingPayment) {
         throw new Error('Payment not found')
@@ -891,6 +892,7 @@ class PaymentService extends BasePDFGenerator {
         letterId: payment.letter_id ?? existingPayment.letter_id,
         financialYear: payment.financial_year ?? existingPayment.financial_year
       })
+      const previousLetterId = existingPayment.letter_id
 
       const updateData = {
         project_id: payment.project_id ?? existingPayment.project_id,
@@ -956,8 +958,17 @@ class PaymentService extends BasePDFGenerator {
         )
       }
 
-      return true
+      const letterIdsToRecalculate = Array.from(
+        new Set([previousLetterId, updateData.letter_id].filter((value): value is number => Boolean(value)))
+      )
+      return letterIdsToRecalculate
     })
+
+    for (const letterId of letterIdsToRecalculate) {
+      recalculateLetterPaymentState(letterId)
+    }
+
+    return true
   }
 
   public getAll(): Payment[] {
@@ -1068,7 +1079,12 @@ class PaymentService extends BasePDFGenerator {
   }
 
   public create(payment: Payment): number {
-    return dbService.transaction(() => this.createInternal(payment))
+    const paymentId = dbService.transaction(() => this.createInternal(payment))
+    const createdPayment = this.getById(paymentId)
+    if (createdPayment?.letter_id) {
+      recalculateLetterPaymentState(createdPayment.letter_id)
+    }
+    return paymentId
   }
 
   public createBulk(payments: Payment[]): BulkPaymentResult {
@@ -1076,7 +1092,7 @@ class PaymentService extends BasePDFGenerator {
     let successful = 0
     let failed = 0
 
-    return dbService.transaction(() => {
+    const bulkResult = dbService.transaction(() => {
       for (let index = 0; index < payments.length; index += 1) {
         try {
           const paymentId = this.createInternal(payments[index])
@@ -1091,30 +1107,68 @@ class PaymentService extends BasePDFGenerator {
 
       return { successful, failed, results }
     })
+
+    const letterIdsToRecalculate = new Set<number>()
+    for (const result of bulkResult.results) {
+      if (!result.paymentId) continue
+      const createdPayment = this.getById(result.paymentId)
+      if (createdPayment?.letter_id) {
+        letterIdsToRecalculate.add(createdPayment.letter_id)
+      }
+    }
+
+    for (const letterId of letterIdsToRecalculate) {
+      recalculateLetterPaymentState(letterId)
+    }
+
+    return bulkResult
   }
 
-  private deleteInternal(id: number): boolean {
+  private deleteInternal(id: number): { deleted: boolean; letterId: number | null } {
     // Internal delete without transaction wrapper for use in bulk operations
+    const existingPayment = dbService.get<{ letter_id?: number }>('SELECT letter_id FROM payments WHERE id = ?', [id])
     const result = dbService.run('DELETE FROM payments WHERE id = ?', [id])
-    return result.changes > 0
+    if (result.changes > 0) {
+      return {
+        deleted: true,
+        letterId: existingPayment?.letter_id ?? null
+      }
+    }
+    return {
+      deleted: false,
+      letterId: null
+    }
   }
 
   public delete(id: number): boolean {
-    return dbService.transaction(() => {
-      return this.deleteInternal(id)
-    })
+    const result = dbService.transaction(() => this.deleteInternal(id))
+    if (result.deleted && result.letterId) {
+      recalculateLetterPaymentState(result.letterId)
+    }
+    return result.deleted
   }
 
   public bulkDelete(ids: number[]): boolean {
     // Use single transaction for atomic operation - roll back all on any failure
-    return dbService.transaction(() => {
+    const deletedLetterIds = dbService.transaction(() => {
+      const letterIds = new Set<number>()
       for (const id of ids) {
-        if (!this.deleteInternal(id)) {
+        const result = this.deleteInternal(id)
+        if (!result.deleted) {
           throw new Error(`Failed to delete payment ${id}`)
         }
+        if (result.letterId) {
+          letterIds.add(result.letterId)
+        }
       }
-      return true
+      return Array.from(letterIds)
     })
+
+    for (const letterId of deletedLetterIds) {
+      recalculateLetterPaymentState(letterId)
+    }
+
+    return true
   }
 }
 

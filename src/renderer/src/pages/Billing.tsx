@@ -22,6 +22,7 @@ import {
   Col
 } from 'antd'
 import {
+  getPreviousFinancialYear,
   getUpcomingFinancialYear,
   isValidFinancialYear
 } from '../utils/financialYear'
@@ -90,6 +91,8 @@ interface BatchLetterConfigSnapshot {
   }>
 }
 
+type LetterheadSource = 'sector' | 'project'
+
 const Billing: React.FC = () => {
   const { workingFY } = useWorkingFinancialYear()
   const [letters, setLetters] = useState<MaintenanceLetter[]>([])
@@ -131,6 +134,7 @@ const Billing: React.FC = () => {
   const [unitSelectionPageSize, setUnitSelectionPageSize] = useState(8)
   const [batchProjectId, setBatchProjectId] = useState<number | null>(null)
   const [batchFinancialYear, setBatchFinancialYear] = useState<string | null>(defaultFY)
+  const previousDefaultFYRef = useRef(defaultFY)
   const lastUnitFilterContextRef = useRef<string | null>(null)
   const [batchConfigSnapshot, setBatchConfigSnapshot] = useState<BatchLetterConfigSnapshot | null>(null)
   const [projectSetupSummary, setProjectSetupSummary] = useState<ProjectSetupSummary | null>(null)
@@ -231,6 +235,92 @@ const Billing: React.FC = () => {
       window.history.replaceState({}, document.title)
     }
   }, [location])
+
+  useEffect(() => {
+    const previousDefaultFY = previousDefaultFYRef.current
+
+    if (selectedYear === previousDefaultFY || selectedYear === null) {
+      setSelectedYear(defaultFY)
+    }
+
+    if (batchFinancialYear === previousDefaultFY || batchFinancialYear === null) {
+      setBatchFinancialYear(defaultFY)
+    }
+
+    previousDefaultFYRef.current = defaultFY
+  }, [batchFinancialYear, defaultFY, selectedYear])
+
+  const warnAboutMissingLetterheads = useCallback(
+    async (letterIds: number[]): Promise<void> => {
+      try {
+        const selectedLetters = letterIds
+          .map((letterId) => letters.find((letter) => letter.id === letterId))
+          .filter((letter): letter is MaintenanceLetter => Boolean(letter))
+
+        const configuredLetterheads = selectedLetters
+          .map((letter) => {
+            const sectorLetterheadPath = String(letter.sector_letterhead_path || '').trim()
+            const projectLetterheadPath = String(letter.letterhead_path || '').trim()
+            const effectiveLetterheadPath = sectorLetterheadPath || projectLetterheadPath
+
+            if (!effectiveLetterheadPath) {
+              return null
+            }
+
+            return {
+              assetPath: effectiveLetterheadPath,
+              source: (sectorLetterheadPath ? 'sector' : 'project') as LetterheadSource
+            }
+          })
+          .filter(
+            (
+              item
+            ): item is {
+              assetPath: string
+              source: LetterheadSource
+            } => Boolean(item)
+          )
+
+        if (configuredLetterheads.length === 0) {
+          return
+        }
+
+        const validationEntries = await Promise.all(
+          Array.from(new Set(configuredLetterheads.map((item) => item.assetPath))).map(
+            async (assetPath) => ({
+              assetPath,
+              validation: await window.api.files.validateAssetFile(assetPath)
+            })
+          )
+        )
+
+        const invalidPaths = new Set(
+          validationEntries
+            .filter(({ validation }) => !validation.exists || !validation.isValidImage)
+            .map(({ assetPath }) => assetPath)
+        )
+
+        if (invalidPaths.size === 0) {
+          return
+        }
+
+        const missingLetterheads = configuredLetterheads.filter((item) => invalidPaths.has(item.assetPath))
+        const missingCount = missingLetterheads.length
+        const usesSectorLetterhead = missingLetterheads.some((item) => item.source === 'sector')
+
+        notification.warning({
+          title: missingCount === 1 ? 'Letterhead file missing' : 'Letterhead files missing',
+          description:
+            missingCount === 1
+              ? `${usesSectorLetterhead ? 'The saved sector letterhead image is missing.' : 'The saved project letterhead image is missing.'} Default header text will be used until you re-upload and save it.`
+              : `${missingCount} selected letters are missing their saved letterhead image. Default header text will be used for those PDFs until the letterhead is re-uploaded and saved.`
+        })
+      } catch (error) {
+        console.warn('Could not validate saved letterhead files before PDF generation:', error)
+      }
+    },
+    [letters]
+  )
 
   useEffect(() => {
     if (!isModalOpen) {
@@ -845,6 +935,7 @@ const Billing: React.FC = () => {
 
   const handleViewPdf = async (id: number): Promise<void> => {
     try {
+      await warnAboutMissingLetterheads([id])
       message.loading({ content: 'Generating letter...', key: 'pdf_gen' })
       const path = await window.api.letters.generatePdf(id)
 
@@ -963,6 +1054,8 @@ const Billing: React.FC = () => {
       message.warning(options?.emptyMessage || 'Select at least one letter to generate PDFs')
       return
     }
+
+    await warnAboutMissingLetterheads(letterIds)
 
     setGeneratingPdf(true)
     setPdfProgress({
@@ -1235,6 +1328,7 @@ const Billing: React.FC = () => {
 
   const uniqueYears = useMemo(() => {
     const yearSet = new Set(letters.map((l) => l.financial_year).filter(Boolean))
+    yearSet.add(getPreviousFinancialYear(defaultFY))
     yearSet.add(defaultFY)
     const nextFY = getUpcomingFinancialYear(defaultFY)
     yearSet.add(nextFY)
@@ -1661,26 +1755,32 @@ const Billing: React.FC = () => {
         </div>
       </div>
 
-      {selectedRowKeys.length > 0 && (
-        <div className="page-selection-bar">
-          <Text className="page-selection-label">
-            {selectedRowKeys.length} letter{selectedRowKeys.length !== 1 ? 's' : ''} selected
-          </Text>
-          <Space wrap>
-            <Button
-              type="primary"
-              icon={<FilePdfOutlined />}
-              onClick={() => void handleBatchPdf()}
-              loading={generatingPdf}
-            >
-              Generate PDFs ({selectedRowKeys.length})
-            </Button>
-            <Button danger icon={<DeleteOutlined />} onClick={handleBulkDelete}>
-              Delete Selected ({selectedRowKeys.length})
-            </Button>
-          </Space>
-        </div>
-      )}
+      <div className="page-selection-bar">
+        <Text className="page-selection-label">
+          {selectedRowKeys.length > 0
+            ? `${selectedRowKeys.length} letter${selectedRowKeys.length !== 1 ? 's' : ''} selected`
+            : 'Select letters to use bulk actions'}
+        </Text>
+        <Space wrap>
+          <Button
+            type="primary"
+            icon={<FilePdfOutlined />}
+            onClick={() => void handleBatchPdf()}
+            loading={generatingPdf}
+            disabled={selectedRowKeys.length === 0}
+          >
+            Generate PDFs ({selectedRowKeys.length})
+          </Button>
+          <Button
+            danger
+            icon={<DeleteOutlined />}
+            onClick={handleBulkDelete}
+            disabled={selectedRowKeys.length === 0 || generatingPdf}
+          >
+            Delete Selected ({selectedRowKeys.length})
+          </Button>
+        </Space>
+      </div>
 
       <Card style={{ marginBottom: 0 }} className="page-toolbar-card page-table-card billing-filter-card">
 

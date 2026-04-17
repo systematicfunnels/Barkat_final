@@ -35,6 +35,7 @@ import { dbService } from '../../main/db/database'
 import { projectService } from '../../main/services/ProjectService'
 import { unitService } from '../../main/services/UnitService'
 import { maintenanceLetterService } from '../../main/services/MaintenanceLetterService'
+import { detailedMaintenanceLetterService } from '../../main/services/DetailedMaintenanceLetterService'
 import { maintenanceRateService } from '../../main/services/MaintenanceRateService'
 import { paymentService } from '../../main/services/PaymentService'
 import { numberToWordsIndian } from '../../main/utils/numberToWords'
@@ -718,7 +719,7 @@ describe('Phase 6 — Calculation Accuracy', () => {
     } as any)
     const afterPartial = maintenanceLetterService.getById(letter.id!)
     expect(afterPartial?.is_paid).toBeFalsy()
-    expect(afterPartial?.status).toBe('Pending')
+    expect(afterPartial?.status).toBe('Generated')
 
     // Full payment (remaining 3000)
     paymentService.create({
@@ -729,6 +730,49 @@ describe('Phase 6 — Calculation Accuracy', () => {
     const afterFull = maintenanceLetterService.getById(letter.id!)
     expect(afterFull?.is_paid).toBeTruthy()
     expect(afterFull?.status).toBe('Paid')
+  })
+
+  test('detailed preview honors stored imported arrears when ledger data is manual', async () => {
+    const unitNumber = `C-006-${Date.now()}`
+    const imported = unitService.importLedger(calcProjectId, [
+      {
+        unit_number: unitNumber,
+        owner_name: 'Imported Arrears Owner',
+        unit_type: 'Plot',
+        area_sqft: 100,
+        status: 'Sold',
+        years: [
+          {
+            financial_year: '2030-31',
+            base_amount: 2500,
+            arrears: 750,
+            final_amount: 3250
+          }
+        ]
+      }
+    ])
+
+    expect(imported).toBe(true)
+
+    const importedUnit = unitService.getByProject(calcProjectId).find((unit) => unit.unit_number === unitNumber)
+    expect(importedUnit?.id).toBeDefined()
+
+    const preview = await detailedMaintenanceLetterService.generateDetailedLetter(
+      calcProjectId,
+      importedUnit!.id!,
+      '2030-31'
+    )
+
+    expect(preview.totals.total_arrears_with_penalty).toBe(750)
+    expect(preview.totals.amount_payable_before_due).toBe(3250)
+    expect(preview.arrears_breakdown).toEqual([
+      {
+        financial_year: 'Brought Forward',
+        amount: 750,
+        penalty: 0,
+        total_with_penalty: 750
+      }
+    ])
   })
 })
 

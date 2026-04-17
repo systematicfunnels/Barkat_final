@@ -292,13 +292,19 @@ p, span, div, h1, h2, h3, h4, h5, h6 {
 }
 
 /* CTA Buttons - Danger */
-.ant-btn-danger {
+.ant-btn-danger,
+.ant-btn-dangerous.ant-btn-primary,
+.ant-btn-color-dangerous.ant-btn-variant-solid {
   background-color: #ff4d4f !important;
   border-color: #ff4d4f !important;
   color: #ffffff !important;
 }
 
-.ant-btn-danger:hover {
+.ant-btn-danger:hover,
+.ant-btn-dangerous.ant-btn-primary:hover,
+.ant-btn-color-dangerous.ant-btn-variant-solid:hover,
+.ant-btn-dangerous.ant-btn-primary:focus,
+.ant-btn-color-dangerous.ant-btn-variant-solid:focus {
   background-color: #ff7875 !important;
   border-color: #ff7875 !important;
   color: #ffffff !important;
@@ -405,6 +411,36 @@ a:visited {
 
 .ant-modal-footer .ant-btn-primary {
   color: #ffffff !important;
+}
+
+.project-delete-confirm-modal .project-delete-confirm-content p {
+  margin: 0 0 12px;
+}
+
+.project-delete-confirm-modal .project-delete-confirm-content p:last-child {
+  margin-bottom: 0;
+}
+
+.project-delete-confirm-modal .project-delete-confirm-list {
+  margin-top: 12px;
+}
+
+.project-delete-confirm-modal .project-delete-confirm-list ul {
+  margin: 8px 0 0 20px;
+  font-size: 12px;
+}
+
+.project-delete-confirm-modal .project-delete-confirm-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  justify-content: flex-start;
+  padding-top: 8px;
+}
+
+.project-delete-confirm-modal .project-delete-confirm-footer .ant-btn {
+  margin-inline-start: 0 !important;
+  min-width: 88px;
 }
 
 /* Table action buttons */

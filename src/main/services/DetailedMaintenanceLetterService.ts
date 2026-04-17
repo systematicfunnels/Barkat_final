@@ -3,6 +3,10 @@ import { projectService } from './ProjectService'
 import { getFYDeadline } from '../utils/dateUtils'
 import { normalizeMoney } from '../utils/money'
 import { maintenanceLetterService } from './MaintenanceLetterService'
+import {
+  calculateArrearsBreakdownForCurrentFinancialYear,
+  type ArrearsBreakdownEntry
+} from './LetterBalanceService'
 
 type CurrentYearCharges = {
   base_amount: number
@@ -61,12 +65,7 @@ export interface DetailedMaintenanceLetter {
   unit_type?: string
 }
 
-export interface ArrearsEntry {
-  financial_year: string
-  amount: number
-  penalty: number
-  total_with_penalty: number
-}
+export type ArrearsEntry = ArrearsBreakdownEntry
 
 export interface ChargeEntry {
   description: string
@@ -149,76 +148,6 @@ class DetailedMaintenanceLetterService {
       )
 
     return rate?.penalty_percentage ?? fallbackPenaltyPercentage
-  }
-
-  private calculateArrearsWithPenalty(
-    projectId: number,
-    unitId: number,
-    currentFY: string
-  ): ArrearsEntry[] {
-    // Get all previous financial years
-    const previousYears = dbService
-      .query<{ financial_year: string }>(
-        `SELECT DISTINCT financial_year FROM maintenance_letters 
-       WHERE project_id = ? AND financial_year < ? 
-       ORDER BY financial_year ASC`,
-        [projectId, currentFY]
-      )
-      .map((row) => row.financial_year)
-
-    const arrears: ArrearsEntry[] = []
-
-    for (const fy of previousYears) {
-      // Get the letter for this financial year
-      const letter = dbService.get<{
-        id: number
-        base_amount: number
-        final_amount: number
-        arrears: number
-      }>(
-        `SELECT id, base_amount, final_amount, arrears 
-         FROM maintenance_letters 
-         WHERE project_id = ? AND unit_id = ? AND financial_year = ?`,
-        [projectId, unitId, fy]
-      )
-
-      if (letter) {
-        // Calculate outstanding amount for this year
-        const payments =
-          dbService.get<{ total: number }>(
-            `SELECT COALESCE(SUM(payment_amount), 0) as total 
-           FROM payments 
-           WHERE unit_id = ? AND financial_year = ?`,
-            [unitId, fy]
-          )?.total || 0
-
-        const outstanding = Math.max(0, letter.final_amount - payments)
-
-        if (outstanding > 0) {
-          const chargesConfig = projectService.getChargesConfig(projectId)
-          const unit = dbService.get<{ unit_type?: string }>(
-            'SELECT unit_type FROM units WHERE id = ?',
-            [unitId]
-          )
-          const penaltyRate =
-            this.getPenaltyPercentageForFinancialYear(
-              projectId,
-              fy,
-              unit?.unit_type,
-              chargesConfig.penalty_percentage
-            ) / 100
-          const penalty = normalizeMoney(outstanding * penaltyRate)
-          arrears.push({
-            financial_year: fy,
-            amount: normalizeMoney(outstanding),
-            penalty: penalty,
-            total_with_penalty: normalizeMoney(outstanding + penalty)
-          })
-        }
-      }
-    }
-
-    return arrears
   }
 
   private getCurrentLetter(
@@ -456,10 +385,9 @@ class DetailedMaintenanceLetterService {
         account_no: string
         ifsc_code: string
         branch: string
-        branch_address: string
         qr_code_path: string
       }>(
-        `SELECT account_name, bank_name, account_no, ifsc_code, branch, branch_address, qr_code_path
+        `SELECT account_name, bank_name, account_no, ifsc_code, branch, qr_code_path
          FROM project_sector_payment_configs 
          WHERE project_id = ? AND UPPER(TRIM(sector_code)) = UPPER(TRIM(?))`,
         [projectId, sectorCode]
@@ -472,7 +400,7 @@ class DetailedMaintenanceLetterService {
           ifsc_code: sectorConfig.ifsc_code || project?.ifsc_code || '',
           bank_name: sectorConfig.bank_name || project?.bank_name || '',
           branch: sectorConfig.branch || project?.branch || '',
-          branch_address: sectorConfig.branch_address || project?.branch_address || '',
+          branch_address: project?.branch_address || '',
           qr_code_path: sectorConfig.qr_code_path || project?.qr_code_path || ''
         }
       }
@@ -496,16 +424,38 @@ class DetailedMaintenanceLetterService {
   ): Promise<LetterCalculation> {
     const currentLetter = this.getCurrentLetter(projectId, unitId, financialYear)
     const unitDetails = this.getUnitDetails(projectId, unitId, financialYear)
-    const arrears_breakdown = this.calculateArrearsWithPenalty(projectId, unitId, financialYear)
+    const chargesConfig = projectService.getChargesConfig(projectId)
+    const computedArrearsBreakdown = calculateArrearsBreakdownForCurrentFinancialYear({
+      projectId,
+      unitId,
+      targetFinancialYear: financialYear,
+      unitType: unitDetails.unit_type,
+      fallbackPenaltyPercentage: chargesConfig.penalty_percentage
+    })
+    const computedArrearsTotal = normalizeMoney(
+      computedArrearsBreakdown.reduce((sum, entry) => sum + entry.total_with_penalty, 0)
+    )
+    const storedArrearsTotal = normalizeMoney(currentLetter.arrears)
+    const arrears_breakdown: ArrearsEntry[] =
+      storedArrearsTotal <= 0
+        ? []
+        : Math.abs(storedArrearsTotal - computedArrearsTotal) <= 0.01
+          ? computedArrearsBreakdown
+          : [
+              {
+                financial_year: 'Brought Forward',
+                amount: storedArrearsTotal,
+                penalty: 0,
+                total_with_penalty: storedArrearsTotal
+              }
+            ]
     const current_year_charges = this.calculateCurrentYearCharges(currentLetter.base_amount)
     const currentLetterAddOns = this.getCurrentLetterAddOns(currentLetter.id)
 
     const charges_breakdown: ChargeEntry[] = [...currentLetterAddOns]
 
     // Calculate totals
-    const total_arrears_with_penalty = normalizeMoney(
-      arrears_breakdown.reduce((sum, entry) => sum + entry.total_with_penalty, 0)
-    )
+    const total_arrears_with_penalty = storedArrearsTotal
     const total_current_charges = normalizeMoney(
       current_year_charges.base_amount +
         charges_breakdown.reduce((sum, entry) => sum + entry.amount, 0)
@@ -514,7 +464,6 @@ class DetailedMaintenanceLetterService {
       total_arrears_with_penalty + total_current_charges
     )
 
-    const chargesConfig = projectService.getChargesConfig(projectId)
     const penaltyLabel: 'Penalty' | 'Late Payment Charges' =
       chargesConfig.penalty_label === 'Late Payment Charges'
         ? 'Late Payment Charges'

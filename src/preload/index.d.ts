@@ -125,6 +125,7 @@ declare global {
         delete: (id: number) => Promise<boolean>
         getSlabs: (rateId: number) => Promise<MaintenanceSlab[]>
         addSlab: (slab: MaintenanceSlab) => Promise<number>
+        updateSlab: (id: number, slab: Partial<MaintenanceSlab>) => Promise<boolean>
         deleteSlab: (id: number) => Promise<boolean>
       }
       payments: {
