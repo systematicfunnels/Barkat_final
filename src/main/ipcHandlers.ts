@@ -65,6 +65,23 @@ const isFinancialYear = (value: unknown): value is string =>
 
 const sanitizeText = (value: unknown): string => (typeof value === 'string' ? value.trim() : '')
 
+const collectPdfFilesRecursively = async (directoryPath: string): Promise<string[]> => {
+  const entries = await fs.promises.readdir(directoryPath, { withFileTypes: true })
+  const nestedResults = await Promise.all(
+    entries.map(async (entry) => {
+      const entryPath = path.join(directoryPath, entry.name)
+
+      if (entry.isDirectory()) {
+        return collectPdfFilesRecursively(entryPath)
+      }
+
+      return entry.isFile() && entry.name.toLowerCase().endsWith('.pdf') ? [entryPath] : []
+    })
+  )
+
+  return nestedResults.flat()
+}
+
 // Enum validation helpers
 const isValidProjectStatus = (value: unknown): value is ProjectStatus =>
   typeof value === 'string' && Object.values(ProjectStatus).includes(value as ProjectStatus)
@@ -889,9 +906,7 @@ export function registerIpcHandlers(): void {
         throw new Error(`No ${folderType} folder found yet.`)
       }
 
-      const files = (await fs.promises.readdir(sourceFolder))
-        .filter((file) => file.toLowerCase().endsWith('.pdf'))
-        .map((file) => path.join(sourceFolder, file))
+      const files = await collectPdfFilesRecursively(sourceFolder)
 
       if (files.length === 0) {
         throw new Error(`No PDF files found in ${folderType}.`)
@@ -901,7 +916,7 @@ export function registerIpcHandlers(): void {
         ? destinationPath
         : `${destinationPath}.zip`
 
-      const sourcePattern = `${escapePowerShellLiteral(path.join(sourceFolder, '*.pdf'))}`
+      const sourcePattern = `${escapePowerShellLiteral(path.join(sourceFolder, '*'))}`
       const destinationLiteral = escapePowerShellLiteral(normalizedDestination)
       const script = `Compress-Archive -Path '${sourcePattern}' -DestinationPath '${destinationLiteral}' -Force`
 

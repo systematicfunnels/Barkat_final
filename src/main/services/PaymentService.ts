@@ -25,6 +25,7 @@ export interface Payment {
   unit_number?: string
   owner_name?: string
   project_name?: string
+  project_code?: string
   receipt_number?: string
   financial_year?: string
   contact_number?: string
@@ -158,6 +159,23 @@ class PaymentService extends BasePDFGenerator {
       .replace(/\s+/g, '_')
       .replace(/-+/g, '-')
       .replace(/^[-_.]+|[-_.]+$/g, '') || 'document'
+  }
+
+  private sanitizeSortableUnitComponent(value: string): string {
+    return this.sanitizeFileComponent(value).replace(/\d+/g, (digits) =>
+      digits.length >= 3 ? digits : digits.padStart(3, '0')
+    )
+  }
+
+  private getProjectFolderName(projectCode?: string, projectName?: string): string {
+    const normalizedCode = this.sanitizeFileComponent(projectCode || '')
+    const normalizedName = this.sanitizeFileComponent(projectName || '')
+
+    if (normalizedCode && normalizedName) {
+      return `${normalizedCode}_${normalizedName}`
+    }
+
+    return normalizedCode || normalizedName || 'Unknown_Project'
   }
 
   private resolveAssetPath(assetPath: string): string | null {
@@ -428,7 +446,7 @@ class PaymentService extends BasePDFGenerator {
   }
 
   private formatReceiptNumber(sequence: number): string {
-    return `REC-${sequence}`
+    return `REC-${String(sequence).padStart(4, '0')}`
   }
 
   private getNextReceiptSequence(): number {
@@ -579,7 +597,7 @@ class PaymentService extends BasePDFGenerator {
           }
       >(
         `SELECT p.*, u.unit_number, u.owner_name, u.contact_number, u.sector_code,
-                pr.name as project_name, pr.address, pr.city, pr.state,
+                pr.name as project_name, pr.project_code, pr.address, pr.city, pr.state,
                 pr.letterhead_path as project_letterhead_path,
                 pr.contact_email, pr.contact_phone,
                 ps.letterhead_path as sector_letterhead_path,
@@ -857,12 +875,17 @@ class PaymentService extends BasePDFGenerator {
       this.drawReceiptFooter(footerText, this.layout.currentY)
 
       const pdfBytes = await this.pdfDoc.save()
-      const pdfDir = path.join(getUserDataPath(), 'receipts')
+      const pdfDir = path.join(
+        getUserDataPath(),
+        'receipts',
+        this.getProjectFolderName(payment.project_code, payment.project_name),
+        this.sanitizeFileComponent(payment.financial_year || 'Unknown-Year')
+      )
       if (!fs.existsSync(pdfDir)) fs.mkdirSync(pdfDir, { recursive: true })
 
       const unitIdentifier = payment.unit_number || String(payment.unit_id || 'NA')
       const receiptIdentifier = payment.receipt_number || `REC-${paymentId}`
-      const fileName = `Receipt_UnitID-${this.sanitizeFileComponent(unitIdentifier)}_${this.sanitizeFileComponent(receiptIdentifier)}.pdf`
+      const fileName = `Receipt_${this.sanitizeSortableUnitComponent(unitIdentifier)}_${this.sanitizeFileComponent(receiptIdentifier)}.pdf`
       const filePath = path.join(pdfDir, fileName)
       await fs.promises.writeFile(filePath, pdfBytes)
       return filePath

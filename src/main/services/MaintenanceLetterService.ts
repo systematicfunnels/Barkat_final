@@ -28,6 +28,7 @@ export interface MaintenanceLetter {
   owner_name?: string
   contact_number?: string
   project_name?: string
+  project_code?: string
   sector_code?: string
   unit_type?: string
   letterhead_path?: string
@@ -154,12 +155,17 @@ class MaintenanceLetterService extends BasePDFGenerator {
     const normalizedPlotNumber = String(plotNumber || '').trim() || '01'
     const normalizedSector = String(sector || '').trim()
     const normalizedUnitType = String(unitType || 'Plot').trim() || 'Plot'
-    const unitDisplay =
+    const unitPrefix =
       normalizedUnitType === 'BMF'
-        ? `BMF-${normalizedPlotNumber}`
+        ? 'BMF-'
         : normalizedUnitType === 'Bungalow'
-          ? `B-${normalizedPlotNumber}`
-          : `${normalizedUnitType.substring(0, 1)}-${normalizedPlotNumber}`
+          ? 'B-'
+          : `${normalizedUnitType.substring(0, 1)}-`
+    const normalizedNumberWithoutPrefix = normalizedPlotNumber.replace(
+      new RegExp(`^${unitPrefix.replace('-', '\\-')}`, 'i'),
+      ''
+    )
+    const unitDisplay = `${unitPrefix}${normalizedNumberWithoutPrefix || '01'}`
 
     return `${normalizedSector ? `${normalizedSector}/` : ''}${unitDisplay}`
   }
@@ -336,20 +342,6 @@ class MaintenanceLetterService extends BasePDFGenerator {
       : this.pdfDoc.embedJpg(imageBytes)
   }
 
-  private getUnitReferenceNumber(letter: MaintenanceLetter): string {
-    const unit = dbService.get<{
-      unit_number?: string
-      sector_code?: string
-      unit_type?: string
-    }>('SELECT unit_number, sector_code, unit_type FROM units WHERE id = ?', [letter.unit_id])
-
-    const plotNumber = letter.unit_number || unit?.unit_number || String(letter.unit_id)
-    const sector = unit?.sector_code?.trim() || letter.sector_code?.trim() || ''
-    const unitType = unit?.unit_type || letter.unit_type || 'Plot'
-
-    return this.formatUnitReference(plotNumber, sector, unitType)
-  }
-
   private sanitizeFileComponent(value: string): string {
     return String(value || '')
       .trim()
@@ -357,6 +349,23 @@ class MaintenanceLetterService extends BasePDFGenerator {
       .replace(/\s+/g, '_')
       .replace(/-+/g, '-')
       .replace(/^[-_.]+|[-_.]+$/g, '') || 'document'
+  }
+
+  private sanitizeSortableUnitComponent(value: string): string {
+    return this.sanitizeFileComponent(value).replace(/\d+/g, (digits) =>
+      digits.length >= 3 ? digits : digits.padStart(3, '0')
+    )
+  }
+
+  private getProjectFolderName(projectCode?: string, projectName?: string): string {
+    const normalizedCode = this.sanitizeFileComponent(projectCode || '')
+    const normalizedName = this.sanitizeFileComponent(projectName || '')
+
+    if (normalizedCode && normalizedName) {
+      return `${normalizedCode}_${normalizedName}`
+    }
+
+    return normalizedCode || normalizedName || 'Unknown_Project'
   }
 
   private getEffectiveLetterheadPath(
@@ -506,7 +515,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
     return dbService.get<MaintenanceLetter>(
       `
       SELECT l.*, u.unit_number, u.owner_name, u.contact_number, u.unit_type, u.sector_code,
-             p.name as project_name,
+             p.name as project_name, p.project_code,
              p.account_name, p.bank_name, p.branch, p.branch_address, p.account_no, p.ifsc_code,
              p.letterhead_path,
              p.qr_code_path as project_qr_code,
@@ -567,7 +576,12 @@ class MaintenanceLetterService extends BasePDFGenerator {
     this.drawElectronicFooter('This is an electronically generated maintenance letter. No signature required.')
 
     const pdfBytes = await this.pdfDoc.save()
-    const pdfDir = path.join(getUserDataPath(), 'maintenance-letters')
+    const pdfDir = path.join(
+      getUserDataPath(),
+      'maintenance-letters',
+      this.getProjectFolderName(letter.project_code, letter.project_name),
+      this.sanitizeFileComponent(letter.financial_year || 'Unknown-Year')
+    )
     
     try {
       if (!fs.existsSync(pdfDir)) {
@@ -577,8 +591,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
       throw new Error('Unable to create PDF output directory')
     }
 
-    const unitReference = this.sanitizeFileComponent(this.getUnitReferenceNumber(letter))
-    const fileName = `MaintenanceLetter_${unitReference}_${this.sanitizeFileComponent(letter.financial_year)}.pdf`
+    const unitIdentifier = letter.unit_number || String(letter.unit_id || 'NA')
+    const fileName = `MaintenanceLetter_${this.sanitizeSortableUnitComponent(unitIdentifier)}_${this.sanitizeFileComponent(letter.financial_year)}.pdf`
     const filePath = path.join(pdfDir, fileName)
     
     try {

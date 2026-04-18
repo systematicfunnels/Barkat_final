@@ -245,4 +245,80 @@ describe('Barkat production smoke integration', () => {
       } as any)
     ).toThrow()
   })
+
+  test('uses scan-friendly PDF names for single-digit unit numbers and padded receipt sequences', async () => {
+    const projectId = projectService.create({
+      name: `Filename Smoke ${Date.now()}`,
+      city: 'Vadodara',
+      status: 'Active',
+      template_type: 'standard',
+      account_name: 'Scan Friendly Fund',
+      bank_name: 'Naming Bank',
+      account_no: '998877665544',
+      ifsc_code: 'NAME0001234',
+      branch: 'File Branch'
+    } as any)
+
+    const unitId = unitService.create({
+      project_id: projectId,
+      unit_number: 'B-1',
+      sector_code: 'B',
+      owner_name: 'Naming Owner',
+      area_sqft: 1000,
+      unit_type: 'Bungalow',
+      status: 'Sold'
+    } as any)
+
+    maintenanceRateService.create({
+      project_id: projectId,
+      financial_year: '2026-27',
+      unit_type: 'Bungalow',
+      rate_per_sqft: 12,
+      billing_frequency: 'YEARLY'
+    } as any)
+
+    expect(
+      maintenanceLetterService.createBatch(
+        projectId,
+        '2026-27',
+        '2026-04-01',
+        '2026-06-30',
+        [unitId],
+        []
+      )
+    ).toBe(true)
+
+    const letter = maintenanceLetterService
+      .getAll()
+      .find((item) => item.project_id === projectId && item.unit_id === unitId && item.financial_year === '2026-27')
+
+    expect(letter).toBeDefined()
+    const projectRecord = projectService.getById(projectId)
+    const projectCode = projectRecord?.project_code
+    const projectFolderName = `${projectCode}_${String(projectRecord?.name || '').replace(/\s+/g, '_')}`
+    expect(projectCode).toBeDefined()
+
+    const letterPdfPath = await maintenanceLetterService.generatePdf(letter!.id!)
+    expect(path.basename(letterPdfPath)).toBe('MaintenanceLetter_B-001_2026-27.pdf')
+    expect(letterPdfPath).toContain(path.join('maintenance-letters', projectFolderName))
+    expect(letterPdfPath).toContain(path.join(projectFolderName, '2026-27'))
+
+    const paymentId = paymentService.create({
+      project_id: projectId,
+      unit_id: unitId,
+      letter_id: letter!.id,
+      payment_date: '2026-04-15',
+      payment_amount: letter!.final_amount,
+      payment_mode: 'UPI',
+      financial_year: '2026-27',
+      payment_status: 'Received'
+    } as any)
+
+    const receiptPdfPath = await paymentService.generateReceiptPdf(paymentId)
+    const receiptBaseName = path.basename(receiptPdfPath)
+
+    expect(receiptBaseName).toMatch(/^Receipt_B-001_REC-\d{4}\.pdf$/)
+    expect(receiptPdfPath).toContain(path.join('receipts', projectFolderName))
+    expect(receiptPdfPath).toContain(path.join(projectFolderName, '2026-27'))
+  })
 })
