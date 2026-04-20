@@ -6,7 +6,11 @@ import path from 'path'
 import { PDFFont, rgb } from 'pdf-lib'
 import { normalizeMoney } from '../utils/money'
 import { getUserDataPath } from '../utils/runtimePaths'
-import { calculateArrearsBreakdownForCurrentFinancialYear } from './LetterBalanceService'
+import {
+  calculateArrearsBreakdownForCurrentFinancialYear,
+  getReceivedPaymentTotalForLetter,
+  recalculateLetterPaymentState
+} from './LetterBalanceService'
 
 export interface MaintenanceLetter {
   id?: number
@@ -15,6 +19,9 @@ export interface MaintenanceLetter {
   financial_year: string
   base_amount: number
   arrears?: number
+  snapshot_rate_per_sqft?: number
+  snapshot_gst_percent?: number
+  snapshot_penalty_percentage?: number
   snapshot_discount_percentage?: number
   discount_amount: number
   final_amount: number
@@ -76,7 +83,71 @@ export interface BatchLetterResult {
   skippedUnitIds: number[]
 }
 
+export interface LetterRecalculationContext {
+  canRecalculate: boolean
+  blockers: string[]
+  warnings: string[]
+  receivedPaymentTotal: number
+  laterFinancialYears: string[]
+  savedRatePerSqft: number
+  currentRatePerSqft: number | null
+  savedDiscountPercentage: number
+  currentDiscountPercentage: number | null
+  savedPenaltyPercentage: number
+  currentPenaltyPercentage: number | null
+}
+
+type UnitChargeContext = {
+  areaSqft: number
+  unitType: string
+  sectorCode?: string
+}
+
+type RateConfiguration = {
+  id: number
+  ratePerSqft: number
+  gstPercent: number
+  penaltyPercentage: number
+}
+
+type DiscountSnapshot = {
+  percentage: number
+  amount: number
+}
+
 class MaintenanceLetterService extends BasePDFGenerator {
+  public ensureLetterSchemaCompatibility(): void {
+    const columns = dbService
+      .getDb()
+      .prepare('PRAGMA table_info(maintenance_letters)')
+      .all() as { name: string }[]
+    const columnNames = new Set(columns.map((column) => column.name))
+    const requiredColumns: Array<{ name: string; sql: string }> = [
+      {
+        name: 'snapshot_rate_per_sqft',
+        sql: 'ALTER TABLE maintenance_letters ADD COLUMN snapshot_rate_per_sqft REAL DEFAULT 0'
+      },
+      {
+        name: 'snapshot_gst_percent',
+        sql: 'ALTER TABLE maintenance_letters ADD COLUMN snapshot_gst_percent REAL DEFAULT 0'
+      },
+      {
+        name: 'snapshot_penalty_percentage',
+        sql: 'ALTER TABLE maintenance_letters ADD COLUMN snapshot_penalty_percentage REAL DEFAULT 0'
+      },
+      {
+        name: 'snapshot_discount_percentage',
+        sql: 'ALTER TABLE maintenance_letters ADD COLUMN snapshot_discount_percentage REAL DEFAULT 0'
+      }
+    ]
+
+    for (const column of requiredColumns) {
+      if (!columnNames.has(column.name)) {
+        dbService.getDb().exec(column.sql)
+      }
+    }
+  }
+
   private formatLongDate(date: string | Date): string {
     const dateObj = typeof date === 'string' ? new Date(date) : date
 
@@ -149,6 +220,423 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     if (currentLine) lines.push(currentLine)
     return lines
+  }
+
+  private isManagedGstAddOn(addonName?: string): boolean {
+    return /^GST \([^)]+%\)$/i.test(String(addonName || '').trim())
+  }
+
+  private formatPercentageLabel(value: number): string {
+    if (!Number.isFinite(value)) return '0'
+    if (Number.isInteger(value)) return String(value)
+    return value.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1')
+  }
+
+  private getUnitChargeContext(unitId: number): UnitChargeContext {
+    const unit = dbService.get<{ area_sqft: number; unit_type: string; sector_code?: string }>(
+      'SELECT area_sqft, unit_type, sector_code FROM units WHERE id = ?',
+      [unitId]
+    )
+
+    if (!unit) {
+      throw new Error(`Unit not found: ${unitId}`)
+    }
+
+    return {
+      areaSqft: Number(unit.area_sqft || 0),
+      unitType: String(unit.unit_type || ''),
+      sectorCode: unit.sector_code
+    }
+  }
+
+  private getRateConfiguration(
+    projectId: number,
+    financialYear: string,
+    unitType: string | undefined,
+    fallbackPenaltyPercentage: number
+  ): RateConfiguration {
+    const rate =
+      dbService.get<{ id: number; rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
+        `SELECT id, rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent, penalty_percentage
+         FROM maintenance_rates
+         WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
+        [projectId, financialYear, unitType]
+      ) ||
+      dbService.get<{ id: number; rate_per_sqft: number; gst_percent: number; penalty_percentage: number | null }>(
+        `SELECT id, rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent, penalty_percentage
+         FROM maintenance_rates
+         WHERE project_id = ? AND financial_year = ? AND (unit_type = 'All' OR unit_type IS NULL)`,
+        [projectId, financialYear]
+      )
+
+    if (!rate) {
+      throw new Error(
+        `No maintenance rate found for project ${projectId}, year ${financialYear}, unit type ${unitType}`
+      )
+    }
+
+    return {
+      id: rate.id,
+      ratePerSqft: normalizeMoney(rate.rate_per_sqft),
+      gstPercent: normalizeMoney(rate.gst_percent || 0),
+      penaltyPercentage: normalizeMoney(rate.penalty_percentage ?? fallbackPenaltyPercentage ?? 0)
+    }
+  }
+
+  private getDiscountSnapshot(rateId: number, baseAmount: number, dueDate?: string): DiscountSnapshot {
+    const earlySlabs = dbService
+      .query<{ due_date: string; discount_percentage: number; is_early_payment: number }>(
+        `SELECT due_date, discount_percentage, is_early_payment
+         FROM maintenance_slabs
+         WHERE rate_id = ?
+         ORDER BY due_date ASC`,
+        [rateId]
+      )
+      .filter((slab) => slab.is_early_payment && slab.discount_percentage > 0)
+
+    if (earlySlabs.length === 0 || baseAmount <= 0) {
+      return {
+        percentage: 0,
+        amount: 0
+      }
+    }
+
+    const selectedSlab =
+      (dueDate ? earlySlabs.find((slab) => slab.due_date === dueDate) : undefined) || earlySlabs[0]
+    const percentage = normalizeMoney(selectedSlab?.discount_percentage || 0)
+
+    return {
+      percentage,
+      amount: normalizeMoney(baseAmount * (percentage / 100))
+    }
+  }
+
+  private getManualAddOnsForLetter(letterId: number): LetterAddOn[] {
+    return this.getAddOns(letterId)
+      .map((addon) => ({
+        ...addon,
+        addon_amount: normalizeMoney(addon.addon_amount)
+      }))
+      .filter((addon) => addon.addon_amount > 0 && !this.isManagedGstAddOn(addon.addon_name))
+  }
+
+  private getAddOnsTotal(letterId: number): number {
+    return normalizeMoney(
+      dbService.get<{ total: number }>(
+        'SELECT COALESCE(SUM(addon_amount), 0) as total FROM add_ons WHERE letter_id = ?',
+        [letterId]
+      )?.total || 0
+    )
+  }
+
+  private calculateStoredFinalAmount(
+    baseAmount: number,
+    arrearsAmount: number,
+    discountAmount: number,
+    addOnsTotal: number
+  ): number {
+    return normalizeMoney(baseAmount + arrearsAmount + addOnsTotal - discountAmount)
+  }
+
+  private syncManagedGstAddOn(letterId: number, gstPercent: number, gstAmount: number): void {
+    const existingAddOns = dbService.query<{ id: number; addon_name: string }>(
+      'SELECT id, addon_name FROM add_ons WHERE letter_id = ?',
+      [letterId]
+    )
+
+    for (const addOn of existingAddOns) {
+      if (this.isManagedGstAddOn(addOn.addon_name)) {
+        dbService.run('DELETE FROM add_ons WHERE id = ?', [addOn.id])
+      }
+    }
+
+    if (gstAmount > 0) {
+      dbService.run(
+        'INSERT INTO add_ons (letter_id, addon_name, addon_amount) VALUES (?, ?, ?)',
+        [letterId, `GST (${this.formatPercentageLabel(gstPercent)}%)`, normalizeMoney(gstAmount)]
+      )
+    }
+  }
+
+  private recalculateStoredLetterTotals(letterId: number, nextStatus?: string): void {
+    const letter = dbService.get<{
+      base_amount: number
+      arrears: number
+      discount_amount: number
+    }>(
+      'SELECT base_amount, arrears, discount_amount FROM maintenance_letters WHERE id = ?',
+      [letterId]
+    )
+
+    if (!letter) return
+
+    const finalAmount = this.calculateStoredFinalAmount(
+      normalizeMoney(letter.base_amount || 0),
+      normalizeMoney(letter.arrears || 0),
+      normalizeMoney(letter.discount_amount || 0),
+      this.getAddOnsTotal(letterId)
+    )
+
+    if (nextStatus) {
+      dbService.run('UPDATE maintenance_letters SET final_amount = ?, status = ? WHERE id = ?', [
+        finalAmount,
+        nextStatus,
+        letterId
+      ])
+    } else {
+      dbService.run('UPDATE maintenance_letters SET final_amount = ? WHERE id = ?', [
+        finalAmount,
+        letterId
+      ])
+    }
+
+    recalculateLetterPaymentState(letterId)
+  }
+
+  private calculateLetterSnapshot(params: {
+    projectId: number
+    unitId: number
+    financialYear: string
+    dueDate?: string
+    manualAddOns?: Array<Pick<LetterAddOn, 'addon_name' | 'addon_amount' | 'remarks'>>
+  }): {
+    unit: UnitChargeContext
+    rateConfig: RateConfiguration
+    normalizedManualAddOns: Array<Pick<LetterAddOn, 'addon_name' | 'addon_amount' | 'remarks'>>
+    baseAmount: number
+    gstAmount: number
+    totalArrears: number
+    discountAmount: number
+    snapshotDiscountPercentage: number
+    finalAmount: number
+    bankSnapshot: ReturnType<MaintenanceLetterService['getCurrentBankSnapshot']>
+  } {
+    const unit = this.getUnitChargeContext(params.unitId)
+    if (!String(unit.sectorCode || '').trim()) {
+      throw new Error(
+        `Unit ${params.unitId} is missing a sector code. Assign sector codes before generating maintenance letters.`
+      )
+    }
+    const chargesConfig = projectService.getChargesConfig(params.projectId)
+    const rateConfig = this.getRateConfiguration(
+      params.projectId,
+      params.financialYear,
+      unit.unitType,
+      chargesConfig.penalty_percentage || 0
+    )
+
+    const baseAmount = normalizeMoney(unit.areaSqft * rateConfig.ratePerSqft)
+    const gstAmount =
+      rateConfig.gstPercent > 0 ? normalizeMoney((baseAmount * rateConfig.gstPercent) / 100) : 0
+    const normalizedManualAddOns =
+      params.manualAddOns
+        ?.map((addon) => ({
+          addon_name: String(addon.addon_name || '').trim(),
+          addon_amount: normalizeMoney(addon.addon_amount),
+          remarks: addon.remarks
+        }))
+        .filter(
+          (addon) =>
+            addon.addon_name && addon.addon_amount > 0 && !this.isManagedGstAddOn(addon.addon_name)
+        ) || []
+    const manualAddOnsTotal = normalizedManualAddOns.reduce(
+      (sum, addon) => sum + addon.addon_amount,
+      0
+    )
+    const totalArrears = normalizeMoney(
+      calculateArrearsBreakdownForCurrentFinancialYear({
+        projectId: params.projectId,
+        unitId: params.unitId,
+        targetFinancialYear: params.financialYear,
+        unitType: unit.unitType,
+        fallbackPenaltyPercentage: chargesConfig.penalty_percentage || 0
+      }).reduce((sum, entry) => sum + entry.total_with_penalty, 0)
+    )
+    const discountSnapshot = this.getDiscountSnapshot(rateConfig.id, baseAmount, params.dueDate)
+    const finalAmount = normalizeMoney(
+      baseAmount + gstAmount + manualAddOnsTotal + totalArrears - discountSnapshot.amount
+    )
+
+    return {
+      unit,
+      rateConfig,
+      normalizedManualAddOns,
+      baseAmount,
+      gstAmount,
+      totalArrears,
+      discountAmount: discountSnapshot.amount,
+      snapshotDiscountPercentage: discountSnapshot.percentage,
+      finalAmount,
+      bankSnapshot: this.getCurrentBankSnapshot(params.projectId, unit.sectorCode)
+    }
+  }
+
+  public getRecalculationContext(id: number): LetterRecalculationContext {
+    this.ensureLetterSchemaCompatibility()
+    const letter = this.getById(id)
+    if (!letter) {
+      throw new Error('Maintenance letter not found')
+    }
+
+    const blockers: string[] = []
+    const warnings: string[] = []
+    const receivedPaymentTotal = normalizeMoney(getReceivedPaymentTotalForLetter(id))
+    const laterFinancialYears = dbService
+      .query<{ financial_year: string }>(
+        `SELECT financial_year
+         FROM maintenance_letters
+         WHERE unit_id = ? AND financial_year > ?
+         ORDER BY financial_year ASC`,
+        [letter.unit_id, letter.financial_year]
+      )
+      .map((row) => row.financial_year)
+
+    if (receivedPaymentTotal > 0) {
+      blockers.push(
+        `This letter already has received payments of Rs. ${Math.round(receivedPaymentTotal).toLocaleString('en-IN')}. Recalculation is blocked to protect billing history.`
+      )
+    }
+
+    if (laterFinancialYears.length > 0) {
+      blockers.push(
+        `Later financial year letters already exist for this unit (${laterFinancialYears.join(', ')}). Recalculate them in sequence or delete the later letters first.`
+      )
+    }
+
+    const unit = this.getUnitChargeContext(letter.unit_id)
+    const savedRatePerSqft =
+      Number(letter.snapshot_rate_per_sqft || 0) > 0
+        ? normalizeMoney(letter.snapshot_rate_per_sqft || 0)
+        : unit.areaSqft > 0
+          ? normalizeMoney((letter.base_amount || 0) / unit.areaSqft)
+          : 0
+    const savedDiscountPercentage =
+      Number(letter.snapshot_discount_percentage || 0) > 0
+        ? normalizeMoney(letter.snapshot_discount_percentage || 0)
+        : letter.base_amount > 0 && letter.discount_amount > 0
+          ? normalizeMoney((letter.discount_amount / letter.base_amount) * 100)
+          : 0
+    const savedPenaltyPercentage = normalizeMoney(letter.snapshot_penalty_percentage || 0)
+
+    let currentRatePerSqft: number | null = null
+    let currentDiscountPercentage: number | null = null
+    let currentPenaltyPercentage: number | null = null
+
+    try {
+      const chargesConfig = projectService.getChargesConfig(letter.project_id)
+      const rateConfig = this.getRateConfiguration(
+        letter.project_id,
+        letter.financial_year,
+        letter.unit_type,
+        chargesConfig.penalty_percentage || 0
+      )
+      const baseAmount = normalizeMoney(unit.areaSqft * rateConfig.ratePerSqft)
+      const discountSnapshot = this.getDiscountSnapshot(rateConfig.id, baseAmount, letter.due_date)
+
+      currentRatePerSqft = rateConfig.ratePerSqft
+      currentDiscountPercentage = discountSnapshot.percentage
+      currentPenaltyPercentage = rateConfig.penaltyPercentage
+    } catch (error) {
+      blockers.push(error instanceof Error ? error.message : String(error))
+    }
+
+    if (currentRatePerSqft !== null && Math.abs(savedRatePerSqft - currentRatePerSqft) > 0.01) {
+      warnings.push(
+        `This letter was generated using saved rate Rs. ${this.formatPercentageLabel(savedRatePerSqft)} per sqft. Current configured rate is Rs. ${this.formatPercentageLabel(currentRatePerSqft)} per sqft.`
+      )
+    }
+
+    if (
+      currentDiscountPercentage !== null &&
+      Math.abs(savedDiscountPercentage - currentDiscountPercentage) > 0.01
+    ) {
+      warnings.push(
+        `Saved discount is ${this.formatPercentageLabel(savedDiscountPercentage)}%, while current slab configuration would apply ${this.formatPercentageLabel(currentDiscountPercentage)}%.`
+      )
+    }
+
+    if (
+      currentPenaltyPercentage !== null &&
+      Math.abs(savedPenaltyPercentage - currentPenaltyPercentage) > 0.01
+    ) {
+      warnings.push(
+        `Saved late charge setting is ${this.formatPercentageLabel(savedPenaltyPercentage)}%, while current configuration is ${this.formatPercentageLabel(currentPenaltyPercentage)}%.`
+      )
+    }
+
+    return {
+      canRecalculate: blockers.length === 0,
+      blockers,
+      warnings,
+      receivedPaymentTotal,
+      laterFinancialYears,
+      savedRatePerSqft,
+      currentRatePerSqft,
+      savedDiscountPercentage,
+      currentDiscountPercentage,
+      savedPenaltyPercentage,
+      currentPenaltyPercentage
+    }
+  }
+
+  public recalculateFromCurrentRate(id: number): MaintenanceLetter {
+    return dbService.transaction(() => {
+      this.ensureLetterSchemaCompatibility()
+      const letter = this.getById(id)
+      if (!letter) {
+        throw new Error('Maintenance letter not found')
+      }
+
+      const context = this.getRecalculationContext(id)
+      if (!context.canRecalculate) {
+        throw new Error(context.blockers.join(' '))
+      }
+
+      const manualAddOns = this.getManualAddOnsForLetter(id)
+      const snapshot = this.calculateLetterSnapshot({
+        projectId: letter.project_id,
+        unitId: letter.unit_id,
+        financialYear: letter.financial_year,
+        dueDate: letter.due_date,
+        manualAddOns
+      })
+
+      dbService.run(
+        `UPDATE maintenance_letters
+         SET base_amount = ?,
+             arrears = ?,
+             snapshot_rate_per_sqft = ?,
+             snapshot_gst_percent = ?,
+             snapshot_penalty_percentage = ?,
+             snapshot_discount_percentage = ?,
+             discount_amount = ?,
+             final_amount = ?,
+             status = ?
+         WHERE id = ?`,
+        [
+          snapshot.baseAmount,
+          snapshot.totalArrears,
+          snapshot.rateConfig.ratePerSqft,
+          snapshot.rateConfig.gstPercent,
+          snapshot.rateConfig.penaltyPercentage,
+          snapshot.snapshotDiscountPercentage,
+          snapshot.discountAmount,
+          snapshot.finalAmount,
+          'Modified',
+          id
+        ]
+      )
+
+      this.syncManagedGstAddOn(id, snapshot.rateConfig.gstPercent, snapshot.gstAmount)
+      this.recalculateStoredLetterTotals(id, 'Modified')
+
+      const updatedLetter = this.getById(id)
+      if (!updatedLetter) {
+        throw new Error('Could not load recalculated letter')
+      }
+
+      return updatedLetter
+    })
   }
 
   private formatUnitReference(plotNumber: string, sector?: string, unitType?: string): string {
@@ -622,8 +1110,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
     remarks?: string
   }): boolean {
     return dbService.transaction(() => {
-      const letter = dbService.get<{ id: number; final_amount: number }>(
-        'SELECT id, final_amount FROM maintenance_letters WHERE unit_id = ? AND financial_year = ?',
+      const letter = dbService.get<{ id: number }>(
+        'SELECT id FROM maintenance_letters WHERE unit_id = ? AND financial_year = ?',
         [params.unit_id, params.financial_year]
       )
       if (!letter) return false
@@ -632,10 +1120,8 @@ class MaintenanceLetterService extends BasePDFGenerator {
         'INSERT INTO add_ons (letter_id, addon_name, addon_amount, remarks) VALUES (?, ?, ?, ?)',
         [letter.id, params.addon_name, normalizeMoney(params.addon_amount), params.remarks]
       )
-      
-      const newFinalAmount = normalizeMoney(letter.final_amount + normalizeMoney(params.addon_amount))
-      dbService.run('UPDATE maintenance_letters SET final_amount = ? WHERE id = ?', [newFinalAmount, letter.id])
-      
+
+      this.recalculateStoredLetterTotals(letter.id)
       return true
     })
   }
@@ -651,14 +1137,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
       const result = dbService.run('DELETE FROM add_ons WHERE id = ?', [id])
       
       if (result.changes > 0) {
-        const letter = dbService.get<{ final_amount: number }>(
-          'SELECT final_amount FROM maintenance_letters WHERE id = ?',
-          [addon.letter_id]
-        )
-        if (letter) {
-          const newFinalAmount = normalizeMoney(letter.final_amount - addon.addon_amount)
-          dbService.run('UPDATE maintenance_letters SET final_amount = ? WHERE id = ?', [newFinalAmount, addon.letter_id])
-        }
+        this.recalculateStoredLetterTotals(addon.letter_id)
         return true
       }
       return false
@@ -686,9 +1165,9 @@ class MaintenanceLetterService extends BasePDFGenerator {
     addOns: Array<{ addon_name: string; addon_amount: number; remarks?: string }>
   ): BatchLetterResult {
     return dbService.transaction(() => {
+      this.ensureLetterSchemaCompatibility()
       try {
         const createdLetters: number[] = []
-        const chargesConfig = projectService.getChargesConfig(projectId)
         const skippedUnits: number[] = []
         const targetUnitIds =
           unitIds && unitIds.length > 0
@@ -715,94 +1194,14 @@ class MaintenanceLetterService extends BasePDFGenerator {
             continue
           }
 
-          // Get unit details for calculation
-          const unit = dbService.get<{ area_sqft: number; unit_type: string; sector_code?: string }>(
-            'SELECT area_sqft, unit_type, sector_code FROM units WHERE id = ?',
-            [unitId]
-          )
-
-          if (!unit) {
-            throw new Error(`Unit not found: ${unitId}`)
-          }
-
-          if (!String(unit.sector_code || '').trim()) {
-            throw new Error(
-              `Unit ${unitId} is missing a sector code. Assign sector codes before generating maintenance letters.`
-            )
-          }
-
-          // Get maintenance rate - prefer unit_type-specific rate, fallback to 'All'
-          const rate =
-            dbService.get<{ id: number; rate_per_sqft: number; gst_percent: number }>(
-              `SELECT id, rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent
-               FROM maintenance_rates
-               WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
-              [projectId, financialYear, unit.unit_type]
-            ) ||
-            dbService.get<{ id: number; rate_per_sqft: number; gst_percent: number }>(
-              `SELECT id, rate_per_sqft, COALESCE(gst_percent, 0) as gst_percent
-               FROM maintenance_rates
-               WHERE project_id = ? AND financial_year = ? AND (unit_type = 'All' OR unit_type IS NULL)`,
-              [projectId, financialYear]
-            )
-
-          if (!rate) {
-            throw new Error(
-              `No maintenance rate found for project ${projectId}, year ${financialYear}, unit type ${unit.unit_type}`
-            )
-          }
-
-          // 1. Current Year Maintenance (Base)
-          const baseAmount = normalizeMoney(unit.area_sqft * rate.rate_per_sqft)
-
-          // 2. GST on base maintenance (from rate config)
-          const gstPercent = rate.gst_percent || 0
-          const gstAmount = gstPercent > 0 ? normalizeMoney((baseAmount * gstPercent) / 100) : 0
-
-          // 3. Manual Add-ons from the UI (unit-specific)
-          const normalizedAddOns =
-            addOns?.map((addon) => ({
-              ...addon,
-              addon_amount: normalizeMoney(addon.addon_amount)
-            })) || []
-          const addOnsTotal = normalizedAddOns.reduce((sum, addon) => sum + addon.addon_amount, 0)
-
-          // 4. Arrears - sum of genuinely unpaid prior-year letters using the same rule as previews
-          const totalArrears = normalizeMoney(
-            calculateArrearsBreakdownForCurrentFinancialYear({
-              projectId,
-              unitId,
-              targetFinancialYear: financialYear,
-              unitType: unit.unit_type,
-              fallbackPenaltyPercentage: chargesConfig.penalty_percentage || 0
-            }).reduce((sum, entry) => sum + entry.total_with_penalty, 0)
-          )
-
-          // 5. Determine early-payment discount from slabs (if any)
-          let discountAmount = 0
-          let snapshotDiscountPercentage = 0
-          const slabs = dbService.query<{
-            due_date: string
-            discount_percentage: number
-            is_early_payment: number
-          }>(
-            `SELECT due_date, discount_percentage, is_early_payment
-             FROM maintenance_slabs WHERE rate_id = ? ORDER BY due_date ASC`,
-            [rate.id]
-          )
-          const earlySlabs = slabs.filter((s) => s.is_early_payment && s.discount_percentage > 0)
-          if (earlySlabs.length > 0) {
-            const bestSlab = earlySlabs[0]
-            snapshotDiscountPercentage = bestSlab.discount_percentage
-            discountAmount = normalizeMoney(baseAmount * (bestSlab.discount_percentage / 100))
-          }
-
-          // Final amount = sum of all charges minus discount
-          const finalAmount = normalizeMoney(
-            baseAmount + gstAmount + addOnsTotal + totalArrears - discountAmount
-          )
-
-          const bankSnapshot = this.getCurrentBankSnapshot(projectId, unit.sector_code)
+          const snapshot = this.calculateLetterSnapshot({
+            projectId,
+            unitId,
+            financialYear,
+            dueDate,
+            manualAddOns: addOns
+          })
+          const bankSnapshot = snapshot.bankSnapshot
           const missingSectorBankFields = [
             !bankSnapshot.accountName ? 'account name' : null,
             !bankSnapshot.bankName ? 'bank name' : null,
@@ -812,27 +1211,31 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
           if (missingSectorBankFields.length > 0) {
             throw new Error(
-              `Missing bank details for sector ${unit.sector_code}. Complete ${missingSectorBankFields.join(', ')} in Project Settings, or provide project default bank details, before generating maintenance letters.`
+              `Missing bank details for sector ${snapshot.unit.sectorCode}. Complete ${missingSectorBankFields.join(', ')} in Project Settings, or provide project default bank details, before generating maintenance letters.`
             )
           }
 
           const result = dbService.run(
             `INSERT INTO maintenance_letters (
               project_id, unit_id, financial_year, base_amount,
-              arrears, snapshot_discount_percentage, discount_amount, final_amount, due_date,
+              arrears, snapshot_rate_per_sqft, snapshot_gst_percent, snapshot_penalty_percentage,
+              snapshot_discount_percentage, discount_amount, final_amount, due_date,
               snapshot_account_name, snapshot_bank_name, snapshot_account_no, snapshot_ifsc_code,
               snapshot_branch, snapshot_branch_address, snapshot_qr_code_path, snapshot_uses_sector_config,
               status, generated_date, is_paid, is_sent
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
               projectId,
               unitId,
               financialYear,
-              baseAmount,
-              totalArrears,
-              snapshotDiscountPercentage,
-              discountAmount,
-              finalAmount,
+              snapshot.baseAmount,
+              snapshot.totalArrears,
+              snapshot.rateConfig.ratePerSqft,
+              snapshot.rateConfig.gstPercent,
+              snapshot.rateConfig.penaltyPercentage,
+              snapshot.snapshotDiscountPercentage,
+              snapshot.discountAmount,
+              snapshot.finalAmount,
               dueDate,
               bankSnapshot.accountName,
               bankSnapshot.bankName,
@@ -852,17 +1255,11 @@ class MaintenanceLetterService extends BasePDFGenerator {
           const letterId = result.lastInsertRowid as number
           createdLetters.push(letterId)
 
-          // Store GST as add-on row if applicable
-          if (gstAmount > 0) {
-            dbService.run(
-              `INSERT INTO add_ons (letter_id, addon_name, addon_amount) VALUES (?, ?, ?)`,
-              [letterId, `GST (${gstPercent}%)`, normalizeMoney(gstAmount)]
-            )
-          }
+          this.syncManagedGstAddOn(letterId, snapshot.rateConfig.gstPercent, snapshot.gstAmount)
 
           // Manual add-ons from billing form
-          if (normalizedAddOns.length > 0) {
-            for (const addon of normalizedAddOns) {
+          if (snapshot.normalizedManualAddOns.length > 0) {
+            for (const addon of snapshot.normalizedManualAddOns) {
               dbService.run(
                 `INSERT INTO add_ons (letter_id, addon_name, addon_amount, remarks) VALUES (?, ?, ?, ?)`,
                 [letterId, addon.addon_name, addon.addon_amount, addon.remarks || null]
@@ -903,6 +1300,18 @@ class MaintenanceLetterService extends BasePDFGenerator {
       `UPDATE maintenance_letters SET ${fields.join(', ')} WHERE id = ?`,
       values
     )
+    if (result.changes > 0) {
+      const touchesTotals = ['base_amount', 'arrears', 'discount_amount', 'final_amount'].some(
+        (field) => field in updates
+      )
+
+      if (touchesTotals) {
+        this.recalculateStoredLetterTotals(id)
+      } else if ('status' in updates) {
+        recalculateLetterPaymentState(id)
+      }
+    }
+
     return result.changes > 0
   }
 
@@ -1326,7 +1735,12 @@ class MaintenanceLetterService extends BasePDFGenerator {
       }))
       .filter((addon) => addon.addon_amount > 0)
 
-    const ratePerSqft = plotArea > 0 ? baseAmount / plotArea : 0
+    const ratePerSqft =
+      Number(letter.snapshot_rate_per_sqft || 0) > 0
+        ? normalizeMoney(letter.snapshot_rate_per_sqft || 0)
+        : plotArea > 0
+          ? normalizeMoney(baseAmount / plotArea)
+          : 0
     const roundedRatePerSqft = Number.isFinite(ratePerSqft)
       ? Math.round(ratePerSqft * 100) / 100
       : 0
@@ -1580,7 +1994,7 @@ class MaintenanceLetterService extends BasePDFGenerator {
 
     totalsRows.push({
       label: paymentDeadlineLabel
-        ? 'Payment (Before)'
+        ? 'Payable Before Due Date'
         : fullEndYear
           ? `Total (Before 31 March ${fullEndYear})`
           : 'TOTAL',
@@ -1591,9 +2005,9 @@ class MaintenanceLetterService extends BasePDFGenerator {
     totalsRows.push({
       label:
         paymentDeadlineLabel && financialYearEndLabel
-          ? 'Total Payment (After)'
+          ? 'Payable After Due Date'
           : paymentDeadlineLabel
-            ? 'Total Payment'
+            ? 'Payable Amount'
             : fullEndYear
               ? 'Payment'
               : 'Payment After Due',

@@ -58,6 +58,7 @@ interface BulkPaymentEntry {
   has_matching_letter: boolean
   matched_letter_id?: number
   matched_letter_amount?: number
+  matched_balance_due?: number
   amount_source: 'empty' | 'letter' | 'manual'
 }
 
@@ -104,6 +105,31 @@ const Payments: React.FC = () => {
   const formUnitId = Form.useWatch('unit_id', form)
   const formLetterId = Form.useWatch('letter_id', form)
   const formFinancialYear = Form.useWatch('financial_year', form)
+  const receivedPaymentsByLetterId = useMemo(() => {
+    const totals = new Map<number, number>()
+
+    payments.forEach((payment) => {
+      if (!payment.letter_id || payment.payment_status === 'Pending') {
+        return
+      }
+
+      const currentTotal = totals.get(payment.letter_id) || 0
+      totals.set(payment.letter_id, currentTotal + (payment.payment_amount || 0))
+    })
+
+    return totals
+  }, [payments])
+  const getLetterBalanceDue = useCallback(
+    (letter?: MaintenanceLetter | null): number => {
+      if (!letter) {
+        return 0
+      }
+
+      const receivedAmount = letter.id ? receivedPaymentsByLetterId.get(letter.id) || 0 : 0
+      return Math.max(0, (letter.final_amount || 0) - receivedAmount)
+    },
+    [receivedPaymentsByLetterId]
+  )
   const isGeneratedLetter = useCallback(
     (letter: MaintenanceLetter): boolean =>
       Boolean(letter.generated_date && dayjs(letter.generated_date).isValid()),
@@ -118,6 +144,9 @@ const Payments: React.FC = () => {
         if (formFinancialYear && letter.financial_year !== formFinancialYear) {
           return false
         }
+        if (getLetterBalanceDue(letter) <= 0 && letter.id !== formLetterId) {
+          return false
+        }
         if (!isGeneratedLetter(letter) && letter.id !== formLetterId) {
           return false
         }
@@ -126,7 +155,7 @@ const Payments: React.FC = () => {
         }
         return true
       }),
-    [formFinancialYear, formLetterId, formProjectId, formUnitId, isGeneratedLetter, letters]
+    [formFinancialYear, formLetterId, formProjectId, formUnitId, getLetterBalanceDue, isGeneratedLetter, letters]
   )
   const availableUnitIdsForForm = useMemo(
     () =>
@@ -189,7 +218,7 @@ const Payments: React.FC = () => {
   }, [formFinancialYear, formUnitId, isGeneratedLetter, letters])
 
   const autoFillPaymentLetter = useMemo(() => {
-    const unpaidLetters = yearMatchedLetters.filter((letter) => letter.status !== 'Paid')
+    const unpaidLetters = yearMatchedLetters.filter((letter) => getLetterBalanceDue(letter) > 0)
     if (unpaidLetters.length > 0) {
       return unpaidLetters[0]
     }
@@ -197,7 +226,7 @@ const Payments: React.FC = () => {
       return yearMatchedLetters[0]
     }
     return null
-  }, [yearMatchedLetters])
+  }, [getLetterBalanceDue, yearMatchedLetters])
 
   const suggestedPaymentLetter = useMemo(() => {
     if (formLetterId) {
@@ -209,12 +238,12 @@ const Payments: React.FC = () => {
     }
 
     const unpaidLetter =
-      yearMatchedLetters.find((letter) => letter.status !== 'Paid') || yearMatchedLetters[0]
+      yearMatchedLetters.find((letter) => getLetterBalanceDue(letter) > 0) || yearMatchedLetters[0]
 
     return unpaidLetter || null
-  }, [autoFillPaymentLetter, formLetterId, letters, yearMatchedLetters])
+  }, [autoFillPaymentLetter, formLetterId, getLetterBalanceDue, letters, yearMatchedLetters])
 
-  const suggestedPaymentAmount = suggestedPaymentLetter?.final_amount ?? null
+  const suggestedPaymentAmount = suggestedPaymentLetter ? getLetterBalanceDue(suggestedPaymentLetter) : null
 
   const getBulkMatchingLetter = useCallback(
     (unitId: number, financialYear?: string | null) => {
@@ -224,12 +253,12 @@ const Payments: React.FC = () => {
           (letter) =>
             letter.unit_id === unitId &&
             isGeneratedLetter(letter) &&
-            letter.status !== 'Paid' &&
             (!normalizedFY || letter.financial_year === normalizedFY)
         )
+        .filter((letter) => getLetterBalanceDue(letter) > 0)
         .sort((a, b) => Number(b.id || 0) - Number(a.id || 0))[0]
     },
-    [isGeneratedLetter, letters]
+    [getLetterBalanceDue, isGeneratedLetter, letters]
   )
 
   const createBulkPaymentEntry = useCallback(
@@ -243,21 +272,23 @@ const Payments: React.FC = () => {
     ): BulkPaymentEntry => {
       const matchedLetter = getBulkMatchingLetter(unit.id as number, options.financialYear)
       const matchedAmount = matchedLetter?.final_amount ?? 0
+      const matchedBalanceDue = matchedLetter ? getLetterBalanceDue(matchedLetter) : 0
       return {
         unit_id: unit.id as number,
         project_id: unit.project_id,
         unit_number: unit.unit_number,
         owner_name: unit.owner_name,
-        payment_amount: matchedAmount,
+        payment_amount: matchedBalanceDue,
         payment_mode: options.paymentMode,
         payment_date: options.paymentDate,
-        has_matching_letter: Boolean(matchedLetter),
+        has_matching_letter: Boolean(matchedLetter && matchedBalanceDue > 0),
         matched_letter_id: matchedLetter?.id,
         matched_letter_amount: matchedAmount || undefined,
+        matched_balance_due: matchedBalanceDue || undefined,
         amount_source: matchedLetter ? 'letter' : 'empty'
       }
     },
-    [getBulkMatchingLetter]
+    [getBulkMatchingLetter, getLetterBalanceDue]
   )
 
   const buildBulkPaymentEntries = useCallback(
@@ -301,7 +332,7 @@ const Payments: React.FC = () => {
     }
 
     const currentAmount = form.getFieldValue('payment_amount')
-    const nextAmount = sourceLetter.final_amount
+    const nextAmount = getLetterBalanceDue(sourceLetter)
     const nextKey = formLetterId
       ? `letter:${sourceLetter.id ?? 'none'}`
       : `${formUnitId ?? 'none'}:${formFinancialYear ?? 'none'}:${sourceLetter.id ?? 'none'}`
@@ -328,6 +359,7 @@ const Payments: React.FC = () => {
     isModalOpen,
     lastAutoFillKey,
     lastAutoFilledAmount,
+    getLetterBalanceDue,
     letters
   ])
 
@@ -789,10 +821,11 @@ const Payments: React.FC = () => {
       
       // Create new payment logic
       const selectedLetter = letters.find((l) => l.id === values.letter_id)
-      if (selectedLetter && values.payment_amount > selectedLetter.final_amount) {
+      const selectedLetterBalance = getLetterBalanceDue(selectedLetter)
+      if (selectedLetter && values.payment_amount > selectedLetterBalance) {
         Modal.confirm({
-          title: 'Payment exceeds letter amount',
-          content: `This payment (Rs. ${values.payment_amount.toLocaleString()}) is higher than the letter total (Rs. ${selectedLetter.final_amount.toLocaleString()}). Continue anyway?`,
+          title: 'Payment exceeds balance due',
+          content: `This payment (Rs. ${values.payment_amount.toLocaleString()}) is higher than the remaining balance (Rs. ${selectedLetterBalance.toLocaleString()}). Continue anyway?`,
           okText: 'Continue',
           cancelText: 'Edit Amount',
           onOk: async () => {
@@ -1140,6 +1173,30 @@ const Payments: React.FC = () => {
       align: 'right' as const,
       render: (val: number) => <strong>Rs. {val.toLocaleString()}</strong>,
       sorter: (a: Payment, b: Payment) => a.payment_amount - b.payment_amount
+    },
+    {
+      title: 'Balance Due',
+      key: 'balance_due',
+      width: 142,
+      align: 'right' as const,
+      render: (_: unknown, record: Payment) => {
+        const linkedLetter = letters.find((letter) => letter.id === record.letter_id)
+        if (!linkedLetter) {
+          return <Text type="secondary">-</Text>
+        }
+
+        const balanceDue = getLetterBalanceDue(linkedLetter)
+        return (
+          <Text strong type={balanceDue > 0 ? 'danger' : 'success'}>
+            Rs. {balanceDue.toLocaleString('en-IN')}
+          </Text>
+        )
+      },
+      sorter: (a: Payment, b: Payment) => {
+        const leftLetter = letters.find((letter) => letter.id === a.letter_id)
+        const rightLetter = letters.find((letter) => letter.id === b.letter_id)
+        return getLetterBalanceDue(leftLetter) - getLetterBalanceDue(rightLetter)
+      }
     },
     {
       title: 'Mode',
@@ -1610,7 +1667,7 @@ const Payments: React.FC = () => {
                     showIcon
                     style={{ marginBottom: 12 }}
                     title="Payment flow"
-                    description="Only units with letters are shown. Picking one fills the year and amount."
+                    description="Only units with unpaid letter balance are shown. Picking one fills the year and remaining amount."
                   />
                   <Row gutter={[16, 8]}>
                     <Col xs={24} md={12}>
@@ -1621,7 +1678,7 @@ const Payments: React.FC = () => {
                           <div style={{ fontSize: '12px' }}>
                             {unitLetters.length === 0
                               ? 'No letters found for this unit'
-                              : 'Picking a letter fills the year and amount.'}
+                              : 'Picking a letter fills the year and remaining amount.'}
                           </div>
                         }
                       >
@@ -1639,12 +1696,12 @@ const Payments: React.FC = () => {
                                   message.warning('This letter has an invalid financial year. The working year was used instead')
                                   form.setFieldsValue({
                                     financial_year: defaultFY,
-                                    payment_amount: letter.final_amount
+                                    payment_amount: getLetterBalanceDue(letter)
                                   })
                                 } else {
                                   form.setFieldsValue({
                                     financial_year: formattedYear,
-                                    payment_amount: letter.final_amount
+                                    payment_amount: getLetterBalanceDue(letter)
                                   })
                                 }
                               }
@@ -1655,7 +1712,7 @@ const Payments: React.FC = () => {
                         >
                           {unitLetters.map((letter) => (
                             <Option key={letter.id} value={letter.id}>
-                              FY {letter.financial_year} - Rs. {letter.final_amount} ({letter.status})
+                              FY {letter.financial_year} - Balance Rs. {getLetterBalanceDue(letter).toLocaleString('en-IN')} of Rs. {letter.final_amount.toLocaleString('en-IN')} ({letter.status})
                             </Option>
                           ))}
                         </Select>
@@ -1753,8 +1810,8 @@ const Payments: React.FC = () => {
                     {suggestedPaymentAmount !== null && (
                       <Text type="secondary">
                         {formLetterId
-                          ? `Letter amount: Rs. ${suggestedPaymentAmount.toLocaleString('en-IN')}`
-                          : `Auto-filled from FY ${formFinancialYear}: Rs. ${suggestedPaymentAmount.toLocaleString('en-IN')}`}
+                          ? `Balance due: Rs. ${suggestedPaymentAmount.toLocaleString('en-IN')}`
+                          : `Auto-filled remaining balance for FY ${formFinancialYear}: Rs. ${suggestedPaymentAmount.toLocaleString('en-IN')}`}
                       </Text>
                     )}
                   </div>
@@ -2011,6 +2068,16 @@ const Payments: React.FC = () => {
                             width: 150,
                             render: (_: unknown, record: BulkPaymentEntry) => (
                               <strong>Rs. {Math.round(record.matched_letter_amount || 0).toLocaleString()}</strong>
+                            )
+                          },
+                          {
+                            title: 'Balance Due',
+                            key: 'balance_due',
+                            width: 150,
+                            render: (_: unknown, record: BulkPaymentEntry) => (
+                              <Text strong type={(record.matched_balance_due || 0) > 0 ? 'danger' : 'success'}>
+                                Rs. {Math.round(record.matched_balance_due || 0).toLocaleString()}
+                              </Text>
                             )
                           },
                           {

@@ -251,6 +251,19 @@ class BackupService {
     await fs.promises.mkdir(targetPath, { recursive: true })
   }
 
+  private async clearDirectoryContents(targetPath: string): Promise<void> {
+    if (!fs.existsSync(targetPath)) {
+      return
+    }
+
+    const entries = await fs.promises.readdir(targetPath)
+    await Promise.all(
+      entries.map(async (entry) => {
+        await fs.promises.rm(path.join(targetPath, entry), { recursive: true, force: true })
+      })
+    )
+  }
+
   private async removePathIfExists(targetPath: string): Promise<void> {
     try {
       await fs.promises.rm(targetPath, { recursive: true, force: true })
@@ -274,9 +287,10 @@ class BackupService {
 
   private async restoreRollbackDirectories(entries: RestoreRollbackEntry[]): Promise<void> {
     for (const entry of entries) {
-      await this.removePathIfExists(entry.targetPath)
+      await this.ensureEmptyDirectory(entry.targetPath)
+      await this.clearDirectoryContents(entry.targetPath)
       if (entry.rollbackPath && fs.existsSync(entry.rollbackPath)) {
-        await fs.promises.rename(entry.rollbackPath, entry.targetPath)
+        await fs.promises.cp(entry.rollbackPath, entry.targetPath, { recursive: true })
       }
     }
   }
@@ -482,7 +496,10 @@ class BackupService {
 
         if (fs.existsSync(directoryTarget.absolutePath)) {
           await this.removePathIfExists(rollbackPath)
-          await fs.promises.rename(directoryTarget.absolutePath, rollbackPath)
+          await fs.promises.cp(directoryTarget.absolutePath, rollbackPath, {
+            recursive: true
+          })
+          await this.clearDirectoryContents(directoryTarget.absolutePath)
           rollbackEntries.push({
             targetPath: directoryTarget.absolutePath,
             rollbackPath
@@ -492,6 +509,7 @@ class BackupService {
         }
 
         if (fs.existsSync(extractedDirectoryPath)) {
+          await this.ensureEmptyDirectory(directoryTarget.absolutePath)
           await fs.promises.cp(extractedDirectoryPath, directoryTarget.absolutePath, {
             recursive: true
           })

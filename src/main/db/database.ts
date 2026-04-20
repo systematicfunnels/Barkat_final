@@ -836,6 +836,18 @@ class DatabaseService {
         }[]
         if (!columns.some((c) => c.name === 'arrears'))
           this.db.exec('ALTER TABLE maintenance_letters ADD COLUMN arrears REAL DEFAULT 0')
+        if (!columns.some((c) => c.name === 'snapshot_rate_per_sqft'))
+          this.db.exec(
+            'ALTER TABLE maintenance_letters ADD COLUMN snapshot_rate_per_sqft REAL DEFAULT 0'
+          )
+        if (!columns.some((c) => c.name === 'snapshot_gst_percent'))
+          this.db.exec(
+            'ALTER TABLE maintenance_letters ADD COLUMN snapshot_gst_percent REAL DEFAULT 0'
+          )
+        if (!columns.some((c) => c.name === 'snapshot_penalty_percentage'))
+          this.db.exec(
+            'ALTER TABLE maintenance_letters ADD COLUMN snapshot_penalty_percentage REAL DEFAULT 0'
+          )
         if (!columns.some((c) => c.name === 'snapshot_discount_percentage'))
           this.db.exec(
             'ALTER TABLE maintenance_letters ADD COLUMN snapshot_discount_percentage REAL DEFAULT 0'
@@ -998,6 +1010,9 @@ class DatabaseService {
               unit_id INTEGER NOT NULL,
               financial_year TEXT NOT NULL,
               base_amount REAL NOT NULL,
+              snapshot_rate_per_sqft REAL DEFAULT 0,
+              snapshot_gst_percent REAL DEFAULT 0,
+              snapshot_penalty_percentage REAL DEFAULT 0,
               snapshot_discount_percentage REAL DEFAULT 0,
               discount_amount REAL DEFAULT 0,
               final_amount REAL NOT NULL,

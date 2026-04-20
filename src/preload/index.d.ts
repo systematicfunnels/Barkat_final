@@ -9,6 +9,7 @@ import {
   StandardWorkbookProjectImportResult,
   Unit,
   MaintenanceLetter,
+  LetterRecalculationContext,
   BatchLetterResult,
   MaintenanceRate,
   MaintenanceSlab,
@@ -98,6 +99,8 @@ declare global {
         delete: (id: number) => Promise<boolean>
         bulkDelete: (ids: number[]) => Promise<boolean>
         generatePdf: (id: number) => Promise<string>
+        getRecalculationContext: (id: number) => Promise<LetterRecalculationContext>
+        recalculateFromCurrentRate: (id: number) => Promise<MaintenanceLetter>
         getAddOns: (id: number) => Promise<LetterAddOn[]>
         getAllAddOns: () => Promise<
           (LetterAddOn & {

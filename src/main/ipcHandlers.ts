@@ -13,7 +13,11 @@ import {
   StandardWorkbookProjectImportResult
 } from './services/ProjectService'
 import { unitService, Unit } from './services/UnitService'
-import { maintenanceLetterService, MaintenanceLetter } from './services/MaintenanceLetterService'
+import {
+  maintenanceLetterService,
+  MaintenanceLetter,
+  LetterRecalculationContext
+} from './services/MaintenanceLetterService'
 import { paymentService, Payment } from './services/PaymentService'
 import {
   maintenanceRateService,
@@ -469,6 +473,26 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('generate-letter-pdf', async (_, id: number): Promise<string> => {
     return await maintenanceLetterService.generatePdf(id)
   })
+
+  ipcMain.handle(
+    'get-letter-recalculation-context',
+    (_, id: number): LetterRecalculationContext => {
+      if (!isPositiveInteger(id)) {
+        throw new Error('Invalid maintenance letter selected')
+      }
+      return maintenanceLetterService.getRecalculationContext(id)
+    }
+  )
+
+  ipcMain.handle(
+    'recalculate-letter-from-current-rate',
+    (_, id: number): MaintenanceLetter => {
+      if (!isPositiveInteger(id)) {
+        throw new Error('Invalid maintenance letter selected')
+      }
+      return maintenanceLetterService.recalculateFromCurrentRate(id)
+    }
+  )
 
   ipcMain.handle('get-letter-addons', (_, id: number) => {
     return maintenanceLetterService.getAddOns(id)

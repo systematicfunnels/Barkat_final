@@ -41,6 +41,9 @@ export interface DetailedMaintenanceLetter {
   financial_year: string
   base_amount: number
   arrears?: number
+  snapshot_rate_per_sqft?: number
+  snapshot_penalty_percentage?: number
+  snapshot_discount_percentage?: number
   discount_amount: number
   final_amount: number
   is_paid?: boolean
@@ -127,29 +130,6 @@ export interface LetterCalculation {
 }
 
 class DetailedMaintenanceLetterService {
-  private getPenaltyPercentageForFinancialYear(
-    projectId: number,
-    financialYear: string,
-    unitType: string | undefined,
-    fallbackPenaltyPercentage: number
-  ): number {
-    const rate =
-      dbService.get<{ penalty_percentage: number | null }>(
-        `SELECT penalty_percentage
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
-        [projectId, financialYear, unitType || 'Bungalow']
-      ) ||
-      dbService.get<{ penalty_percentage: number | null }>(
-        `SELECT penalty_percentage
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND (unit_type = 'All' OR unit_type IS NULL)`,
-        [projectId, financialYear]
-      )
-
-    return rate?.penalty_percentage ?? fallbackPenaltyPercentage
-  }
-
   private getCurrentLetter(
     projectId: number,
     unitId: number,
@@ -158,19 +138,27 @@ class DetailedMaintenanceLetterService {
     id: number
     base_amount: number
     arrears: number
+    snapshot_rate_per_sqft: number
+    snapshot_penalty_percentage: number
+    snapshot_discount_percentage: number
     discount_amount: number
     final_amount: number
     due_date?: string
   } {
+    maintenanceLetterService.ensureLetterSchemaCompatibility()
     const letter = dbService.get<{
       id: number
       base_amount: number
       arrears: number
+      snapshot_rate_per_sqft: number
+      snapshot_penalty_percentage: number
+      snapshot_discount_percentage: number
       discount_amount: number
       final_amount: number
       due_date?: string
     }>(
-      `SELECT id, base_amount, arrears, discount_amount, final_amount, due_date
+      `SELECT id, base_amount, arrears, snapshot_rate_per_sqft, snapshot_penalty_percentage,
+              snapshot_discount_percentage, discount_amount, final_amount, due_date
        FROM maintenance_letters
        WHERE project_id = ? AND unit_id = ? AND financial_year = ?`,
       [projectId, unitId, financialYear]
@@ -186,6 +174,9 @@ class DetailedMaintenanceLetterService {
       ...letter,
       base_amount: normalizeMoney(letter.base_amount),
       arrears: normalizeMoney(letter.arrears),
+      snapshot_rate_per_sqft: normalizeMoney(letter.snapshot_rate_per_sqft),
+      snapshot_penalty_percentage: normalizeMoney(letter.snapshot_penalty_percentage),
+      snapshot_discount_percentage: normalizeMoney(letter.snapshot_discount_percentage),
       discount_amount: normalizeMoney(letter.discount_amount),
       final_amount: normalizeMoney(letter.final_amount)
     }
@@ -202,49 +193,6 @@ class DetailedMaintenanceLetterService {
         amount: normalizeMoney(addon.addon_amount)
       }))
       .filter((addon) => addon.amount > 0)
-  }
-
-  private getCurrentRateDiscountPercentage(
-    projectId: number,
-    financialYear: string,
-    unitType: string | undefined,
-    dueDate: string | undefined,
-    fallbackDiscountAmount: number,
-    baseAmount: number
-  ): number {
-    const rate =
-      dbService.get<{ id: number }>(
-        `SELECT id
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
-        [projectId, financialYear, unitType || 'Bungalow']
-      ) ||
-      dbService.get<{ id: number }>(
-        `SELECT id
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND (unit_type = 'All' OR unit_type IS NULL)`,
-        [projectId, financialYear]
-      )
-
-    if (rate?.id && dueDate) {
-      const slab = dbService.get<{ discount_percentage: number }>(
-        `SELECT discount_percentage
-         FROM maintenance_slabs
-         WHERE rate_id = ? AND due_date = ? AND is_early_payment = 1
-         ORDER BY due_date ASC
-         LIMIT 1`,
-        [rate.id, dueDate]
-      )
-      if (slab?.discount_percentage !== undefined) {
-        return slab.discount_percentage
-      }
-    }
-
-    if (baseAmount > 0 && fallbackDiscountAmount > 0) {
-      return normalizeMoney((fallbackDiscountAmount / baseAmount) * 100)
-    }
-
-    return 0
   }
 
   private buildPreviewRows(
@@ -324,7 +272,11 @@ class DetailedMaintenanceLetterService {
     }
   }
 
-  private getUnitDetails(projectId: number, unitId: number, financialYear: string): UnitDetails {
+  private getUnitDetails(
+    unitId: number,
+    snapshotRatePerSqft: number,
+    baseAmount: number
+  ): UnitDetails {
     const unit = dbService.get<{
       unit_number: string
       owner_name: string
@@ -336,27 +288,18 @@ class DetailedMaintenanceLetterService {
        FROM units WHERE id = ?`,
       [unitId]
     )
-
-    // Get rate for current year using the same priority as maintenance letter generation
-    const rate =
-      dbService.get<{ rate_per_sqft: number }>(
-        `SELECT rate_per_sqft
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND unit_type = ?`,
-        [projectId, financialYear, unit?.unit_type]
-      ) ||
-      dbService.get<{ rate_per_sqft: number }>(
-        `SELECT rate_per_sqft
-         FROM maintenance_rates
-         WHERE project_id = ? AND financial_year = ? AND (unit_type = 'All' OR unit_type IS NULL)`,
-        [projectId, financialYear]
-      )
+    const storedRate =
+      snapshotRatePerSqft > 0
+        ? normalizeMoney(snapshotRatePerSqft)
+        : unit?.area_sqft
+          ? normalizeMoney(baseAmount / unit.area_sqft)
+          : 0
 
     return {
       unit_number: unit?.unit_number || '',
       owner_name: unit?.owner_name || '',
       plot_area: unit?.area_sqft || 0,
-      rate_per_sqft: rate?.rate_per_sqft || 0,
+      rate_per_sqft: storedRate,
       sector_code: unit?.sector_code,
       unit_type: unit?.unit_type
     }
@@ -423,7 +366,11 @@ class DetailedMaintenanceLetterService {
     financialYear: string
   ): Promise<LetterCalculation> {
     const currentLetter = this.getCurrentLetter(projectId, unitId, financialYear)
-    const unitDetails = this.getUnitDetails(projectId, unitId, financialYear)
+    const unitDetails = this.getUnitDetails(
+      unitId,
+      currentLetter.snapshot_rate_per_sqft,
+      currentLetter.base_amount
+    )
     const chargesConfig = projectService.getChargesConfig(projectId)
     const computedArrearsBreakdown = calculateArrearsBreakdownForCurrentFinancialYear({
       projectId,
@@ -468,20 +415,16 @@ class DetailedMaintenanceLetterService {
       chargesConfig.penalty_label === 'Late Payment Charges'
         ? 'Late Payment Charges'
         : 'Penalty'
-    const effectivePenaltyPercentage = this.getPenaltyPercentageForFinancialYear(
-      projectId,
-      financialYear,
-      unitDetails.unit_type,
-      chargesConfig.penalty_percentage
-    )
-    const effectiveDiscountPercentage = this.getCurrentRateDiscountPercentage(
-      projectId,
-      financialYear,
-      unitDetails.unit_type,
-      currentLetter.due_date,
-      currentLetter.discount_amount,
-      current_year_charges.base_amount
-    )
+    const effectivePenaltyPercentage =
+      currentLetter.snapshot_penalty_percentage > 0
+        ? currentLetter.snapshot_penalty_percentage
+        : chargesConfig.penalty_percentage
+    const effectiveDiscountPercentage =
+      currentLetter.snapshot_discount_percentage > 0
+        ? currentLetter.snapshot_discount_percentage
+        : currentLetter.base_amount > 0 && currentLetter.discount_amount > 0
+          ? normalizeMoney((currentLetter.discount_amount / currentLetter.base_amount) * 100)
+          : 0
     const early_payment_discount = currentLetter.discount_amount
     const amount_payable_before_due = currentLetter.final_amount
     const amount_payable_after_due = grand_total_before_discount

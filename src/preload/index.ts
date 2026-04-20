@@ -11,6 +11,7 @@ import {
   StandardWorkbookProjectImportResult,
   Unit,
   MaintenanceLetter,
+  LetterRecalculationContext,
   BatchLetterResult,
   FinancialReportSummary,
   MaintenanceRate,
@@ -106,6 +107,10 @@ const api = {
     delete: (id: number) => ipcRenderer.invoke('delete-letter', id),
     bulkDelete: (ids: number[]) => ipcRenderer.invoke('bulk-delete-letters', ids),
     generatePdf: (id: number) => ipcRenderer.invoke('generate-letter-pdf', id),
+    getRecalculationContext: (id: number) =>
+      ipcRenderer.invoke('get-letter-recalculation-context', id) as Promise<LetterRecalculationContext>,
+    recalculateFromCurrentRate: (id: number) =>
+      ipcRenderer.invoke('recalculate-letter-from-current-rate', id) as Promise<MaintenanceLetter>,
     getAddOns: (id: number) => ipcRenderer.invoke('get-letter-addons', id),
     getAllAddOns: () => ipcRenderer.invoke('get-all-addons'),
     addAddOn: (params: {

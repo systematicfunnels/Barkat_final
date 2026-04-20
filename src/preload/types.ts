@@ -70,6 +70,10 @@ export interface MaintenanceLetter {
   unit_id: number
   financial_year: string
   base_amount: number
+  arrears?: number
+  snapshot_rate_per_sqft?: number
+  snapshot_gst_percent?: number
+  snapshot_penalty_percentage?: number
   snapshot_discount_percentage?: number
   discount_amount: number
   final_amount: number
@@ -85,6 +89,20 @@ export interface MaintenanceLetter {
   add_ons_total?: number
   letterhead_path?: string
   sector_letterhead_path?: string
+}
+
+export interface LetterRecalculationContext {
+  canRecalculate: boolean
+  blockers: string[]
+  warnings: string[]
+  receivedPaymentTotal: number
+  laterFinancialYears: string[]
+  savedRatePerSqft: number
+  currentRatePerSqft: number | null
+  savedDiscountPercentage: number
+  currentDiscountPercentage: number | null
+  savedPenaltyPercentage: number
+  currentPenaltyPercentage: number | null
 }
 
 export interface BatchLetterResult {

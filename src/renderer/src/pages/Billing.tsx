@@ -45,9 +45,11 @@ import dayjs, { Dayjs } from 'dayjs'
 
 import {
   MaintenanceLetter,
+  LetterRecalculationContext,
   Project,
   LetterAddOn,
   Unit,
+  Payment,
   ProjectSetupSummary,
   MaintenanceRate
 } from '@preload/types'
@@ -92,13 +94,20 @@ interface BatchLetterConfigSnapshot {
 }
 
 type LetterheadSource = 'sector' | 'project'
+type BillingModalMode = 'create' | 'edit' | 'nextFy'
 
 const Billing: React.FC = () => {
   const { workingFY } = useWorkingFinancialYear()
+  const lettersApi = window.api.letters as typeof window.api.letters & {
+    getRecalculationContext: (id: number) => Promise<LetterRecalculationContext>
+    recalculateFromCurrentRate: (id: number) => Promise<MaintenanceLetter>
+  }
   const [letters, setLetters] = useState<MaintenanceLetter[]>([])
   const [projects, setProjects] = useState<Project[]>([])
+  const [payments, setPayments] = useState<Payment[]>([])
   const [loading, setLoading] = useState(false)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [billingModalMode, setBillingModalMode] = useState<BillingModalMode>('create')
   const [selectedProject, setSelectedProject] = useState<number | null>(null)
   const [selectedStatus, setSelectedStatus] = useState<string | null>(null)
 
@@ -143,6 +152,57 @@ const Billing: React.FC = () => {
   const [lastAutoSyncedDueDate, setLastAutoSyncedDueDate] = useState<string | null>(null)
 
   const [copyingAddOns, setCopyingAddOns] = useState(false)
+  const isCreateFlow = billingModalMode === 'create'
+  const isEditFlow = billingModalMode === 'edit'
+  const isNextFyFlow = billingModalMode === 'nextFy'
+  const receivedPaymentsByLetterId = useMemo(() => {
+    const totals = new Map<number, number>()
+
+    payments.forEach((payment) => {
+      if (!payment.letter_id || payment.payment_status === 'Pending') {
+        return
+      }
+
+      const currentTotal = totals.get(payment.letter_id) || 0
+      totals.set(payment.letter_id, currentTotal + (payment.payment_amount || 0))
+    })
+
+    return totals
+  }, [payments])
+  const getLetterBalanceDue = useCallback(
+    (letter: MaintenanceLetter): number => {
+      const receivedAmount = letter.id ? receivedPaymentsByLetterId.get(letter.id) || 0 : 0
+      return Math.max(0, (letter.final_amount || 0) - receivedAmount)
+    },
+    [receivedPaymentsByLetterId]
+  )
+  const formatRateValue = useCallback((value: number | null | undefined): string => {
+    if (value === null || value === undefined || !Number.isFinite(value)) {
+      return '-'
+    }
+
+    return Number(value).toLocaleString('en-IN', {
+      minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
+      maximumFractionDigits: 2
+    })
+  }, [])
+  const getProjectDisplayName = useCallback(
+    (projectId?: number, fallbackName?: string): string => {
+      if (fallbackName) {
+        return fallbackName
+      }
+
+      const matchedProject = projects.find((project) => project.id === projectId)
+      if (!matchedProject) {
+        return '-'
+      }
+
+      return matchedProject.project_code
+        ? `${matchedProject.project_code} - ${matchedProject.name}`
+        : matchedProject.name
+    },
+    [projects]
+  )
 
   // Fetch add-ons from previous year for copy functionality
   const handleCopyFromPreviousYear = async (): Promise<void> => {
@@ -205,12 +265,14 @@ const Billing: React.FC = () => {
   const fetchData = async (): Promise<void> => {
     setLoading(true)
     try {
-      const [lettersData, projectsData] = await Promise.all([
+      const [lettersData, projectsData, paymentsData] = await Promise.all([
         window.api.letters.getAll(),
-        window.api.projects.getAll()
+        window.api.projects.getAll(),
+        window.api.payments.getAll()
       ])
       setLetters(lettersData)
       setProjects(projectsData)
+      setPayments(paymentsData)
       setSelectedRowKeys([])
     } catch {
       message.error('Could not load maintenance letters')
@@ -422,7 +484,7 @@ const Billing: React.FC = () => {
   }, [batchFinancialYear, batchProjectId, isModalOpen])
 
   useEffect(() => {
-    if (!isModalOpen || !batchProjectId || !batchFinancialYear || !!currentLetter) {
+    if (!isModalOpen || !batchProjectId || !batchFinancialYear || isEditFlow) {
       setRateDueDateHint(null)
       return
     }
@@ -505,7 +567,7 @@ const Billing: React.FC = () => {
     return () => {
       isCancelled = true
     }
-  }, [batchFinancialYear, batchProjectId, currentLetter, form, isModalOpen, lastAutoSyncedDueDate])
+  }, [batchFinancialYear, batchProjectId, form, isEditFlow, isModalOpen, lastAutoSyncedDueDate])
 
   const getDisplayStatus = useCallback(
     (letter: MaintenanceLetter): 'Generated' | 'Modified' | 'Paid' | 'Pending' | 'Overdue' => {
@@ -591,7 +653,22 @@ const Billing: React.FC = () => {
     setSelectedRowKeys([])
   }, [defaultFY])
 
+  const resetBillingModalState = useCallback((): void => {
+    setIsModalOpen(false)
+    setBillingModalMode('create')
+    setBatchModalStep('config')
+    setBatchProjectId(null)
+    setBatchFinancialYear(selectedYear || defaultFY)
+    setBatchConfigSnapshot(null)
+    setProjectSetupSummary(null)
+    setRateDueDateHint(null)
+    setCurrentLetter(null)
+    setPassedUnitIds([])
+    form.resetFields()
+  }, [defaultFY, form, selectedYear])
+
   const handleBatchGenerate = (): void => {
+    setBillingModalMode('create')
     setPassedUnitIds([])
     setSelectedUnitIds([])
     setBatchModalStep('config')
@@ -601,7 +678,7 @@ const Billing: React.FC = () => {
     form.resetFields()
     setProjectSetupSummary(null)
     setRateDueDateHint(null)
-    setCurrentLetter(null) // Clear any existing letter when creating new
+    setCurrentLetter(null)
     
     // Set default add-ons for new letters
     form.setFieldsValue({
@@ -671,22 +748,20 @@ const Billing: React.FC = () => {
         okText: action.label,
         cancelText: 'Cancel',
         onOk: () => {
-          setIsModalOpen(false)
-          setBatchModalStep('config')
+          resetBillingModalState()
           navigate('/projects', { state: action.state })
         }
       })
     },
-    [getProjectSetupAction, navigate]
+    [getProjectSetupAction, navigate, resetBillingModalState]
   )
 
   const handleOpenProjectSetupFix = useCallback((): void => {
     if (!projectSetupSummary || !batchProjectId) return
     const action = getProjectSetupAction(projectSetupSummary, batchProjectId)
-    setIsModalOpen(false)
-    setBatchModalStep('config')
+    resetBillingModalState()
     navigate('/projects', { state: action.state })
-  }, [batchProjectId, getProjectSetupAction, navigate, projectSetupSummary])
+  }, [batchProjectId, getProjectSetupAction, navigate, projectSetupSummary, resetBillingModalState])
 
   const ensureProjectReadyForLetters = useCallback(
     async (projectId: number, financialYear: string): Promise<boolean> => {
@@ -717,7 +792,7 @@ const Billing: React.FC = () => {
   }
 
   const handleModalOk = async (): Promise<void> => {
-    if (batchModalStep === 'config') {
+    if (isCreateFlow && batchModalStep === 'config') {
       // Validate configuration step
       try {
         const values = await form.validateFields([
@@ -748,52 +823,28 @@ const Billing: React.FC = () => {
         // Validation will show errors
       }
     } else {
-      // Generate letters or update existing letter
       try {
-        const values = currentLetter
-          ? await form.validateFields()
-          : batchConfigSnapshot
-
-        if (!values?.letter_date || !values?.due_date) {
-          throw new Error('Letter configuration is missing. Please go back to step 1 and recheck the dates.')
-        }
-
-        const { project_id, financial_year, letter_date, due_date, add_ons } = values
-
-        const letterDate = letter_date.format('YYYY-MM-DD')
-        const dueDate = due_date.format('YYYY-MM-DD')
-        const effectiveUnitIds = currentLetter
-          ? undefined
-          : selectedEligibleUnitIds.length > 0
-            ? selectedEligibleUnitIds
-            : selectableProjectUnitIds
-
         setLoading(true)
 
-        // Check if we're editing an existing letter
-        if (currentLetter && currentLetter.id) {
-          // Update existing letter
-          if (process.env.NODE_ENV === 'development') {
-            console.log('Updating letter', {
-              id: currentLetter.id,
-              due_date: dueDate,
-              generated_date: letterDate
-            })
+        if (isEditFlow) {
+          if (!currentLetter?.id) {
+            throw new Error('No letter selected for editing')
           }
-          
-          // First update the basic letter fields
+
+          const values = await form.validateFields(['due_date', 'add_ons'])
+          const dueDate = values.due_date.format('YYYY-MM-DD')
+          const addOns = values.add_ons || []
+
           const success = await window.api.letters.update(currentLetter.id, {
             due_date: dueDate,
-            generated_date: letterDate,
-            status: 'Modified'  // Mark as modified when edited
+            status: 'Modified'
           })
-          
+
           if (!success) {
             message.error('Could not update the letter')
             return
           }
-          
-          // Now handle addons - get existing addons and compare with new ones
+
           const existingAddons = await window.api.letters.getAddOns(currentLetter.id)
           type EditableAddon = {
             id?: number
@@ -801,21 +852,19 @@ const Billing: React.FC = () => {
             addon_amount: number
             remarks?: string
           }
-          const newAddons = ((add_ons || []) as EditableAddon[]).map((addon) => ({
+          const newAddons = (addOns as EditableAddon[]).map((addon) => ({
             ...addon,
             id: addon.id !== undefined ? Number(addon.id) : undefined
           }))
           const existingById = new Map(existingAddons.map((addon) => [addon.id, addon]))
-          
-          // Delete addons that are no longer present
+
           for (const existingAddon of existingAddons) {
             const stillExists = newAddons.some((newAddOn) => newAddOn.id === existingAddon.id)
             if (!stillExists) {
               await window.api.letters.deleteAddOn(existingAddon.id)
             }
           }
-          
-          // Add new or updated addons
+
           for (const newAddon of newAddons) {
             const existingAddon = newAddon.id ? existingById.get(newAddon.id) : undefined
             const changed =
@@ -840,23 +889,57 @@ const Billing: React.FC = () => {
               remarks: newAddon.remarks
             })
           }
-          
-          // Regenerate PDF with updated addons
+
           try {
             await window.api.letters.generatePdf(currentLetter.id)
-            if (process.env.NODE_ENV === 'development') {
-              console.log('PDF regenerated with updated add-ons')
-            }
           } catch (pdfError) {
             if (process.env.NODE_ENV === 'development') {
               console.warn('Failed to regenerate PDF:', pdfError)
             }
-            // Don't fail the update if PDF generation fails
           }
-          
+
           message.success('Letter updated')
+        } else if (isNextFyFlow) {
+          if (!currentLetter?.id || !batchFinancialYear) {
+            throw new Error('Next FY configuration is missing')
+          }
+
+          const values = await form.validateFields(['letter_date', 'due_date', 'add_ons'])
+          const letterDate = values.letter_date.format('YYYY-MM-DD')
+          const dueDate = values.due_date.format('YYYY-MM-DD')
+
+          const isReady = await ensureProjectReadyForLetters(currentLetter.project_id, batchFinancialYear)
+          if (!isReady) return
+
+          const batchResult = await window.api.letters.createBatch({
+            projectId: currentLetter.project_id,
+            unitIds: [currentLetter.unit_id],
+            financialYear: batchFinancialYear,
+            letterDate,
+            dueDate,
+            addOns: ((values.add_ons || []) as Array<{ addon_name: string; addon_amount: number }>).map((ao) => ({
+              addon_name: ao.addon_name,
+              addon_amount: ao.addon_amount
+            }))
+          })
+
+          if (batchResult.createdCount === 0 && batchResult.skippedCount > 0) {
+            message.warning(`A maintenance letter already exists for FY ${batchFinancialYear} for this unit`)
+          } else {
+            message.success(`Next FY letter generated for ${currentLetter.unit_number || 'the selected unit'}`)
+          }
         } else {
-          // Create new letters
+          const values = batchConfigSnapshot
+          if (!values?.letter_date || !values?.due_date) {
+            throw new Error('Letter configuration is missing. Please go back to step 1 and recheck the dates.')
+          }
+
+          const { project_id, financial_year, letter_date, due_date, add_ons } = values
+          const letterDate = letter_date.format('YYYY-MM-DD')
+          const dueDate = due_date.format('YYYY-MM-DD')
+          const effectiveUnitIds =
+            selectedEligibleUnitIds.length > 0 ? selectedEligibleUnitIds : selectableProjectUnitIds
+
           const isReady = await ensureProjectReadyForLetters(project_id, financial_year)
           if (!isReady) return
 
@@ -882,13 +965,8 @@ const Billing: React.FC = () => {
               : `${batchResult.createdCount} maintenance letters generated`
           showCompletionWithNextStep('billing', completionMessage, navigate)
         }
-        
-        setIsModalOpen(false)
-        setBatchModalStep('config')
-        setBatchProjectId(null)
-        setBatchFinancialYear(selectedYear || defaultFY)
-        setBatchConfigSnapshot(null)
-        setCurrentLetter(null) // Clear current letter
+
+        resetBillingModalState()
         fetchData()
       } catch (error: unknown) {
         console.error(error)
@@ -898,8 +976,8 @@ const Billing: React.FC = () => {
           : messageText || 'Could not generate maintenance letters'
 
         if (errorMessage.includes('Project setup incomplete')) {
-          const projectId = form.getFieldValue('project_id') as number | undefined
-          const financialYear = form.getFieldValue('financial_year') as string | undefined
+          const projectId = (form.getFieldValue('project_id') as number | undefined) ?? batchProjectId ?? currentLetter?.project_id
+          const financialYear = (form.getFieldValue('financial_year') as string | undefined) ?? batchFinancialYear ?? currentLetter?.financial_year
           if (projectId && financialYear) {
             const summary = await window.api.projects.getSetupSummary(projectId, financialYear)
             setProjectSetupSummary(summary)
@@ -911,15 +989,14 @@ const Billing: React.FC = () => {
         if (
           errorMessage.includes('No maintenance rate found for this Project and Financial Year')
         ) {
-          const projectId = form.getFieldValue('project_id') as number | undefined
+          const projectId = (form.getFieldValue('project_id') as number | undefined) ?? batchProjectId ?? currentLetter?.project_id
           Modal.confirm({
             title: 'Maintenance rate required',
             content: 'Add a maintenance rate for this project and financial year before generating letters.',
             okText: 'Open Rates',
             cancelText: 'Cancel',
             onOk: () => {
-              setIsModalOpen(false)
-              setBatchModalStep('config')
+              resetBillingModalState()
               navigate('/projects', { state: { openRatesProjectId: projectId } })
             }
           })
@@ -1006,17 +1083,20 @@ const Billing: React.FC = () => {
         financial_year: record.financial_year,
         letter_date: record.generated_date ? dayjs(record.generated_date) : dayjs(),
         due_date: record.due_date ? dayjs(record.due_date) : dayjs().add(15, 'day'),
-        add_ons: (addOns || []).map((a: LetterAddOn) => ({
-          id: a.id,
-          addon_name: a.addon_name,
-          addon_amount: a.addon_amount,
-          remarks: a.remarks
-        }))
+        add_ons: (addOns || [])
+          .filter((a: LetterAddOn) => !/^GST \([^)]+%\)$/i.test(a.addon_name || ''))
+          .map((a: LetterAddOn) => ({
+            id: a.id,
+            addon_name: a.addon_name,
+            addon_amount: a.addon_amount,
+            remarks: a.remarks
+          }))
       }
 
       // Set state first
-      setPassedUnitIds([record.unit_id])
-      setSelectedUnitIds([])
+      setBillingModalMode('edit')
+      setPassedUnitIds([])
+      setSelectedUnitIds([record.unit_id])
       setBatchModalStep('config')
       setBatchProjectId(record.project_id)
       setBatchFinancialYear(record.financial_year)
@@ -1036,6 +1116,132 @@ const Billing: React.FC = () => {
       message.success({ content: 'Letter ready to edit', key: 'letter_edit' })
     } catch {
       message.error({ content: 'Could not load the letter', key: 'letter_edit' })
+    }
+  }
+
+  const handleGenerateNextFy = async (record: MaintenanceLetter): Promise<void> => {
+    if (!record.id) return
+
+    const nextFinancialYear = getUpcomingFinancialYear(record.financial_year || defaultFY)
+
+    try {
+      message.loading({ content: 'Preparing next FY letter...', key: 'letter_next_fy' })
+      const addOns = await window.api.letters.getAddOns(record.id)
+
+      const formValues = {
+        letter_date: dayjs(),
+        due_date: dayjs().add(15, 'day'),
+        add_ons: (addOns || [])
+          .filter((a: LetterAddOn) => !/^GST \([^)]+%\)$/i.test(a.addon_name || ''))
+          .map((a: LetterAddOn) => ({
+            addon_name: a.addon_name,
+            addon_amount: a.addon_amount,
+            remarks: a.remarks
+          }))
+      }
+
+      setBillingModalMode('nextFy')
+      setPassedUnitIds([])
+      setSelectedUnitIds([record.unit_id])
+      setBatchModalStep('config')
+      setBatchProjectId(record.project_id)
+      setBatchFinancialYear(nextFinancialYear)
+      setBatchConfigSnapshot({
+        project_id: record.project_id,
+        financial_year: nextFinancialYear,
+        letter_date: formValues.letter_date,
+        due_date: formValues.due_date,
+        add_ons: formValues.add_ons
+      })
+      setCurrentLetter(record)
+
+      form.resetFields()
+      form.setFieldsValue(formValues)
+      setIsModalOpen(true)
+
+      message.success({ content: 'Next FY letter is ready to generate', key: 'letter_next_fy' })
+    } catch {
+      message.error({ content: 'Could not prepare next FY letter', key: 'letter_next_fy' })
+    }
+  }
+
+  const handleRecalculateFromCurrentRate = async (record: MaintenanceLetter): Promise<void> => {
+    if (!record.id) return
+
+    try {
+      const context = await lettersApi.getRecalculationContext(record.id)
+
+      if (!context.canRecalculate) {
+        Modal.warning({
+          title: 'Recalculation blocked',
+          content: (
+            <div style={{ display: 'grid', gap: 8 }}>
+              {context.blockers.map((blocker) => (
+                <Text key={blocker} type="danger">
+                  {blocker}
+                </Text>
+              ))}
+            </div>
+          )
+        })
+        return
+      }
+
+      const savedRate = `Rs. ${formatRateValue(context.savedRatePerSqft)}`
+      const currentRate =
+        context.currentRatePerSqft !== null
+          ? `Rs. ${formatRateValue(context.currentRatePerSqft)}`
+          : 'Not configured'
+
+      Modal.confirm({
+        title: 'Recalculate Letter From Current Rate',
+        content: (
+          <div style={{ display: 'grid', gap: 8 }}>
+            <Text>This updates the saved calculation using the latest configured rate and slabs.</Text>
+            <Text>Saved rate: {savedRate}</Text>
+            <Text>Current rate: {currentRate}</Text>
+            {context.warnings.map((warning) => (
+              <Text key={warning} type="warning">
+                {warning}
+              </Text>
+            ))}
+          </div>
+        ),
+        okText: 'Recalculate',
+        onOk: async () => {
+          setLoading(true)
+          try {
+            await lettersApi.recalculateFromCurrentRate(record.id as number)
+            try {
+              await window.api.letters.generatePdf(record.id as number)
+            } catch (pdfError) {
+              if (process.env.NODE_ENV === 'development') {
+                console.warn('Failed to regenerate PDF after recalculation:', pdfError)
+              }
+            }
+
+            if (currentLetter?.id === record.id) {
+              const refreshedLetter = await window.api.letters.getById(record.id as number)
+              if (refreshedLetter) {
+                setCurrentLetter(refreshedLetter)
+              }
+            }
+
+            await fetchData()
+            message.success('Letter recalculated from current rate')
+          } catch (error) {
+            console.error(error)
+            const messageText = error instanceof Error ? error.message : String(error)
+            message.error(messageText || 'Could not recalculate the letter')
+          } finally {
+            setLoading(false)
+          }
+        }
+      })
+    } catch (error) {
+      console.error(error)
+      const messageText = error instanceof Error ? error.message : String(error)
+      message.error(messageText || 'Could not inspect recalculation impact')
     }
   }
 
@@ -1554,6 +1760,22 @@ const Billing: React.FC = () => {
       sorter: (a: MaintenanceLetter, b: MaintenanceLetter) => a.final_amount - b.final_amount
     },
     {
+      title: 'Balance Due',
+      key: 'balance_due',
+      width: 138,
+      align: 'right' as const,
+      render: (_: unknown, record: MaintenanceLetter) => {
+        const balanceDue = getLetterBalanceDue(record)
+        return (
+          <Text strong type={balanceDue > 0 ? 'danger' : 'success'}>
+            Rs. {Math.round(balanceDue).toLocaleString()}
+          </Text>
+        )
+      },
+      sorter: (a: MaintenanceLetter, b: MaintenanceLetter) =>
+        getLetterBalanceDue(a) - getLetterBalanceDue(b)
+    },
+    {
       title: 'Letter Date',
       dataIndex: 'generated_date',
       key: 'generated_date',
@@ -1602,7 +1824,7 @@ const Billing: React.FC = () => {
       key: 'actions',
       align: 'right' as const,
       fixed: 'right' as const,
-      width: 320,
+      width: 288,
       render: (_: unknown, record: MaintenanceLetter) => (
         <Space className="table-row-actions" size="small">
           <Button
@@ -1632,27 +1854,39 @@ const Billing: React.FC = () => {
           >
             PDF
           </Button>
-          <Button
-            icon={<EditOutlined />}
-            size="small"
-            onClick={(e) => {
-              e.stopPropagation()
-              handleEditLetter(record)
-            }}
-          >
-            Edit
-          </Button>
-          <Button
-            icon={<DeleteOutlined />}
-            size="small"
-            danger
-            onClick={(e) => {
-              e.stopPropagation()
-              record.id && handleDelete(record.id)
-            }}
-          >
-            Delete
-          </Button>
+          <span onClick={(e) => e.stopPropagation()}>
+            <ActionMenuButton
+              label="More"
+              ariaLabel={`More actions for unit ${record.unit_number}`}
+              items={[
+                {
+                  key: 'edit',
+                  icon: <EditOutlined />,
+                  label: 'Edit Letter',
+                  onClick: () => handleEditLetter(record)
+                },
+                {
+                  key: 'next-fy',
+                  icon: <PlusOutlined />,
+                  label: 'Generate Next FY',
+                  onClick: () => handleGenerateNextFy(record)
+                },
+                {
+                  key: 'recalculate',
+                  icon: <InfoCircleOutlined />,
+                  label: 'Recalculate From Current Rate',
+                  onClick: () => handleRecalculateFromCurrentRate(record)
+                },
+                {
+                  key: 'delete',
+                  icon: <DeleteOutlined />,
+                  label: 'Delete Letter',
+                  danger: true,
+                  onClick: () => record.id && handleDelete(record.id)
+                }
+              ]}
+            />
+          </span>
         </Space>
       )
     }
@@ -1953,25 +2187,32 @@ const Billing: React.FC = () => {
       </div>
 
       <Modal
-        title="Generate maintenance letters"
+        title={
+          isEditFlow
+            ? 'Edit maintenance letter'
+            : isNextFyFlow
+              ? 'Generate next FY letter'
+              : 'Generate maintenance letters'
+        }
         open={isModalOpen}
         onOk={handleModalOk}
-        onCancel={() => {
-          setIsModalOpen(false)
-          setBatchModalStep('config')
-          setBatchProjectId(null)
-          setBatchFinancialYear(selectedYear || defaultFY)
-          setBatchConfigSnapshot(null)
-          setProjectSetupSummary(null)
-        }}
+        onCancel={resetBillingModalState}
         width={720}
         confirmLoading={loading}
-        okText={batchModalStep === 'config' ? 'Next: Select Units' : 'Generate Maintenance Letters'}
+        okText={
+          isCreateFlow
+            ? batchModalStep === 'config'
+              ? 'Next: Select Units'
+              : 'Generate Maintenance Letters'
+            : isEditFlow
+              ? 'Save Changes'
+              : 'Generate Next FY Letter'
+        }
         cancelText="Cancel"
         className="billing-generate-modal mobile-fullscreen-modal mobile-single-column"
       >
         <div className="billing-generate-modal-scroll">
-          {passedUnitIds.length > 0 && (
+          {isCreateFlow && passedUnitIds.length > 0 && (
             <Alert
               title={`Generating letters for ${passedUnitIds.length} selected unit(s)`}
               type="info"
@@ -1983,7 +2224,7 @@ const Billing: React.FC = () => {
             />
           )}
 
-          {/* Breadcrumb navigation for multi-step workflow */}
+          {isCreateFlow && (
           <div style={{ marginBottom: 12, padding: '10px 12px', background: '#fafafa', borderRadius: 10 }}>
             <Space size="small" align="center">
               <Button
@@ -2011,8 +2252,189 @@ const Billing: React.FC = () => {
                 : 'Step 2 of 2: Choose which units to generate letters for'}
             </div>
           </div>
+          )}
 
-          {batchModalStep === 'config' ? (
+          {!isCreateFlow && (
+            <Form
+              key={`${billingModalMode}-${currentLetter?.id ?? 'none'}`}
+              form={form}
+              layout="vertical"
+              initialValues={{
+                letter_date: isNextFyFlow ? dayjs() : currentLetter?.generated_date ? dayjs(currentLetter.generated_date) : dayjs(),
+                due_date: currentLetter?.due_date ? dayjs(currentLetter.due_date) : dayjs().add(15, 'day')
+              }}
+            >
+              <Alert
+                type={isEditFlow ? 'info' : 'success'}
+                showIcon
+                style={{ marginBottom: 16 }}
+                title={isEditFlow ? 'Editing the current letter' : `Creating a new letter for FY ${batchFinancialYear}`}
+                description={
+                  isEditFlow
+                    ? 'This updates only the selected letter. Project, unit, and financial year stay locked to protect billing history.'
+                    : 'This creates a new maintenance letter for the next financial year. The current letter stays unchanged.'
+                }
+              />
+
+              <Row gutter={[16, 8]}>
+                <Col xs={24} md={12}>
+                  <Form.Item label="Project">
+                    <Input value={getProjectDisplayName(currentLetter?.project_id, currentLetter?.project_name)} readOnly />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item label="Unit">
+                    <Input value={currentLetter ? `${currentLetter.unit_number || '-'} - ${currentLetter.owner_name || 'No owner assigned'}` : '-'} readOnly />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item label={isEditFlow ? 'Financial Year' : 'Source Financial Year'}>
+                    <Input value={currentLetter?.financial_year || '-'} readOnly />
+                  </Form.Item>
+                </Col>
+                <Col xs={24} md={12}>
+                  <Form.Item label={isEditFlow ? 'Current Balance Due' : 'Target Financial Year'}>
+                    <Input
+                      value={
+                        isEditFlow
+                          ? `Rs. ${currentLetter ? Math.round(getLetterBalanceDue(currentLetter)).toLocaleString() : '0'}`
+                          : batchFinancialYear || '-'
+                      }
+                      readOnly
+                    />
+                  </Form.Item>
+                </Col>
+
+                {isNextFyFlow && batchProjectId && batchFinancialYear && (
+                  <Col span={24}>
+                    <Alert
+                      type={projectSetupSummary?.ready_for_letters ? 'success' : projectSetupSummary?.blockers?.length ? 'error' : 'info'}
+                      showIcon
+                      title={
+                        setupSummaryLoading ? 'Checking project setup...' :
+                        !projectSetupSummary ? 'Validating project setup for the target year.' :
+                        projectSetupSummary.ready_for_letters ? 'Project setup is ready for the target FY' :
+                        'Project setup incomplete for the target FY'
+                      }
+                      description={
+                        projectSetupSummary && !projectSetupSummary.ready_for_letters ? (
+                          <div style={{ fontSize: 12, marginTop: 4 }}>
+                            <div style={{ color: '#cf1322' }}>
+                              Missing: {projectSetupSummary.blockers.slice(0, 2).join(', ')}
+                              {projectSetupSummary.blockers.length > 2 ? ` +${projectSetupSummary.blockers.length - 2} more` : ''}
+                            </div>
+                          </div>
+                        ) : null
+                      }
+                      action={
+                        projectSetupSummary && !projectSetupSummary.ready_for_letters && batchProjectId ? (
+                          <Button size="small" type="primary" onClick={handleOpenProjectSetupFix}>
+                            {getProjectSetupAction(projectSetupSummary, batchProjectId).label}
+                          </Button>
+                        ) : undefined
+                      }
+                    />
+                    {rateDueDateHint && (
+                      <Alert
+                        type="info"
+                        showIcon
+                        title={rateDueDateHint}
+                        style={{ marginTop: 8 }}
+                      />
+                    )}
+                  </Col>
+                )}
+
+                {isNextFyFlow && (
+                  <Col xs={24} md={12}>
+                    <Form.Item
+                      name="letter_date"
+                      label="Letter Date"
+                      rules={[{ required: true, message: 'Please select letter date' }]}
+                    >
+                      <DatePicker style={{ width: '100%' }} />
+                    </Form.Item>
+                  </Col>
+                )}
+
+                <Col xs={24} md={12}>
+                  <Form.Item
+                    name="due_date"
+                    label="Due Date"
+                    rules={[{ required: true, message: 'Please select due date' }]}
+                  >
+                    <DatePicker style={{ width: '100%' }} />
+                  </Form.Item>
+                </Col>
+
+                <Col span={24}>
+                  <Divider style={{ margin: '8px 0' }}>
+                    <span>Add-ons</span>
+                  </Divider>
+                </Col>
+
+                <Col span={24}>
+                  <Form.List name="add_ons">
+                    {(fields, { add, remove }) => (
+                      <>
+                        {fields.map(({ key, name, ...restField }) => (
+                          <Row key={key} gutter={[8, 8]} align="middle" style={{ marginBottom: 8 }}>
+                            <Form.Item {...restField} name={[name, 'id']} hidden>
+                              <Input />
+                            </Form.Item>
+                            <Col xs={24} sm={8}>
+                              <Form.Item
+                                {...restField}
+                                name={[name, 'addon_name']}
+                                rules={[{ required: true, message: 'Name required' }]}
+                                style={{ marginBottom: 0 }}
+                              >
+                                <Input placeholder="Addon Name (e.g. Penalty)" style={{ width: '100%' }} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={6}>
+                              <Form.Item
+                                {...restField}
+                                name={[name, 'addon_amount']}
+                                rules={[{ required: true, message: 'Amount required' }]}
+                                style={{ marginBottom: 0 }}
+                              >
+                                <InputNumber placeholder="Amount" style={{ width: '100%' }} prefix="Rs. " />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={8}>
+                              <Form.Item
+                                {...restField}
+                                name={[name, 'remarks']}
+                                style={{ marginBottom: 0 }}
+                              >
+                                <Input placeholder="Remarks" style={{ width: '100%' }} />
+                              </Form.Item>
+                            </Col>
+                            <Col xs={24} sm={2} style={{ textAlign: 'center' }}>
+                              <Button
+                                type="text"
+                                danger
+                                onClick={() => remove(name)}
+                                icon={<DeleteOutlined />}
+                              />
+                            </Col>
+                          </Row>
+                        ))}
+                        <Form.Item style={{ marginBottom: 0 }}>
+                          <Button type="dashed" onClick={() => add()} block icon={<PlusOutlined />}>
+                            Add Item
+                          </Button>
+                        </Form.Item>
+                      </>
+                    )}
+                  </Form.List>
+                </Col>
+              </Row>
+            </Form>
+          )}
+
+          {isCreateFlow && (batchModalStep === 'config' ? (
             <Form
             key={currentLetter ? `edit-${currentLetter.id}` : 'create'}
             form={form}
@@ -2378,7 +2800,7 @@ const Billing: React.FC = () => {
               />
             </div>
             </>
-          )}
+          ))}
         </div>
       </Modal>
 
