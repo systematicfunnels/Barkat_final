@@ -8,6 +8,13 @@ export interface ArrearsBreakdownEntry {
   total_with_penalty: number
 }
 
+type PreviousLetterOutstanding = {
+  id: number
+  financial_year: string
+  arrears: number
+  outstanding: number
+}
+
 type LetterBalanceStatus = {
   status: string
   is_paid: number
@@ -61,6 +68,36 @@ export function getReceivedPaymentTotalForLetter(letterId: number): number {
   )
 }
 
+function getOutstandingPreviousLetters(params: {
+  unitId: number
+  targetFinancialYear: string
+}): PreviousLetterOutstanding[] {
+  const previousLetters = dbService.query<{
+    id: number
+    financial_year: string
+    final_amount: number
+    arrears: number
+  }>(
+    `SELECT id, financial_year, final_amount, COALESCE(arrears, 0) as arrears
+     FROM maintenance_letters
+     WHERE unit_id = ? AND financial_year < ?
+     ORDER BY financial_year ASC`,
+    [params.unitId, params.targetFinancialYear]
+  )
+
+  return previousLetters
+    .map((previousLetter) => {
+      const paid = getReceivedPaymentTotalForLetter(previousLetter.id)
+      return {
+        id: previousLetter.id,
+        financial_year: previousLetter.financial_year,
+        arrears: normalizeMoney(previousLetter.arrears || 0),
+        outstanding: normalizeMoney(Math.max(0, previousLetter.final_amount - paid))
+      }
+    })
+    .filter((previousLetter) => previousLetter.outstanding > 0)
+}
+
 export function calculateArrearsBreakdownForCurrentFinancialYear(params: {
   projectId: number
   unitId: number
@@ -68,13 +105,10 @@ export function calculateArrearsBreakdownForCurrentFinancialYear(params: {
   unitType?: string
   fallbackPenaltyPercentage: number
 }): ArrearsBreakdownEntry[] {
-  const previousLetters = dbService.query<{ id: number; financial_year: string; final_amount: number }>(
-    `SELECT id, financial_year, final_amount
-     FROM maintenance_letters
-     WHERE unit_id = ? AND financial_year < ?
-     ORDER BY financial_year ASC`,
-    [params.unitId, params.targetFinancialYear]
-  )
+  const outstandingLetters = getOutstandingPreviousLetters({
+    unitId: params.unitId,
+    targetFinancialYear: params.targetFinancialYear
+  })
 
   const penaltyPct =
     getPenaltyPercentageForFinancialYear(
@@ -84,23 +118,70 @@ export function calculateArrearsBreakdownForCurrentFinancialYear(params: {
       params.fallbackPenaltyPercentage
     ) || 0
 
-  return previousLetters.flatMap((previousLetter) => {
-    const paid = getReceivedPaymentTotalForLetter(previousLetter.id)
-    const outstanding = normalizeMoney(Math.max(0, previousLetter.final_amount - paid))
+  if (outstandingLetters.length === 0) {
+    return []
+  }
 
-    if (outstanding <= 0) {
-      return []
+  const latestOutstandingLetter = outstandingLetters[outstandingLetters.length - 1]
+  const carryForwardLetters =
+    latestOutstandingLetter && latestOutstandingLetter.arrears > 0
+      ? [latestOutstandingLetter]
+      : outstandingLetters
+
+  return carryForwardLetters.map((previousLetter) => {
+    const penalty = normalizeMoney(previousLetter.outstanding * (penaltyPct / 100))
+    return {
+      financial_year: previousLetter.financial_year,
+      amount: previousLetter.outstanding,
+      penalty,
+      total_with_penalty: normalizeMoney(previousLetter.outstanding + penalty)
     }
+  })
+}
 
-    const penalty = normalizeMoney(outstanding * (penaltyPct / 100))
-    return [
-      {
-        financial_year: previousLetter.financial_year,
-        amount: outstanding,
-        penalty,
-        total_with_penalty: normalizeMoney(outstanding + penalty)
-      }
-    ]
+export function calculateSourceArrearsHistoryForCurrentFinancialYear(params: {
+  projectId: number
+  unitId: number
+  targetFinancialYear: string
+  unitType?: string
+  fallbackPenaltyPercentage: number
+}): ArrearsBreakdownEntry[] {
+  const outstandingLetters = getOutstandingPreviousLetters({
+    unitId: params.unitId,
+    targetFinancialYear: params.targetFinancialYear
+  })
+
+  const penaltyPct =
+    getPenaltyPercentageForFinancialYear(
+      params.projectId,
+      params.targetFinancialYear,
+      params.unitType,
+      params.fallbackPenaltyPercentage
+    ) || 0
+
+  if (outstandingLetters.length === 0) {
+    return []
+  }
+
+  const latestOutstandingLetter = outstandingLetters[outstandingLetters.length - 1]
+  const sourceLetters =
+    latestOutstandingLetter && latestOutstandingLetter.arrears > 0
+      ? outstandingLetters.filter(
+          (previousLetter) =>
+            previousLetter.financial_year < latestOutstandingLetter.financial_year
+        )
+      : outstandingLetters
+
+  const effectiveSourceLetters = sourceLetters.length > 0 ? sourceLetters : [latestOutstandingLetter]
+
+  return effectiveSourceLetters.map((previousLetter) => {
+    const penalty = normalizeMoney(previousLetter.outstanding * (penaltyPct / 100))
+    return {
+      financial_year: previousLetter.financial_year,
+      amount: previousLetter.outstanding,
+      penalty,
+      total_with_penalty: normalizeMoney(previousLetter.outstanding + penalty)
+    }
   })
 }
 

@@ -5,6 +5,7 @@ import {
   Button,
   Space,
   Modal,
+  Collapse,
   Form,
   Select,
   DatePicker,
@@ -46,6 +47,7 @@ import dayjs, { Dayjs } from 'dayjs'
 import {
   MaintenanceLetter,
   LetterRecalculationContext,
+  LetterCalculation,
   Project,
   LetterAddOn,
   Unit,
@@ -121,6 +123,8 @@ const Billing: React.FC = () => {
   const [searchText, setSearchText] = useState('')
   const [addOnsModalVisible, setAddOnsModalVisible] = useState(false)
   const [currentLetterAddOns, setCurrentLetterAddOns] = useState<LetterAddOn[]>([])
+  const [currentLetterCalculation, setCurrentLetterCalculation] = useState<LetterCalculation | null>(null)
+  const [addOnsModalLoading, setAddOnsModalLoading] = useState(false)
   const [currentLetter, setCurrentLetter] = useState<MaintenanceLetter | null>(null)
   const [form] = Form.useForm()
   const location = useLocation()
@@ -185,6 +189,9 @@ const Billing: React.FC = () => {
       minimumFractionDigits: Number.isInteger(value) ? 0 : 2,
       maximumFractionDigits: 2
     })
+  }, [])
+  const formatCurrency = useCallback((value: number | null | undefined): string => {
+    return `Rs. ${Math.round(Number(value || 0)).toLocaleString('en-IN')}`
   }, [])
   const getProjectDisplayName = useCallback(
     (projectId?: number, fallbackName?: string): string => {
@@ -779,17 +786,34 @@ const Billing: React.FC = () => {
   const handleShowAddOns = async (record: MaintenanceLetter): Promise<void> => {
     if (!record.id) return
     try {
-      setLoading(true)
-      const data = await window.api.letters.getAddOns(record.id)
-      setCurrentLetterAddOns(data)
+      setAddOnsModalLoading(true)
+      const [data, calculation] = await Promise.all([
+        window.api.letters.getAddOns(record.id),
+        window.api.detailedLetters.generateLetter(
+          record.project_id,
+          record.unit_id,
+          record.financial_year
+        )
+      ])
+      setCurrentLetterAddOns(
+        data.filter((addOn) => Number(addOn.addon_amount || 0) > 0)
+      )
+      setCurrentLetterCalculation(calculation)
       setCurrentLetter(record)
       setAddOnsModalVisible(true)
     } catch {
-      message.error('Could not load add-ons')
+      message.error('Could not load letter breakdown')
     } finally {
-      setLoading(false)
+      setAddOnsModalLoading(false)
     }
   }
+
+  const handleCloseBreakdownModal = useCallback((): void => {
+    setAddOnsModalVisible(false)
+    setCurrentLetterAddOns([])
+    setCurrentLetterCalculation(null)
+    setCurrentLetter(null)
+  }, [])
 
   const handleModalOk = async (): Promise<void> => {
     if (isCreateFlow && batchModalStep === 'config') {
@@ -1892,6 +1916,63 @@ const Billing: React.FC = () => {
     }
   ]
 
+  const directAddOnsTotal = currentLetterAddOns.reduce(
+    (sum, addOn) => sum + Number(addOn.addon_amount || 0),
+    0
+  )
+  const currentMaintenanceAmount = currentLetterCalculation?.current_year_charges.base_amount || 0
+  const previousArrearsTotal = currentLetterCalculation?.totals.total_arrears_with_penalty || 0
+  const discountAmount = currentLetterCalculation?.totals.early_payment_discount || 0
+  const finalPayableAmount = currentLetterCalculation?.totals.amount_payable_before_due || 0
+  const afterDueAmount = currentLetterCalculation?.totals.amount_payable_after_due || 0
+
+  const carriedForwardRows =
+    currentLetterCalculation?.arrears_breakdown.map((arrears, index) => ({
+      key: `carried-${index}`,
+      financialYear: arrears.financial_year,
+      outstanding: arrears.amount,
+      penalty: arrears.penalty,
+      total: arrears.total_with_penalty
+    })) || []
+
+  const sourceHistoryRows =
+    currentLetterCalculation?.source_arrears_history.map((arrears, index) => ({
+      key: `source-${index}`,
+      financialYear: arrears.financial_year,
+      outstanding: arrears.amount,
+      penalty: arrears.penalty,
+      total: arrears.total_with_penalty
+    })) || []
+
+  const showSourceHistory =
+    sourceHistoryRows.length > 0 &&
+    (
+      sourceHistoryRows.length !== carriedForwardRows.length ||
+      sourceHistoryRows.some((row, index) => {
+        const carriedRow = carriedForwardRows[index]
+        return (
+          !carriedRow ||
+          carriedRow.financialYear !== row.financialYear ||
+          Math.abs(carriedRow.total - row.total) > 0.01
+        )
+      })
+    )
+  const currentBillRows = [
+    {
+      key: 'current-maintenance',
+      item: 'Current Maintenance',
+      details: `${formatRateValue(currentLetterCalculation?.unit_details.plot_area)} sqft x Rs. ${formatRateValue(currentLetterCalculation?.unit_details.rate_per_sqft)}`,
+      amount: currentLetterCalculation?.current_year_charges.base_amount || 0
+    },
+    ...currentLetterAddOns.map((addOn, index) => ({
+      key: `addon-${addOn.id ?? index}`,
+      item: addOn.addon_name,
+      details: addOn.remarks || 'Direct add-on',
+      amount: Number(addOn.addon_amount || 0)
+    }))
+  ]
+  const arrearsDetailRows = showSourceHistory ? sourceHistoryRows : carriedForwardRows
+
   return (
     <div className="page-screen">
       {/* Navigation guard: show setup prompt when no projects or no ready projects */}
@@ -2805,48 +2886,198 @@ const Billing: React.FC = () => {
       </Modal>
 
       <Modal
-        title={`Add-ons for ${currentLetter?.unit_number} (${currentLetter?.financial_year})`}
+        title={`Letter Breakdown for ${currentLetter?.unit_number} (${currentLetter?.financial_year})`}
         open={addOnsModalVisible}
-        onCancel={() => setAddOnsModalVisible(false)}
-        footer={[
-          <Button key="close" onClick={() => setAddOnsModalVisible(false)}>
-            Close
-          </Button>
-        ]}
-        width={600}
-        className="mobile-fullscreen-modal"
+        onCancel={handleCloseBreakdownModal}
+        width={900}
+        footer={null}
+        className="mobile-fullscreen-modal letter-breakdown-modal"
       >
-        <Table
-          dataSource={currentLetterAddOns}
-          pagination={false}
-          rowKey="id"
-          columns={[
-            { title: 'Description', dataIndex: 'addon_name', key: 'addon_name' },
-            {
-              title: 'Amount',
-              dataIndex: 'addon_amount',
-              key: 'addon_amount',
-              align: 'right',
-              render: (val: number) => `Rs. ${Math.round(val).toLocaleString()}`,
-            },
-            { title: 'Remarks', dataIndex: 'remarks', key: 'remarks' }
-          ]}
-          summary={(pageData) => {
-            let total = 0
-            pageData.forEach(({ addon_amount }) => (total += addon_amount))
-            return (
-              <Table.Summary.Row>
-                <Table.Summary.Cell index={0}>
-                  <strong>Total Add-ons</strong>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={1} align="right">
-                  <strong>Rs. {Math.round(total).toLocaleString()}</strong>
-                </Table.Summary.Cell>
-                <Table.Summary.Cell index={2} />
-              </Table.Summary.Row>
-            )
-          }}
-        />
+        {addOnsModalLoading ? (
+          <div className="letter-breakdown-loading">
+            <Spin />
+          </div>
+        ) : (
+          <div className="letter-breakdown-shell">
+            {currentLetterCalculation && currentLetter && (
+              <>
+                <Row gutter={[12, 12]} className="letter-breakdown-kpis">
+                  <Col xs={24} sm={12} md={6}>
+                    <Card size="small" className="letter-breakdown-card">
+                      <div className="letter-breakdown-label">Current Maintenance</div>
+                      <div className="letter-breakdown-value">
+                        {formatCurrency(currentMaintenanceAmount)}
+                      </div>
+                    </Card>
+                  </Col>
+                  <Col xs={24} sm={12} md={6}>
+                    <Card size="small" className="letter-breakdown-card">
+                      <div className="letter-breakdown-label">Previous Arrears</div>
+                      <div className="letter-breakdown-value">
+                        {formatCurrency(previousArrearsTotal)}
+                      </div>
+                    </Card>
+                  </Col>
+                  <Col xs={24} sm={12} md={6}>
+                    <Card size="small" className="letter-breakdown-card">
+                      <div className="letter-breakdown-label">Add-ons</div>
+                      <div className="letter-breakdown-value">
+                        {formatCurrency(directAddOnsTotal)}
+                      </div>
+                    </Card>
+                  </Col>
+                  <Col xs={24} sm={12} md={6}>
+                    <Card size="small" className="letter-breakdown-card">
+                      <div className="letter-breakdown-label">Payable Before Due Date</div>
+                      <div className="letter-breakdown-value">
+                        {formatCurrency(finalPayableAmount)}
+                      </div>
+                      {afterDueAmount > finalPayableAmount && (
+                        <div className="letter-breakdown-note">
+                          <span>After Due: {formatCurrency(afterDueAmount)}</span>
+                        </div>
+                      )}
+                    </Card>
+                  </Col>
+                </Row>
+
+                <div className="letter-breakdown-section">
+                  <div className="letter-breakdown-section-heading">
+                    <div className="letter-breakdown-section-title">Current Bill</div>
+                    <div className="letter-breakdown-section-subtitle">
+                      This year&apos;s maintenance items for the selected letter.
+                    </div>
+                  </div>
+                  <Table
+                    className="letter-breakdown-table"
+                    size="small"
+                    pagination={false}
+                    rowKey="key"
+                    dataSource={currentBillRows}
+                    columns={[
+                      { title: 'Item', dataIndex: 'item', key: 'item', width: 220 },
+                      { title: 'Details', dataIndex: 'details', key: 'details' },
+                      {
+                        title: 'Amount',
+                        dataIndex: 'amount',
+                        key: 'amount',
+                        align: 'right',
+                        width: 150,
+                        render: (value: number) => formatCurrency(value)
+                      }
+                    ]}
+                  />
+                  <div className="letter-breakdown-summary">
+                    <div className="letter-breakdown-summary-row">
+                      <span>Current Maintenance</span>
+                      <strong>{formatCurrency(currentMaintenanceAmount)}</strong>
+                    </div>
+                    <div className="letter-breakdown-summary-row">
+                      <span>Add-ons</span>
+                      <strong>{formatCurrency(directAddOnsTotal)}</strong>
+                    </div>
+                    <div className="letter-breakdown-summary-row">
+                      <span>Previous Arrears</span>
+                      <strong>{formatCurrency(previousArrearsTotal)}</strong>
+                    </div>
+                    {discountAmount > 0 && (
+                      <div className="letter-breakdown-summary-row">
+                        <span>Discount</span>
+                        <strong>- {formatCurrency(discountAmount)}</strong>
+                      </div>
+                    )}
+                    <div className="letter-breakdown-summary-row is-final">
+                      <span>Payable Before Due Date</span>
+                      <strong>{formatCurrency(finalPayableAmount)}</strong>
+                    </div>
+                    {afterDueAmount > finalPayableAmount && (
+                      <div className="letter-breakdown-summary-note">
+                        <span>Payable After Due Date</span>
+                        <strong>{formatCurrency(afterDueAmount)}</strong>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {arrearsDetailRows.length > 0 && (
+                  <div className="letter-breakdown-section">
+                    <Collapse
+                      ghost
+                      className="letter-breakdown-collapse"
+                      items={[
+                        {
+                          key: 'previous-arrears',
+                          label: (
+                            <div className="letter-breakdown-collapse-label">
+                              <div>
+                                <div className="letter-breakdown-section-title">Previous Arrears</div>
+                                <div className="letter-breakdown-section-subtitle">
+                                  Open to view year-wise arrears details.
+                                </div>
+                              </div>
+                              <strong className="letter-breakdown-collapse-value">
+                                {formatCurrency(previousArrearsTotal)}
+                              </strong>
+                            </div>
+                          ),
+                          children: (
+                            <div className="letter-breakdown-collapse-content">
+                              <Table
+                                className="letter-breakdown-table"
+                                size="small"
+                                pagination={false}
+                                rowKey="key"
+                                dataSource={arrearsDetailRows}
+                                columns={[
+                                  {
+                                    title: 'Year',
+                                    dataIndex: 'financialYear',
+                                    key: 'financialYear',
+                                    width: 140
+                                  },
+                                  {
+                                    title: 'Outstanding',
+                                    dataIndex: 'outstanding',
+                                    key: 'outstanding',
+                                    align: 'right',
+                                    width: 140,
+                                    render: (value: number) => formatCurrency(value)
+                                  },
+                                  {
+                                    title: currentLetterCalculation.penalty_label || 'Penalty',
+                                    dataIndex: 'penalty',
+                                    key: 'penalty',
+                                    align: 'right',
+                                    width: 140,
+                                    render: (value: number) => formatCurrency(value)
+                                  },
+                                  {
+                                    title: 'Total',
+                                    dataIndex: 'total',
+                                    key: 'total',
+                                    align: 'right',
+                                    width: 150,
+                                    render: (value: number) => <strong>{formatCurrency(value)}</strong>
+                                  }
+                                ]}
+                              />
+                              <div className="letter-breakdown-summary letter-breakdown-summary-compact">
+                                <div className="letter-breakdown-summary-row is-final">
+                                  <span>Total Previous Arrears</span>
+                                  <strong>{formatCurrency(previousArrearsTotal)}</strong>
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        }
+                      ]}
+                    />
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   )

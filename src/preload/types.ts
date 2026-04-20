@@ -381,6 +381,7 @@ export interface LetterCalculation {
     rate_per_sqft: number
   }
   arrears_breakdown: ArrearsEntry[]
+  source_arrears_history: ArrearsEntry[]
   penalty_percentage: number
   penalty_label?: 'Penalty' | 'Late Payment Charges'
   discount_percentage: number

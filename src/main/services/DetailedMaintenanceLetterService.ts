@@ -5,6 +5,7 @@ import { normalizeMoney } from '../utils/money'
 import { maintenanceLetterService } from './MaintenanceLetterService'
 import {
   calculateArrearsBreakdownForCurrentFinancialYear,
+  calculateSourceArrearsHistoryForCurrentFinancialYear,
   type ArrearsBreakdownEntry
 } from './LetterBalanceService'
 
@@ -96,6 +97,7 @@ export interface LetterCalculation {
     rate_per_sqft: number
   }
   arrears_breakdown: ArrearsEntry[]
+  source_arrears_history: ArrearsEntry[]
   penalty_percentage: number
   penalty_label: 'Penalty' | 'Late Payment Charges'
   discount_percentage: number
@@ -379,6 +381,13 @@ class DetailedMaintenanceLetterService {
       unitType: unitDetails.unit_type,
       fallbackPenaltyPercentage: chargesConfig.penalty_percentage
     })
+    const sourceArrearsHistory = calculateSourceArrearsHistoryForCurrentFinancialYear({
+      projectId,
+      unitId,
+      targetFinancialYear: financialYear,
+      unitType: unitDetails.unit_type,
+      fallbackPenaltyPercentage: chargesConfig.penalty_percentage
+    })
     const computedArrearsTotal = normalizeMoney(
       computedArrearsBreakdown.reduce((sum, entry) => sum + entry.total_with_penalty, 0)
     )
@@ -434,6 +443,7 @@ class DetailedMaintenanceLetterService {
     const calculation = {
       unit_details: unitDetails,
       arrears_breakdown,
+      source_arrears_history: sourceArrearsHistory,
       penalty_percentage: effectivePenaltyPercentage,
       penalty_label: penaltyLabel,
       discount_percentage: effectiveDiscountPercentage,
